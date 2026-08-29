@@ -4,13 +4,12 @@ services:
     runtime: node
     region: oregon
     plan: free
+    rootDir: backend
     buildFilter:
       paths:
         - backend/**
-        - package.json
-        - package-lock.json
     buildCommand: npm ci --include=dev
-    startCommand: npm run start --workspace @ctrl-alt-ship/backend
+    startCommand: npm start
     healthCheckPath: /health
     autoDeployTrigger: commit
     envVars:
