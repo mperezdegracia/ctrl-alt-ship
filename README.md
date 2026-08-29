@@ -25,6 +25,23 @@ Schema changes are new files in `supabase/migrations/`. The GitHub integration
 deploys them from `main`; do not make shared-schema changes through the
 Supabase Table Editor or SQL Editor.
 
+## Demo data
+
+Configure four distinct E.164 caller IDs in `.env`, then seed Lucas as the
+authorized client contact and three regular transportistas:
+
+```bash
+npm run db:seed -- --dry-run
+npm run db:seed
+```
+
+The third provider is marked as non-responsive for the quote-timeout demo.
+The seed is idempotent for the same caller IDs and refuses to overwrite an
+existing identity. Caller IDs are validated globally before any write, and a
+database trigger also prevents a phone from belonging to both a contact and a
+provider. Use only consented test numbers; replace one provider number with the
+judge's number immediately before the trial-by-fire run.
+
 ## Demo authentication
 
 Supabase Auth owns user accounts and sessions in its internal `auth` schema;
