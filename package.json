@@ -10,6 +10,8 @@
     "dev": "tsx watch script.ts",
     "start": "tsx script.ts",
     "db:smoke": "tsx scripts/harnesses/supabase-smoke.ts",
+    "auth:smoke": "tsx scripts/harnesses/auth-smoke.ts",
+    "typecheck": "tsc",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "repository": {
@@ -25,6 +27,7 @@
   },
   "homepage": "https://github.com/mperezdegracia/ctrl-alt-ship#readme",
   "dependencies": {
+    "@supabase/supabase-js": "^2.112.4",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
     "ws": "^8.21.3"
@@ -32,6 +35,7 @@
   "devDependencies": {
     "@types/express": "^5.0.6",
     "@types/node": "^26.4.0",
+    "@types/ws": "^8.18.1",
     "tsx": "^4.23.12",
     "typescript": "^7.0.2"
   }

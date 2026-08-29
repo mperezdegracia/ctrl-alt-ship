@@ -2,6 +2,12 @@ import "dotenv/config";
 import express from "express";
 import WebSocket from "ws";
 
+import { supabaseAdmin } from "./backend/src/config/supabase";
+import {
+  requireDashboardAuth,
+  type DashboardRequest,
+} from "./backend/src/http/middleware/require-dashboard-auth";
+
 const app = express();
 
 app.use(express.json());
@@ -37,6 +43,27 @@ async function getOperationStatus(operationId: string) {
 
 app.get("/", (_req, res) => {
   res.send("Volta backend running");
+});
+
+app.get("/health", async (_req, res) => {
+  const { error } = await supabaseAdmin
+    .from("operations")
+    .select("id")
+    .limit(1);
+
+  if (error) {
+    console.error("Supabase health check failed:", error.message);
+    res.status(503).json({ status: "degraded" });
+    return;
+  }
+
+  res.json({ status: "ok" });
+});
+
+// Temporary protected endpoint. It proves the dashboard auth boundary before
+// the dashboard routes exist. Voice webhooks deliberately do not use it.
+app.get("/api/me", requireDashboardAuth, (req: DashboardRequest, res) => {
+  res.json({ user: req.dashboardUser });
 });
 
 app.post("/openai/webhook", async (req, res) => {
