@@ -8,6 +8,23 @@ import {
   requireDashboardAuth,
   type DashboardRequest,
 } from "./http/middleware/require-dashboard-auth";
+import { StructuredLogger } from "./observability/logger";
+import { RealtimeSessionFactory } from "./tango/realtime/realtime-session";
+import {
+  persistRejectedCall,
+  persistRoutedCall,
+} from "./tango/supabase/call-routing";
+import {
+  findCounterpartyByCallerId,
+  listActiveOperationsForProvider,
+  listOpenOperationsForContact,
+} from "./tango/supabase/erp";
+import {
+  routeIncomingCall,
+  type IncomingCallEvent,
+} from "./tango/telephony/inbound-routing";
+import { OperationStatusTool } from "./tango/tools/operation-status-tool";
+import { RealtimeToolRegistry } from "./tango/tools/realtime-tool";
 
 const app = express();
 
@@ -53,6 +70,11 @@ app.use((req, res, next) => {
 });
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+const logger = new StructuredLogger("tango-backend");
+const realtimeSessionFactory = new RealtimeSessionFactory();
+const realtimeTools = new RealtimeToolRegistry([
+  new OperationStatusTool(),
+]);
 
 if (!OPENAI_API_KEY) {
   throw new Error("Falta OPENAI_API_KEY");
@@ -60,31 +82,26 @@ if (!OPENAI_API_KEY) {
 
 const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 
-/*
- * ============================================================
- * TOOL DE EJEMPLO
- * ============================================================
- */
+async function rejectRealtimeCall(callId: string): Promise<void> {
+  const response = await fetch(
+    `https://api.openai.com/v1/realtime/calls/${encodeURIComponent(callId)}/reject`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${OPENAI_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ status_code: 603 }),
+    },
+  );
 
-async function getOperationStatus(operationId: string) {
-  console.log("🔧 TOOL get_operation_status:", operationId);
-
-  // Mock por ahora.
-  // Después esto puede consultar Postgres.
-  return {
-    operation_id: operationId,
-    container: "MSKU1234567",
-    status: "NEGOTIATING",
-    origin: "Puerto de Manzanillo",
-    destination: "Guadalajara",
-    pickup_date: "2026-09-03",
-    max_price_mxn: 9000,
-    best_quote_mxn: 8500,
-  };
+  if (!response.ok) {
+    throw new Error(`OpenAI call rejection failed with status ${response.status}`);
+  }
 }
 
 app.get("/", (_req, res) => {
-  res.send("Volta backend running");
+  res.send("Tango backend running");
 });
 
 app.get("/health", async (_req, res) => {
@@ -94,7 +111,7 @@ app.get("/health", async (_req, res) => {
     .limit(1);
 
   if (error) {
-    console.error("Supabase health check failed:", error.message);
+    logger.error("health.supabase_failed", { error });
     res.status(503).json({ status: "degraded" });
     return;
   }
@@ -112,7 +129,7 @@ app.post("/openai/webhook", express.raw({ type: "*/*" }), async (req, res) => {
   const webhookSecret = process.env.OPENAI_WEBHOOK_SECRET;
 
   if (!webhookSecret) {
-    console.error("OPENAI_WEBHOOK_SECRET no está configurado");
+    logger.error("webhook.secret_missing");
     res.status(503).json({ error: "voice_webhook_not_configured" });
     return;
   }
@@ -122,7 +139,7 @@ app.post("/openai/webhook", express.raw({ type: "*/*" }), async (req, res) => {
     return;
   }
 
-  let event: { type?: string; data?: { call_id?: string } };
+  let event: { id?: string; type?: string; data?: { call_id?: string } };
 
   try {
     event = (await openai.webhooks.unwrap(
@@ -131,12 +148,12 @@ app.post("/openai/webhook", express.raw({ type: "*/*" }), async (req, res) => {
       webhookSecret
     )) as typeof event;
   } catch (error) {
-    console.error("Invalid OpenAI webhook signature:", error);
+    logger.warn("webhook.signature_invalid", { error });
     res.status(400).json({ error: "invalid_webhook_signature" });
     return;
   }
 
-  console.log("Verified OpenAI webhook:", event.type);
+  logger.info("webhook.verified", { event_id: event.id, event_type: event.type });
 
   if (event.type !== "realtime.call.incoming") {
     res.sendStatus(200);
@@ -146,20 +163,71 @@ app.post("/openai/webhook", express.raw({ type: "*/*" }), async (req, res) => {
   const callId = event.data?.call_id;
 
   if (!callId) {
-    console.error("No call_id received");
+    logger.warn("webhook.missing_call_id", { event_id: event?.id });
+    res.status(400).json({ error: "missing_call_id" });
     return;
   }
 
-  console.log("☎️ Incoming call:", callId);
+  const callLogger = logger.child({ call_id: callId });
+  callLogger.info("call.incoming");
 
   try {
+    let routingDecision;
+    try {
+      routingDecision = await routeIncomingCall(event as IncomingCallEvent, {
+        findIdentity: findCounterpartyByCallerId,
+        listClientOperations: listOpenOperationsForContact,
+        listProviderOperations: listActiveOperationsForProvider,
+      });
+    } catch (error) {
+      callLogger.error("call.routing_failed", { error });
+      await rejectRealtimeCall(callId);
+      callLogger.warn("call.rejected", { reason: "routing_failure", sip_status: 603 });
+      res.sendStatus(200);
+      return;
+    }
+
+    if (routingDecision.action === "reject") {
+      try {
+        await persistRejectedCall(routingDecision);
+      } catch (error) {
+        callLogger.error("call.rejection_persist_failed", { error });
+      }
+      await rejectRealtimeCall(callId);
+      callLogger.warn("call.rejected", {
+        reason: routingDecision.reason,
+        sip_status: 603,
+        caller_phone_suffix: routingDecision.callerPhone.slice(-4),
+      });
+      res.sendStatus(200);
+      return;
+    }
+
+    callLogger.info("call.routed", {
+      persona: routingDecision.identity.persona,
+      counterparty_name: routingDecision.identity.name,
+      caller_phone_suffix: routingDecision.callerPhone.slice(-4),
+      candidate_operations: routingDecision.operations.map((operation) => operation.reference),
+    });
+
+    try {
+      await persistRoutedCall(routingDecision);
+      callLogger.info("call.routing_persisted");
+    } catch (error) {
+      callLogger.error("call.routing_persist_failed", { error });
+      await rejectRealtimeCall(callId);
+      callLogger.warn("call.rejected", { reason: "routing_persist_failed", sip_status: 603 });
+      res.sendStatus(200);
+      return;
+    }
+
     /*
      * ============================================================
      * 1. ACEPTAR LA LLAMADA
      * ============================================================
      */
 
-    console.time("accept-call");
+    const acceptStartedAt = Date.now();
 
     const acceptResponse = await fetch(
       `https://api.openai.com/v1/realtime/calls/${callId}/accept`,
@@ -171,103 +239,24 @@ app.post("/openai/webhook", express.raw({ type: "*/*" }), async (req, res) => {
           "Content-Type": "application/json",
         },
 
-        body: JSON.stringify({
-          type: "realtime",
-
-          model: "gpt-realtime-2.1",
-
-          reasoning: {
-            effort: "low",
-          },
-
-          output_modalities: ["audio"],
-
-          /*
-           * Habilitamos transcripción de lo que dice el usuario.
-           */
-          audio: {
-            input: {
-              transcription: {
-                model: "gpt-transcribe",
-              },
-            },
-            output: {
-              voice: "cedar",
-              speed: 1.05,
-            },
-          },
-
-          instructions: `
-Sos Volta, un agente telefónico de logística.
-
-Idioma:
-- Empezá la conversación en español.
-- Detectá el idioma que usa la persona y respondé en ese mismo idioma.
-- Si la persona cambia de idioma durante la conversación o te pide usar otro idioma, cambiá inmediatamente y mantené ese idioma hasta que vuelva a cambiarlo.
-- Si el idioma no está claro, preguntá brevemente qué idioma prefiere.
-- No traduzcas nombres propios, códigos de operación, números de contenedor ni otros identificadores.
-- Usá español como idioma de respaldo cuando no puedas determinar el idioma.
-
-Reglas:
-- Sé breve.
-- Soná natural.
-- No inventes información.
-- Si no entendés algo, pedí que lo repitan en el idioma actual.
-- Permití interrupciones naturalmente.
-
-Tenés acceso a una herramienta llamada get_operation_status.
-
-Si el usuario pregunta por el estado,
-precio, contenedor, ruta o información de una operación,
-usá get_operation_status antes de responder.
-          `.trim(),
-
-          /*
-           * DEFINICIÓN DE LA TOOL
-           */
-          tools: [
-            {
-              type: "function",
-
-              name: "get_operation_status",
-
-              description:
-                "Obtiene el estado actual y los datos de una operación logística.",
-
-              parameters: {
-                type: "object",
-
-                properties: {
-                  operation_id: {
-                    type: "string",
-                    description:
-                      "Identificador de la operación, por ejemplo OP-182",
-                  },
-                },
-
-                required: ["operation_id"],
-                additionalProperties: false,
-              },
-            },
-          ],
-
-          tool_choice: "auto",
-        }),
+        body: JSON.stringify(
+          realtimeSessionFactory.create(routingDecision, realtimeTools.definitions),
+        ),
       }
     );
 
-    console.timeEnd("accept-call");
-
     const acceptText = await acceptResponse.text();
 
-    console.log(
-      "Accept response:",
-      acceptResponse.status,
-      acceptText
-    );
+    callLogger.info("call.accept_completed", {
+      status: acceptResponse.status,
+      duration_ms: Date.now() - acceptStartedAt,
+    });
 
     if (!acceptResponse.ok) {
-      console.error("Could not accept call");
+      callLogger.error("call.accept_failed", {
+        status: acceptResponse.status,
+        response_body: acceptText.slice(0, 1_000),
+      });
       res.status(502).json({ error: "openai_call_accept_failed" });
       return;
     }
@@ -295,10 +284,7 @@ usá get_operation_status antes de responder.
     );
 
     ws.on("open", () => {
-      console.log(
-        "✅ Realtime sideband connected:",
-        callId
-      );
+      callLogger.info("realtime.sideband_connected");
 
       /*
        * ============================================================
@@ -306,23 +292,14 @@ usá get_operation_status antes de responder.
        * ============================================================
        */
 
-      ws.send(
-        JSON.stringify({
-          type: "response.create",
+      ws.send(JSON.stringify(
+        realtimeSessionFactory.createInitialResponse(routingDecision),
+      ));
 
-          response: {
-            instructions: `
-Saludá inmediatamente diciendo:
-
-"Hola, soy Volta. ¿En qué te puedo ayudar?"
-
-Después esperá la respuesta de la persona.
-            `.trim(),
-          },
-        })
-      );
-
-      console.log("Initial response.create sent");
+      callLogger.info("realtime.initial_greeting_requested", {
+        language: "en",
+        persona: routingDecision.identity.persona,
+      });
     });
 
     /*
@@ -337,10 +314,7 @@ Después esperá la respuesta de la persona.
           data.toString()
         );
 
-        console.log(
-          "Realtime event:",
-          message.type
-        );
+        callLogger.debug("realtime.event_received", { event_type: message.type });
 
         switch (message.type) {
           /*
@@ -350,11 +324,13 @@ Después esperá la respuesta de la persona.
            */
 
           case "session.created":
-            console.log("✅ Session created");
+            callLogger.info("realtime.session_created", {
+              model: message.session?.model,
+            });
             break;
 
           case "session.updated":
-            console.log("✅ Session updated");
+            callLogger.info("realtime.session_updated");
             break;
 
           /*
@@ -364,15 +340,11 @@ Después esperá la respuesta de la persona.
            */
 
           case "input_audio_buffer.speech_started":
-            console.log(
-              "🎤 Usuario empezó a hablar"
-            );
+            callLogger.debug("audio.speech_started");
             break;
 
           case "input_audio_buffer.speech_stopped":
-            console.log(
-              "🛑 Usuario terminó de hablar"
-            );
+            callLogger.debug("audio.speech_stopped");
             break;
 
           /*
@@ -382,10 +354,9 @@ Después esperá la respuesta de la persona.
            */
 
           case "conversation.item.input_audio_transcription.completed":
-            console.log(
-              "\n👤 Usuario dijo:",
-              message.transcript
-            );
+            callLogger.debug("transcript.caller", {
+              transcript: message.transcript,
+            });
             break;
 
           /*
@@ -395,50 +366,36 @@ Después esperá la respuesta de la persona.
            */
 
           case "response.function_call_arguments.done": {
-            console.log(
-              "\n🔧 TOOL CALL RECIBIDA"
-            );
+            callLogger.info("tool.requested", {
+              tool_name: message.name,
+              tool_call_id: message.call_id,
+            });
+            callLogger.debug("tool.arguments", {
+              tool_name: message.name,
+              arguments: message.arguments,
+            });
 
-            console.log(
-              "Tool:",
-              message.name
-            );
-
-            console.log(
-              "Arguments:",
-              message.arguments
-            );
-
-            let args: any = {};
+            let args: unknown = {};
 
             try {
               args = JSON.parse(
                 message.arguments || "{}"
               );
             } catch {
-              console.error(
-                "No pude parsear tool arguments"
-              );
+              callLogger.error("tool.arguments_invalid", {
+                tool_name: message.name,
+                tool_call_id: message.call_id,
+              });
               return;
             }
 
-            /*
-             * Ejecutamos nuestra tool.
-             */
+            try {
+              const result = await realtimeTools.execute(message.name, args);
 
-            if (
-              message.name ===
-              "get_operation_status"
-            ) {
-              const result =
-                await getOperationStatus(
-                  args.operation_id
-                );
-
-              console.log(
-                "🔧 Tool result:",
-                result
-              );
+              callLogger.debug("tool.result", {
+                tool_name: message.name,
+                result,
+              });
 
               /*
                * ----------------------------------------------------
@@ -474,9 +431,30 @@ Después esperá la respuesta de la persona.
                 })
               );
 
-              console.log(
-                "✅ Tool result enviado a Realtime"
-              );
+              callLogger.info("tool.completed", {
+                tool_name: message.name,
+                tool_call_id: message.call_id,
+              });
+            } catch (error) {
+              callLogger.error("tool.failed", {
+                tool_name: message.name,
+                tool_call_id: message.call_id,
+                error,
+              });
+
+              ws.send(JSON.stringify({
+                type: "conversation.item.create",
+                item: {
+                  type: "function_call_output",
+                  call_id: message.call_id,
+                  output: JSON.stringify({
+                    ok: false,
+                    error: "The requested operation could not be completed.",
+                  }),
+                },
+              }));
+
+              ws.send(JSON.stringify({ type: "response.create" }));
             }
 
             break;
@@ -484,21 +462,17 @@ Después esperá la respuesta de la persona.
 
           /*
            * --------------------------------------------------------
-           * TRANSCRIPCIÓN DE VOLTA
+           * TRANSCRIPCIÓN DE TANGO
            * --------------------------------------------------------
            */
 
           case "response.output_audio_transcript.delta":
-            process.stdout.write(
-              message.delta ?? ""
-            );
             break;
 
           case "response.output_audio_transcript.done":
-            console.log(
-              "\n🤖 Volta dijo:",
-              message.transcript
-            );
+            callLogger.debug("transcript.tango", {
+              transcript: message.transcript,
+            });
             break;
 
           /*
@@ -508,9 +482,10 @@ Después esperá la respuesta de la persona.
            */
 
           case "response.done":
-            console.log(
-              "✅ Response completed"
-            );
+            callLogger.info("realtime.response_completed", {
+              response_id: message.response?.id,
+              status: message.response?.status,
+            });
             break;
 
           /*
@@ -520,41 +495,31 @@ Después esperá la respuesta de la persona.
            */
 
           case "error":
-            console.error(
-              "❌ Realtime error:",
-              JSON.stringify(
-                message,
-                null,
-                2
-              )
-            );
+            callLogger.error("realtime.error", {
+              error_type: message.error?.type,
+              error_code: message.error?.code,
+              error_message: message.error?.message,
+            });
             break;
         }
       } catch (error) {
-        console.error(
-          "Could not parse WS message:",
-          error
-        );
+        callLogger.error("realtime.message_parse_failed", { error });
       }
     });
 
     ws.on("error", (error) => {
-      console.error(
-        "Realtime WebSocket error:",
-        error
-      );
+      callLogger.error("realtime.websocket_error", { error });
     });
 
     ws.on("close", (code, reason) => {
-      console.log(
-        `Realtime WebSocket closed. code=${code}, reason=${reason.toString()}`
-      );
+      callLogger.info("realtime.sideband_closed", {
+        code,
+        reason: reason.toString(),
+      });
     });
   } catch (error) {
-    console.error(
-      "Incoming-call handling error:",
-      error
-    );
+    callLogger.error("call.handling_failed", { error });
+    if (!res.headersSent) res.status(500).json({ error: "incoming_call_failed" });
   }
 });
 
@@ -563,11 +528,9 @@ const PORT = Number(
 );
 
 app.listen(PORT, () => {
-  console.log(
-    `Server listening on http://localhost:${PORT}`
-  );
-
-  console.log(
-    `Webhook: http://localhost:${PORT}/openai/webhook`
-  );
+  logger.info("server.started", {
+    port: PORT,
+    webhook_path: "/openai/webhook",
+    log_level: process.env.LOG_LEVEL ?? "info",
+  });
 });

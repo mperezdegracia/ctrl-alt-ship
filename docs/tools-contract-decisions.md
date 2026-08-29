@@ -31,6 +31,25 @@
   cancelar booking o escalar. Después de elegir se bloquea el flujo.
 - `escalate` queda disponible solamente para la persona provider en V1.
 
+## Prompt y sesión Realtime
+
+- El runtime usa `gpt-realtime-2.1` con `reasoning.effort: low` para equilibrar
+  selección de tools y confirmaciones con latencia telefónica.
+- La salida de audio usa la voz `cedar` a velocidad `1.05`. La voz se fija antes
+  de producir el primer audio porque no puede cambiarse después dentro de la
+  misma sesión.
+- El saludo inicial es en inglés. El agente sólo cambia de idioma ante un pedido
+  explícito o una intervención sustantiva en otro idioma; nombres, direcciones,
+  acentos o palabras aisladas no disparan el cambio.
+- Las instrucciones se componen con una base compartida, reglas polimórficas de
+  cliente/provider y contexto verificado al final. Teléfono, email, SIP, UUIDs,
+  transcript y errores internos no se inyectan al prompt.
+- Resultados actuales de tools prevalecen sobre el snapshot inicial. El agente
+  no anuncia éxito hasta recibir el resultado del handler.
+- La implementación separa responsabilidades en clases: builder de instrucciones
+  por persona, factory de sesión Realtime y registry de tools. Cada tool concreta
+  encapsula su schema y ejecución.
+
 ## Operación y mandato
 
 - `operations` es la proyección mutable actual. Restricciones operativas y notas

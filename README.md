@@ -44,15 +44,30 @@ judge's number immediately before the trial-by-fire run. Alternatively, set
 `SEED_JUDGE_PHONE` to add the judge as a separate temporary provider.
 
 The seed also upserts the stable operation fixture `OP-900001` for Textiles del
-Plata: a 40-foot dry container, 24 t gross, Terminal 4 to Gonzalez Catan, fixed
-empty return in Dock Sud and an ARS 950,000 demo cap recorded in its cargo
-notes. It remains in `collecting_details`; an actual mandate must still be
-confirmed during a call.
+Plata: a 40-foot dry container, 24 t gross, Terminal 4 to Gonzalez Catan and a
+fixed empty return in Dock Sud. It creates a demo mandate with an ARS 950,000
+cap, one quote request per provider, Theo's valid ARS 850,000–900,000 quote,
+Mateo's ARS 970,000–1,020,000 counteroffer scenario, and Paki's pending request.
+Stable seed keys reuse the previous provider fixtures instead of duplicating
+them when their demo names or phone numbers change.
 
 Server and worker code can use
 `backend/src/tango/supabase/erp.ts` to resolve an inbound caller across both
 ERP identity tables or list active providers. The lookup intentionally returns
 authorization/activity flags so inbound routing can reject callers explicitly.
+
+## Inbound routing harness
+
+Run the caller-ID routing contract without making real calls or writing to
+Supabase:
+
+```bash
+npm --prefix backend run inbound:routing
+```
+
+It covers an authorized client, a known provider with an active operation and
+an unknown caller. Production routing rejects unknown or invalid callers with
+SIP 603 before accepting a Realtime session.
 
 ## Demo authentication
 

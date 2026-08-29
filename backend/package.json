@@ -7,6 +7,8 @@
     "dev": "tsx watch src/server.ts",
     "start": "tsx src/server.ts",
     "db:smoke": "tsx scripts/harnesses/supabase-smoke.ts",
+    "db:inspect": "tsx scripts/harnesses/supabase-inspect.ts",
+    "inbound:routing": "tsx scripts/harnesses/inbound-routing.ts",
     "db:seed": "tsx scripts/db/seed.ts",
     "auth:smoke": "tsx scripts/harnesses/auth-smoke.ts",
     "typecheck": "tsc --project tsconfig.json"
