@@ -18,6 +18,16 @@ vertical slice de telefonía
                              └─> dashboard y ensayo E2E
 ```
 
+> **Nota (29-08):** el backlog vive ahora en GitHub Issues
+> (labels `kind:` / `area:` / `state:`, parents #4–#7). Forma de trabajo
+> acordada: **trunk-based** — cada slice es un PR a `main` que deja el deploy
+> de Render funcionando (auto-deploy desde la hora 1, issue #9); nada de
+> ramas por persona. Sin test suites formales: cada slice se verifica con su
+> **harness** ejecutable (curl / conversación de texto / seed) y cada sección
+> importante se grilla en equipo antes de generarla con IA. Las áreas son
+> etiquetas, no dueños: cualquiera agarra la próxima issue `state:ready`.
+> La sección de abajo queda como referencia del razonamiento original.
+
 ## Reparto en 4 frentes independientes (24 hs, una PC por frente)
 
 **Hora 0 (todos juntos, ~1 h): congelar los contratos.** Es lo único que
