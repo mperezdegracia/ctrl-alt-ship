@@ -35,8 +35,7 @@ raíz:
 │       ├── features/        # Vistas por caso de uso (primero: operation)
 │       ├── components/      # Componentes reutilizables de UI
 │       └── lib/             # Cliente API y formateadores
-├── contracts/               # Midfield congelado: schema, tools y eventos
-└── package.json              # Workspace y atajos para las dos aplicaciones
+└── contracts/               # Midfield congelado: schema, tools y eventos
 ```
 
 `frontend/` produce el dashboard de operaciones y se despliega de forma

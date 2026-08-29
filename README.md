@@ -14,7 +14,7 @@ secret values through the team's private secret sharing channel:
 
 ```bash
 cp backend/.env.example backend/.env
-npm run db:smoke
+npm --prefix backend run db:smoke
 ```
 
 The smoke harness checks that the versioned domain tables are reachable with
@@ -31,8 +31,8 @@ Configure four distinct E.164 caller IDs in `backend/.env`, then seed Lucas
 as the authorized client contact and three regular transportistas:
 
 ```bash
-npm run db:seed -- --dry-run
-npm run db:seed
+npm --prefix backend run db:seed -- --dry-run
+npm --prefix backend run db:seed
 ```
 
 The third provider is marked as non-responsive for the quote-timeout demo.
@@ -65,7 +65,7 @@ read -r "AUTH_SMOKE_EMAIL?Test email: "
 read -s "AUTH_SMOKE_PASSWORD?Test password: "
 echo
 export AUTH_SMOKE_EMAIL AUTH_SMOKE_PASSWORD
-npm run auth:smoke
+npm --prefix backend run auth:smoke
 unset AUTH_SMOKE_EMAIL AUTH_SMOKE_PASSWORD
 ```
 
@@ -108,8 +108,9 @@ Supabase remains hosted and shared; neither app starts a local database or Auth
 stack.
 
 ```bash
+cd backend
 npm install
-npm run dev:backend
+npm run dev
 ```
 
 The backend listens on `http://localhost:3000` and allows requests from
@@ -117,8 +118,10 @@ The backend listens on `http://localhost:3000` and allows requests from
 separately:
 
 ```bash
-cp frontend/.env.local.example frontend/.env.local
-npm run dev --workspace @ctrl-alt-ship/frontend -- --port 3001
+cd frontend
+cp .env.local.example .env.local
+npm install
+npm run dev -- --port 3001
 ```
 
 `frontend/.env.local` contains only browser-safe Supabase settings and the
@@ -127,7 +130,6 @@ local Render API URL. Production Vercel settings use the same two
 Render service. Add the Vercel URL to `DASHBOARD_ORIGINS` in Render before
 the browser calls the API directly.
 
-The frontend workspace is intentionally dependency-free until the Next.js
+The frontend package is intentionally dependency-free until the Next.js
 dashboard branch lands. Its package owns the forthcoming Next.js dependencies
-and `dev` command; the root workspace only provides the shared install and
-backend shortcuts.
+and `dev` command.
