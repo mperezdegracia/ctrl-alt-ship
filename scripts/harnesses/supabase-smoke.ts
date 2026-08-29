@@ -1,10 +1,13 @@
-import "dotenv/config";
+import dotenv from "dotenv";
+import { resolve } from "node:path";
+
+dotenv.config({ path: resolve(__dirname, "../../backend/.env") });
 
 const requiredEnvironment = ["SUPABASE_URL", "SUPABASE_SECRET_KEY"] as const;
 
 for (const name of requiredEnvironment) {
   if (!process.env[name]) {
-    throw new Error(`Falta ${name} en .env`);
+    throw new Error(`Falta ${name} en backend/.env`);
   }
 }
 

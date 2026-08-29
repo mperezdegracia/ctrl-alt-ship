@@ -9,7 +9,6 @@
     "noEmit": true
   },
   "include": [
-    "script.ts",
     "backend/src/**/*.ts",
     "scripts/**/*.ts"
   ]

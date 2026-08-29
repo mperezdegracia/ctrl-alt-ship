@@ -8,6 +8,7 @@ raíz:
 ```text
 .
 ├── backend/                 # Runtime Node/TypeScript en Render
+│   ├── .env.example          # Formato local: secretos sólo del backend
 │   ├── render.yaml           # Blueprint del runtime de Render
 │   └── src/
 │       ├── config/          # Variables de entorno y composición de dependencias
@@ -25,6 +26,7 @@ raíz:
 │       ├── domain/          # Operaciones, mandato, cotizaciones, bookings y eventos
 │       └── shared/          # Tipos, errores y utilidades sin lógica de negocio
 ├── frontend/                # Código fuente del dashboard de operaciones
+│   ├── .env.local.example    # Configuración pública para Next.js
 │   ├── public/
 │   └── src/
 │       ├── app/             # Arranque, rutas y layout
@@ -35,10 +37,9 @@ raíz:
 └── scripts/harnesses/       # Harnesses ejecutables independientes por frente
 ```
 
-`frontend/` no es un segundo runtime de voz: produce el dashboard estático que
-el servicio de `backend/` sirve en Render. Así el despliegue sigue siendo un
-solo contenedor, como fijan ADR 0002 e issue #2, y la UI no queda en el camino
-de Twilio/OpenAI Realtime.
+`frontend/` produce el dashboard de operaciones y se despliega de forma
+independiente en Vercel. `backend/` continúa siendo el único runtime de voz
+en Render; la UI no queda en el camino de Twilio/OpenAI Realtime.
 
 ## Límites importantes
 
@@ -66,8 +67,7 @@ puerto. Esto facilita harnesses y el worker en el mismo contenedor.
 
 ## Estado de la transición
 
-El actual `script.ts` es el spike inbound probado y se conserva intacto. El
-siguiente slice de scaffold debe mover su comportamiento gradualmente a
-`backend/src/tango/telephony/` y `backend/src/tango/realtime/`, añadir los
-entry points de TypeScript y actualizar los scripts npm. No se mueve ahora para
-no romper la ruta de voz ya validada antes de contar con su reemplazo.
+El actual `backend/src/server.ts` conserva el spike inbound probado. Los
+siguientes slices deben mover su comportamiento gradualmente a
+`backend/src/tango/telephony/` y `backend/src/tango/realtime/`, sin romper
+la ruta de voz antes de contar con su reemplazo.

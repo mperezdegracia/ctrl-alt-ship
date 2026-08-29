@@ -1,5 +1,8 @@
-import "dotenv/config";
 import { createClient } from "@supabase/supabase-js";
+import dotenv from "dotenv";
+import { resolve } from "node:path";
+
+dotenv.config({ path: resolve(__dirname, "../../backend/.env") });
 
 function requiredEnvironment(name: string): string {
   const value = process.env[name];

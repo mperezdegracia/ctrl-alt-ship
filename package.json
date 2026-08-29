@@ -7,8 +7,10 @@
     "doc": "docs"
   },
   "scripts": {
-    "dev": "tsx watch script.ts",
-    "start": "tsx script.ts",
+    "dev": "npm run dev:backend",
+    "dev:backend": "tsx watch backend/src/server.ts",
+    "start": "npm run start:backend",
+    "start:backend": "tsx backend/src/server.ts",
     "db:smoke": "tsx scripts/harnesses/supabase-smoke.ts",
     "db:seed": "tsx scripts/db/seed.ts",
     "auth:smoke": "tsx scripts/harnesses/auth-smoke.ts",

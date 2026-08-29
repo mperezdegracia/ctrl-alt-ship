@@ -1,14 +1,42 @@
-import "dotenv/config";
 import express from "express";
 import WebSocket from "ws";
 
-import { supabaseAdmin } from "./backend/src/config/supabase";
+import "./config/environment";
+import { supabaseAdmin } from "./config/supabase";
 import {
   requireDashboardAuth,
   type DashboardRequest,
-} from "./backend/src/http/middleware/require-dashboard-auth";
+} from "./http/middleware/require-dashboard-auth";
 
 const app = express();
+
+const dashboardOrigins = new Set(
+  (process.env.DASHBOARD_ORIGINS ?? "http://localhost:3001")
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean)
+);
+
+app.use((req, res, next) => {
+  const origin = req.header("origin");
+
+  if (origin && dashboardOrigins.has(origin)) {
+    res.setHeader("Access-Control-Allow-Origin", origin);
+    res.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type");
+    res.setHeader(
+      "Access-Control-Allow-Methods",
+      "GET, POST, PUT, PATCH, DELETE, OPTIONS"
+    );
+    res.vary("Origin");
+  }
+
+  if (req.method === "OPTIONS") {
+    res.sendStatus(204);
+    return;
+  }
+
+  next();
+});
 
 app.use(express.json());
 

@@ -19,3 +19,5 @@ services:
         sync: false
       - key: SUPABASE_PUBLISHABLE_KEY
         sync: false
+      - key: DASHBOARD_ORIGINS
+        sync: false

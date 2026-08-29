@@ -8,17 +8,17 @@ are documented in [`docs/architecture.md`](docs/architecture.md).
 
 ## Shared Supabase development
 
-The team uses one hosted Supabase project for the hackathon. Create a local
-environment file and obtain its secret values through the team's private secret
-sharing channel:
+The team uses one hosted Supabase project for the hackathon. The backend owns
+the server-only configuration. Create its local environment file and obtain its
+secret values through the team's private secret sharing channel:
 
 ```bash
-cp .env.example .env
+cp backend/.env.example backend/.env
 npm run db:smoke
 ```
 
 The smoke harness checks that the versioned domain tables are reachable with
-the server-only Supabase key. Never commit `.env` or expose
+the server-only Supabase key. Never commit `backend/.env` or expose
 `SUPABASE_SECRET_KEY` in a browser.
 
 Schema changes are new files in `supabase/migrations/`. The GitHub integration
@@ -27,8 +27,8 @@ Supabase Table Editor or SQL Editor.
 
 ## Demo data
 
-Configure four distinct E.164 caller IDs in `.env`, then seed Lucas as the
-authorized client contact and three regular transportistas:
+Configure four distinct E.164 caller IDs in `backend/.env`, then seed Lucas
+as the authorized client contact and three regular transportistas:
 
 ```bash
 npm run db:seed -- --dry-run
@@ -58,7 +58,7 @@ authorization/activity flags so inbound routing can reject callers explicitly.
 
 Supabase Auth owns user accounts and sessions in its internal `auth` schema;
 the domain schema has no `users` table. For a temporary team test account,
-use the publishable key and keep the password out of `.env`:
+use the publishable key and keep the password out of `backend/.env`:
 
 ```zsh
 read -r "AUTH_SMOKE_EMAIL?Test email: "
@@ -81,3 +81,30 @@ Dashboard, create a Blueprint from this file and enter the values marked as
 secrets.
 The initial service uses the Free plan for development and health-checks
 `/health` against Supabase. Use a paid always-on instance before a voice demo.
+
+## Running locally
+
+Supabase remains hosted and shared; neither app starts a local database or Auth
+stack.
+
+```bash
+npm install
+npm run dev:backend
+```
+
+The backend listens on `http://localhost:3000` and allows requests from
+`http://localhost:3001` by default. Once the Next.js app is present, run it
+separately:
+
+```bash
+cp frontend/.env.local.example frontend/.env.local
+cd frontend
+npm install
+npm run dev -- --port 3001
+```
+
+`frontend/.env.local` contains only browser-safe Supabase settings and the
+local Render API URL. Production Vercel settings use the same two
+`NEXT_PUBLIC_SUPABASE_*` values, with `NEXT_PUBLIC_API_URL` pointing to the
+Render service. Add the Vercel URL to `DASHBOARD_ORIGINS` in Render before
+the browser calls the API directly.

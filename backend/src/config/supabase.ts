@@ -1,5 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 
+import "./environment";
+
 function requiredEnvironment(name: string): string {
   const value = process.env[name];
 
