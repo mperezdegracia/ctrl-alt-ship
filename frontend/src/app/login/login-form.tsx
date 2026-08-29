@@ -30,17 +30,36 @@ export function LoginForm() {
     }
 
     setIsSubmitting(true);
-    const supabase = createClient();
-    const { error: signInError } = await supabase.auth.signInWithPassword({ email, password });
-    setIsSubmitting(false);
 
-    if (signInError) {
-      setError("We could not verify your credentials. Check your email and password.");
-      return;
+    try {
+      const supabase = createClient();
+      const { error: signInError } = await supabase.auth.signInWithPassword({ email, password });
+
+      if (signInError) {
+        // Do not log credentials or session data. This is enough to distinguish a
+        // rejected sign-in from a browser/runtime failure while we finish setup.
+        console.error("[auth] Password sign-in was rejected", {
+          message: signInError.message,
+          status: signInError.status,
+          code: signInError.code,
+        });
+        setError(`Could not sign in: ${signInError.message}`);
+        return;
+      }
+
+      console.info("[auth] Password sign-in succeeded");
+      router.replace("/dashboard");
+      router.refresh();
+    } catch (signInException) {
+      const message = signInException instanceof Error
+        ? signInException.message
+        : "Unexpected error while contacting Supabase.";
+
+      console.error("[auth] Password sign-in failed before Supabase responded", signInException);
+      setError(`Could not sign in: ${message}`);
+    } finally {
+      setIsSubmitting(false);
     }
-
-    router.replace("/dashboard");
-    router.refresh();
   }
 
   return (
