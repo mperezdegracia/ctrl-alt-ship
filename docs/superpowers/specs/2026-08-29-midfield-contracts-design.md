@@ -28,7 +28,9 @@ romper las claves, cardinalidades ni significados congelados aquí.
 - `bookings` representa el estado actual mutable; `commitments` conserva el
   historial inmutable.
 - `change_requests` sólo admite `reschedule` y `cancel`.
-- Las llamadas desconocidas se rechazan sin persistirse en V1.
+- Las llamadas desconocidas se rechazan sin persistirse en V1. Una llamada
+  inbound de un cliente autenticado puede persistirse temporalmente sin
+  operación mientras su intención sea `undecided`.
 - Una cancelación encola contactos alternativos en `outbox`, pero V1 no
   ejecuta esos trabajos.
 
@@ -93,30 +95,58 @@ contacts y providers son únicos globalmente en V1.
 
 ### Operación y mandato
 
-`operations` contiene cliente, estado, tipo de contenedor, peso bruto, origen,
-destino, depósito de devolución del vacío y referencia al mandato vigente.
+`operations` contiene una referencia pública generada por el servidor
+(`OP-000001`), cliente, estado, tipo de contenedor, peso bruto, origen, destino,
+depósito de devolución del vacío, restricciones operativas, notas de carga,
+referencia al mandato vigente y un indicador de que los términos actuales
+todavía requieren confirmación. Una actualización operativa se aplica
+directamente a `operations`; si ya existía un mandato, el trigger activa
+`mandate_confirmation_required`. Mientras esté activo, ningún handler puede
+iniciar sourcing, contactar proveedores ni crear o modificar un booking.
 
-`mandates` conserva versiones inmutables por operación. Cada versión tiene
-tope, moneda, varias ventanas de acción en JSONB, plazo mínimo de pago en días,
-ancla fija `invoice_date`, llamada de confirmación y referencia a la versión
-reemplazada. Una nueva versión vuelve inelegibles las cotizaciones evaluadas
-contra versiones anteriores; V1 genera pedidos nuevos en lugar de reevaluarlas.
+La tool de lectura `list_open_operations` no recibe identificadores: deriva el
+contacto autenticado de la sesión y devuelve únicamente sus operaciones no
+canceladas ni fallidas con referencia pública, estado y un resumen mínimo. Está
+disponible al decidir entre crear, actualizar o cancelar, y se retira cuando la
+llamada fija uno de esos caminos.
+
+`mandates` conserva versiones inmutables por operación. Cada versión tiene un
+snapshot obligatorio de los términos operativos confirmados, tope, moneda,
+varias ventanas de acción en JSONB, plazo mínimo de pago en días, ancla fija
+`invoice_date`, llamada de confirmación y referencia a la versión reemplazada.
+El servidor construye el snapshot desde `operations`; el modelo no puede
+aportarlo ni modificarlo. Una nueva versión vuelve inelegibles las cotizaciones
+evaluadas contra versiones anteriores; V1 genera pedidos nuevos en lugar de
+reevaluarlas. `confirm_mandate` crea la versión nueva, actualiza
+`current_mandate_id` y limpia `mandate_confirmation_required` dentro de la misma
+transacción.
 
 ### Cotización y booking
 
 `quote_requests` representa un intento idempotente de contacto con un provider
 y tiene estado y vencimiento. Puede producir varias versiones inmutables de
-`quotes` durante una negociación. Cada quote conserva precio, moneda, ventana
-propuesta, plazo de pago, vigencia, condiciones, mandato evaluado, veredicto y
-referencia a la versión reemplazada.
+`quotes` durante una negociación. Cada quote conserva rango de precio mínimo y
+máximo, moneda, ventana propuesta, plazo de pago, vigencia, condiciones,
+mandato evaluado, veredicto y referencia a la versión reemplazada. El servidor
+evalúa el máximo del rango contra el tope y compara cotizaciones válidas por su
+máximo: gana el menor peor caso.
+
+La negociación admite exactamente una contraoferta por pedido. La primera
+cotización completa que exceda el tope por precio recibe `contraoferta`, incluso
+si `price_min` también está por encima del mandato; la respuesta nunca revela el
+tope. La propuesta siguiente se guarda como una nueva versión: si su máximo ya
+entra, recibe `dentro`; si todavía excede, recibe `fuera`. El servidor cuenta la
+ronda mediante las versiones persistidas, no el prompt. Errores estructurales o
+conflictos con términos operativos fijos no consumen esa ronda.
 
 Todas las propuestas se guardan. Sólo una cotización vigente y dentro del
 mandato produce un compromiso aceptado y puede ser seleccionada por un booking.
 
 `bookings` guarda el estado actual, cotización elegida, ventana acordada, plazo
-de pago, referencia de confirmación y timestamps de confirmación o cancelación.
-Puede haber historial de bookings, pero un índice parcial permite a lo sumo uno
-vigente por operación.
+de pago, precio final exacto, referencia de confirmación y timestamps de
+confirmación o cancelación. `confirm_booking` sólo puede fijar un precio dentro
+del rango cotizado y debajo del tope vigente. Puede haber historial de bookings,
+pero un índice parcial permite a lo sumo uno vigente por operación.
 
 ### Cambios y escalaciones
 
@@ -138,9 +168,24 @@ conversación hostil sin cambio estructurado.
 
 ### Evidencia y ejecución durable
 
-`calls` sólo registra llamadas aceptadas, siempre asociadas a una operación y
-exactamente una contraparte conocida: contact o provider. Conserva IDs de
-Twilio/OpenAI, persona, dirección, resultado, URL de grabación y tiempos.
+`calls` sólo registra llamadas aceptadas y exactamente una contraparte conocida:
+contact o provider. Conserva IDs de Twilio/OpenAI, persona, dirección, resultado,
+URL de grabación y tiempos. Una llamada inbound de cliente comienza con
+`operation_intent = undecided` y una inbound de provider con
+`provider_intent = undecided`; ambas pueden tener `operation_id = NULL` hasta
+que la primera tool de negocio vincule una operación y bloquee la intención.
+Las llamadas outbound de provider nacen con operación y propósito conocidos.
+
+Para cotización outbound se ofrecen `create_quote`, `decline_quote_request` y
+`escalate`; para confirmar booking, `confirm_booking`, `decline_booking` y
+`escalate`; para renegociar, `reschedule_booking`, `decline_reschedule` y
+`escalate`. Una inbound de provider empieza con `list_provider_operations`,
+`create_quote`, `reschedule_booking`, `cancel_booking` y `escalate`; después de
+la primera mutación se retiran los caminos incompatibles. También puede usar
+las variantes de rechazo o `confirm_booking` cuando devuelve una llamada sobre
+un booking pendiente. `cancel_booking`
+representa que el provider abandona su compromiso y devuelve la operación a
+`sourcing`; no es equivalente a `cancel_operation` del cliente.
 
 `commitments` es append-only. Conserva tipo (`quote`, `booking`, `reschedule` o
 `cancellation`), snapshot JSONB de términos, operación, mandato, llamada,
@@ -165,11 +210,22 @@ consumidor automático para el camino de reemplazo posterior a cancelación.
 - Referencias `supersedes_*` no pueden apuntar a la misma fila.
 - Mandato vigente, mandato evaluado y entidades hijas pertenecen a la misma
   operación.
+- Cada mandato contiene el snapshot completo de la operación que el cliente
+  confirmó; cambiar cualquier término operativo requiere una versión nueva.
+- Cambiar términos de una operación con mandato vigente activa automáticamente
+  `mandate_confirmation_required`; las acciones externas quedan bloqueadas hasta
+  que `confirm_mandate` cree la versión siguiente.
 - `current_mandate_id` puede ser nulo mientras se recolectan datos y es
   obligatorio antes de entrar en `sourcing`.
 - Un booking activo como máximo por operación.
+- Las referencias públicas de operación son únicas, generadas por el servidor y
+  nunca aceptadas como UUID internos.
 - Un booking sólo selecciona una cotización vigente y dentro del mandato.
+- La selección usa `price_max`; el precio final del booking debe quedar entre
+  `price_min` y `price_max` y dentro del mandato vigente.
 - Exactamente uno de contact/provider en llamadas y solicitantes de cambio.
+- Sólo una llamada inbound con intención `undecided` puede carecer de operación;
+  una vez vinculada, no puede cambiar de operación ni de intención.
 - Un teléfono no puede aparecer a la vez en `contacts` y `providers`; el ruteo
   por caller ID debe ser inequívoco.
 - Ventanas JSONB tienen una forma contractual con `start_at < end_at`.

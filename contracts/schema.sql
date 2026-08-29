@@ -10,6 +10,10 @@ CREATE TYPE operation_status AS ENUM (
 CREATE TYPE call_persona AS ENUM ('client', 'provider');
 CREATE TYPE call_direction AS ENUM ('inbound', 'outbound');
 CREATE TYPE call_outcome AS ENUM ('active', 'completed', 'failed', 'transferred');
+CREATE TYPE client_operation_intent AS ENUM ('undecided', 'create', 'update', 'cancel');
+CREATE TYPE provider_operation_intent AS ENUM (
+  'undecided', 'quote', 'booking_confirmation', 'reschedule', 'cancel_booking', 'escalation'
+);
 CREATE TYPE quote_request_status AS ENUM ('pending', 'queued', 'contacted', 'responded', 'expired', 'cancelled');
 CREATE TYPE quote_verdict AS ENUM ('dentro', 'fuera', 'contraoferta');
 CREATE TYPE quote_status AS ENUM ('received', 'withdrawn');
@@ -52,6 +56,69 @@ BEGIN
       RETURN false;
     END IF;
   END LOOP;
+  RETURN true;
+EXCEPTION WHEN OTHERS THEN
+  RETURN false;
+END;
+$$;
+
+CREATE FUNCTION is_nonblank_text_array(value text[])
+RETURNS boolean
+LANGUAGE sql
+IMMUTABLE
+AS $$
+  SELECT value IS NOT NULL
+    AND NOT EXISTS (
+      SELECT 1
+      FROM unnest(value) AS item
+      WHERE item IS NULL OR btrim(item) = ''
+    );
+$$;
+
+CREATE FUNCTION is_operation_snapshot(value jsonb)
+RETURNS boolean
+LANGUAGE plpgsql
+IMMUTABLE
+AS $$
+DECLARE
+  constraint_item jsonb;
+BEGIN
+  IF jsonb_typeof(value) <> 'object'
+     OR NOT value ?& ARRAY[
+       'container_type', 'gross_weight_kg', 'pickup_location',
+       'delivery_location', 'empty_return_depot',
+       'operational_constraints', 'cargo_notes'
+     ]
+     OR jsonb_typeof(value->'container_type') <> 'string'
+     OR btrim(value->>'container_type') = ''
+     OR jsonb_typeof(value->'gross_weight_kg') <> 'number'
+     OR (value->>'gross_weight_kg')::numeric <= 0
+     OR jsonb_typeof(value->'pickup_location') <> 'string'
+     OR btrim(value->>'pickup_location') = ''
+     OR jsonb_typeof(value->'delivery_location') <> 'string'
+     OR btrim(value->>'delivery_location') = ''
+     OR jsonb_typeof(value->'empty_return_depot') <> 'string'
+     OR btrim(value->>'empty_return_depot') = ''
+     OR jsonb_typeof(value->'operational_constraints') <> 'array'
+     OR NOT (
+       value->'cargo_notes' = 'null'::jsonb
+       OR (
+         jsonb_typeof(value->'cargo_notes') = 'string'
+         AND btrim(value->>'cargo_notes') <> ''
+       )
+     ) THEN
+    RETURN false;
+  END IF;
+
+  FOR constraint_item IN
+    SELECT * FROM jsonb_array_elements(value->'operational_constraints')
+  LOOP
+    IF jsonb_typeof(constraint_item) <> 'string'
+       OR btrim(constraint_item #>> '{}') = '' THEN
+      RETURN false;
+    END IF;
+  END LOOP;
+
   RETURN true;
 EXCEPTION WHEN OTHERS THEN
   RETURN false;
@@ -131,25 +198,36 @@ BEFORE UPDATE ON contacts FOR EACH ROW EXECUTE FUNCTION touch_updated_at();
 CREATE TRIGGER providers_touch_updated_at
 BEFORE UPDATE ON providers FOR EACH ROW EXECUTE FUNCTION touch_updated_at();
 
+CREATE SEQUENCE operation_reference_seq;
+
 CREATE TABLE operations (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  reference text NOT NULL UNIQUE
+    DEFAULT ('OP-' || lpad(nextval('operation_reference_seq')::text, 6, '0'))
+    CHECK (reference ~ '^OP-[0-9]{6,}$'),
   contact_id uuid NOT NULL REFERENCES contacts(id),
   current_mandate_id uuid,
+  mandate_confirmation_required boolean NOT NULL DEFAULT false,
   status operation_status NOT NULL DEFAULT 'draft',
   container_type text,
   gross_weight_kg numeric(12,3) CHECK (gross_weight_kg > 0),
   pickup_location text,
   delivery_location text,
   empty_return_depot text,
+  operational_constraints text[] NOT NULL DEFAULT '{}'::text[]
+    CHECK (is_nonblank_text_array(operational_constraints)),
+  cargo_notes text CHECK (cargo_notes IS NULL OR btrim(cargo_notes) <> ''),
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 
 CREATE TABLE calls (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  operation_id uuid NOT NULL REFERENCES operations(id),
+  operation_id uuid REFERENCES operations(id),
   contact_id uuid REFERENCES contacts(id),
   provider_id uuid REFERENCES providers(id),
+  operation_intent client_operation_intent,
+  provider_intent provider_operation_intent,
   twilio_call_sid text NOT NULL UNIQUE,
   realtime_call_id text NOT NULL UNIQUE,
   persona call_persona NOT NULL,
@@ -160,7 +238,25 @@ CREATE TABLE calls (
   ended_at timestamptz,
   created_at timestamptz NOT NULL DEFAULT now(),
   CHECK ((contact_id IS NOT NULL)::integer + (provider_id IS NOT NULL)::integer = 1),
-  CHECK ((persona = 'client' AND contact_id IS NOT NULL) OR (persona = 'provider' AND provider_id IS NOT NULL)),
+  CHECK (
+    (persona = 'client' AND contact_id IS NOT NULL
+      AND operation_intent IS NOT NULL AND provider_intent IS NULL)
+    OR (persona = 'provider' AND provider_id IS NOT NULL
+      AND operation_intent IS NULL AND provider_intent IS NOT NULL)
+  ),
+  CHECK (
+    operation_id IS NOT NULL
+    OR (persona = 'client' AND direction = 'inbound' AND operation_intent = 'undecided')
+    OR (persona = 'provider' AND direction = 'inbound' AND provider_intent = 'undecided')
+  ),
+  CHECK (
+    persona <> 'client'
+    OR (operation_intent = 'undecided') = (operation_id IS NULL)
+  ),
+  CHECK (
+    persona <> 'provider'
+    OR (provider_intent = 'undecided') = (operation_id IS NULL)
+  ),
   CHECK (ended_at IS NULL OR ended_at >= started_at)
 );
 
@@ -171,9 +267,25 @@ AS $$
 DECLARE
   operation_contact uuid;
 BEGIN
+  IF TG_OP = 'UPDATE' THEN
+    IF OLD.operation_id IS NOT NULL AND NEW.operation_id IS DISTINCT FROM OLD.operation_id THEN
+      RAISE EXCEPTION 'a call cannot switch operations after being linked' USING ERRCODE = '23514';
+    END IF;
+    IF OLD.operation_intent IS DISTINCT FROM NEW.operation_intent
+       AND OLD.operation_intent IS DISTINCT FROM 'undecided'::client_operation_intent THEN
+      RAISE EXCEPTION 'client operation intent is already locked' USING ERRCODE = '23514';
+    END IF;
+    IF OLD.provider_intent IS DISTINCT FROM NEW.provider_intent
+       AND OLD.provider_intent IS DISTINCT FROM 'undecided'::provider_operation_intent THEN
+      RAISE EXCEPTION 'provider operation intent is already locked' USING ERRCODE = '23514';
+    END IF;
+  END IF;
+
   IF NEW.contact_id IS NOT NULL THEN
-    SELECT contact_id INTO operation_contact FROM operations WHERE id = NEW.operation_id;
-    IF operation_contact IS DISTINCT FROM NEW.contact_id THEN
+    IF NEW.operation_id IS NOT NULL THEN
+      SELECT contact_id INTO operation_contact FROM operations WHERE id = NEW.operation_id;
+    END IF;
+    IF NEW.operation_id IS NOT NULL AND operation_contact IS DISTINCT FROM NEW.contact_id THEN
       RAISE EXCEPTION 'client call contact does not own operation' USING ERRCODE = '23514';
     END IF;
   END IF;
@@ -188,6 +300,7 @@ CREATE TABLE mandates (
   operation_id uuid NOT NULL REFERENCES operations(id),
   version integer NOT NULL CHECK (version > 0),
   supersedes_mandate_id uuid UNIQUE REFERENCES mandates(id),
+  operation_snapshot jsonb NOT NULL CHECK (is_operation_snapshot(operation_snapshot)),
   price_cap numeric(14,2) NOT NULL CHECK (price_cap > 0),
   currency char(3) NOT NULL CHECK (currency = upper(currency)),
   action_windows jsonb NOT NULL CHECK (are_windows(action_windows)),
@@ -246,6 +359,20 @@ AS $$
 DECLARE
   allowed boolean := false;
 BEGIN
+  IF TG_OP = 'UPDATE'
+     AND OLD.current_mandate_id IS NOT NULL
+     AND (
+       NEW.container_type IS DISTINCT FROM OLD.container_type
+       OR NEW.gross_weight_kg IS DISTINCT FROM OLD.gross_weight_kg
+       OR NEW.pickup_location IS DISTINCT FROM OLD.pickup_location
+       OR NEW.delivery_location IS DISTINCT FROM OLD.delivery_location
+       OR NEW.empty_return_depot IS DISTINCT FROM OLD.empty_return_depot
+       OR NEW.operational_constraints IS DISTINCT FROM OLD.operational_constraints
+       OR NEW.cargo_notes IS DISTINCT FROM OLD.cargo_notes
+     ) THEN
+    NEW.mandate_confirmation_required := true;
+  END IF;
+
   IF TG_OP = 'UPDATE' AND NEW.status IS DISTINCT FROM OLD.status THEN
     allowed := CASE OLD.status
       WHEN 'draft' THEN NEW.status IN ('collecting_details', 'cancelled')
@@ -299,7 +426,8 @@ CREATE TABLE quotes (
   evaluated_mandate_id uuid NOT NULL REFERENCES mandates(id),
   version integer NOT NULL CHECK (version > 0),
   supersedes_quote_id uuid UNIQUE REFERENCES quotes(id),
-  price numeric(14,2) NOT NULL CHECK (price > 0),
+  price_min numeric(14,2) NOT NULL CHECK (price_min > 0),
+  price_max numeric(14,2) NOT NULL CHECK (price_max >= price_min),
   currency char(3) NOT NULL CHECK (currency = upper(currency)),
   proposed_pickup_window jsonb NOT NULL CHECK (is_window(proposed_pickup_window)),
   payment_term_days integer NOT NULL CHECK (payment_term_days >= 0),
@@ -357,6 +485,7 @@ CREATE TABLE bookings (
   pickup_window_end timestamptz NOT NULL,
   payment_term_days integer NOT NULL CHECK (payment_term_days >= 0),
   payment_term_anchor text NOT NULL DEFAULT 'invoice_date' CHECK (payment_term_anchor = 'invoice_date'),
+  confirmed_price numeric(14,2) CHECK (confirmed_price > 0),
   confirmation_reference text,
   confirmed_at timestamptz,
   cancelled_at timestamptz,
@@ -364,6 +493,8 @@ CREATE TABLE bookings (
   updated_at timestamptz NOT NULL DEFAULT now(),
   CHECK (pickup_window_start < pickup_window_end),
   CHECK ((status = 'confirmed') = (confirmed_at IS NOT NULL) OR status = 'cancelled'),
+  CHECK (confirmed_price IS NULL OR status IN ('confirmed', 'cancelled')),
+  CHECK (status <> 'confirmed' OR confirmed_price IS NOT NULL),
   CHECK (status <> 'cancelled' OR cancelled_at IS NOT NULL)
 );
 CREATE UNIQUE INDEX one_active_booking_per_operation
@@ -386,14 +517,16 @@ BEGIN
      OR EXISTS (SELECT 1 FROM quotes successor WHERE successor.supersedes_quote_id = q.id)
      OR NEW.pickup_window_start IS DISTINCT FROM (q.proposed_pickup_window->>'start_at')::timestamptz
      OR NEW.pickup_window_end IS DISTINCT FROM (q.proposed_pickup_window->>'end_at')::timestamptz
-     OR NEW.payment_term_days IS DISTINCT FROM q.payment_term_days THEN
+     OR NEW.payment_term_days IS DISTINCT FROM q.payment_term_days
+     OR (NEW.confirmed_price IS NOT NULL AND NEW.confirmed_price NOT BETWEEN q.price_min AND q.price_max) THEN
     RAISE EXCEPTION 'booking does not match an eligible current quote' USING ERRCODE = '23514';
   END IF;
   RETURN NEW;
 END;
 $$;
 CREATE TRIGGER bookings_validate
-BEFORE INSERT OR UPDATE OF operation_id, quote_id, pickup_window_start, pickup_window_end, payment_term_days
+BEFORE INSERT OR UPDATE OF operation_id, quote_id, pickup_window_start, pickup_window_end,
+  payment_term_days, confirmed_price
 ON bookings FOR EACH ROW EXECUTE FUNCTION validate_booking();
 CREATE TRIGGER bookings_touch_updated_at
 BEFORE UPDATE ON bookings FOR EACH ROW EXECUTE FUNCTION touch_updated_at();
