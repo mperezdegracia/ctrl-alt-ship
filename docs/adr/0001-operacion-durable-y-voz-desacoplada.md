@@ -33,10 +33,11 @@ usar el historial de un agente como la fuente de verdad.
    cola/outbox. Se ejecutan en paralelo con límite de concurrencia, reintentos
    e idempotencia. Nunca se bloquea la llamada del cliente esperando esas
    respuestas.
-5. La selección y la confirmación son transiciones de estado de servidor. En
-   el demo, la regla puede ser “menor precio que cumpla restricciones” *más*
-   confirmación explícita del cliente; enviar emails ocurre únicamente tras
-   `booking_confirmed`.
+5. La selección y la confirmación son transiciones de estado de servidor. La
+   regla es “menor precio válido dentro del mandato”; el cliente no aprueba
+   cada cierre — otorgó un mandato por voz en la llamada inicial y el servidor
+   valida contra él. Enviar emails ocurre únicamente tras `booking_confirmed`
+   y es confirmación, no aprobación.
 
 ## Arquitectura propuesta
 
@@ -71,7 +72,7 @@ con una llamada real, no por suposición.
 | --- | --- | --- |
 | Estado, proveedores, cotizaciones y eventos | Supabase Postgres | Datos relacionales y persistencia simple. |
 | Prueba local pública | Cloudflare Tunnel | Expone HTTPS/WSS sin desplegar cada cambio. |
-| Runtime de voz y worker E2E | Servicio de contenedor siempre activo (p. ej. Railway/Render/Fly) | Evita depender de la vida limitada de una función serverless. |
+| Runtime de voz y worker E2E | Render (ver ADR 0002) | Evita depender de la vida limitada de una función serverless. |
 | Dashboard / landing | Vercel si hace falta | Es buen encaje para UI, pero no es el dueño del socket/worker de voz. |
 
 Supabase y Vercel no reemplazan por sí solos el runtime de conversación de

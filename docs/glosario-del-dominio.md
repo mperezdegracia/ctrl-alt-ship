@@ -1,20 +1,7 @@
-# Glosario del dominio
+# Notas de operación
 
-Este glosario es la traducción operativa del pizarrón; no son instrucciones del
-brief de la hackathon.
-
-| Término | Definición / datos mínimos |
-| --- | --- |
-| **Operación** | Solicitud de transporte end-to-end identificada por `operation_id`. Tiene origen, destino, carga, fecha, cliente, estado y el presupuesto elegido. |
-| **Cliente** | Quien inicia la solicitud. Contacto: nombre, teléfono y email de confirmación. |
-| **Mandato** | Autorización que el cliente da por voz en la llamada inicial para que el agente negocie y cierre solo. Mínimo: tope de precio (con moneda) y ventana de retiro; opcionalmente condiciones de la carga. Se confirma verbalmente, se persiste con la operación y **el servidor** valida toda selección, booking o renegociación contra él — el modelo nunca es la autoridad. Lo que excede el mandato se rechaza o escala, nunca se compromete. |
-| **Proveedor** | Transportista/fletero que puede cotizar y aceptar una reserva. Tiene contacto, teléfono, email y capacidades. |
-| **Pedido de cotización** | Trabajo idempotente que pide a un proveedor una oferta para una operación. Tiene intento, estado y vencimiento. |
-| **Cotización** | Oferta estructurada: proveedor, precio, moneda, vigencia, disponibilidad, condiciones y eventual ETA. Nunca equivale a reserva. |
-| **Booking / reserva** | Compromiso con una cotización seleccionada. Tiene una confirmación explícita del proveedor y un identificador de reserva. |
-| **Llamada** | Interacción de telefonía, correlacionada con la operación y su proveedor/cliente. Guarda `twilio_call_sid`, `realtime_call_id`, rol y resultado. |
-| **Evento** | Hecho inmutable de auditoría, por ejemplo `operation.created`, `quote.received`, `booking.confirmed` o `email.sent`. |
-| **Outbox** | Registro transaccional de trabajo pendiente. Evita perder un contacto si el servidor cae después de guardar la operación. |
+> El glosario canónico vive en [`CONTEXT.md`](../CONTEXT.md) en la raíz del
+> repo. Este archivo conserva solo las notas operativas.
 
 ## Estados de una operación
 
@@ -40,9 +27,45 @@ seguir; usa un timeout declarativo.
 - Puerto/terminal de retiro y dirección de entrega (con localidad).
 - Fecha o ventana de retiro, restricciones de turno y contacto en origen.
 - Tipo de carga: contenedor/bultos, dimensiones, peso y necesidades especiales.
-- El mandato: tope de precio y ventana de retiro, confirmados verbalmente.
+- El mandato: tope de precio y ventana de acción, confirmados verbalmente.
   Carlos cierra todo en esa llamada; no hay aprobación posterior. El email
   final es confirmación de lo hecho, no un pedido de aprobación.
 
 Si un dato crítico falta, el agente lo pregunta o deja la operación en
 `collecting_details`; nunca inventa un valor.
+
+## Fixture del demo
+
+- **Empresa:** Textiles del Plata, importadora textil (eco de "Textiles
+  Pacífico" del enunciado).
+- **Carga:** contenedor 40' dry, ~24 t brutas, textil paletizado. Sin
+  refrigerado, sin IMO, sin sobredimensión.
+- **Ruta:** terminal del Puerto de Buenos Aires (p. ej. Terminal 4) → depósito
+  en González Catán (dirección fija inventada).
+- **Moneda:** ARS. Tope de ensayo: $950.000.
+- **Datos que exige un fletero para cotizar:** terminal de retiro, localidad
+  de entrega, tamaño/tipo de contenedor, peso bruto, ventana de retiro,
+  restricción de turno en destino y depósito de devolución del vacío (fijo,
+  no se negocia).
+- **Presión narrativa:** los días libres de demurrage vencen al final de la
+  ventana de acción — eso explica el límite del mandato en cada escena.
+
+## Idiomas
+
+- **Voz:** espejo del interlocutor, español por defecto. El cambio ES↔EN en
+  la misma llamada es el bonus del challenge, no un riesgo.
+- **Pantalla:** dashboard, emails, eventos y pitch en inglés (la presentación
+  es en inglés).
+- **Datos del fixture:** los términos técnicos y nombres de campos en inglés
+  (`gross_weight`, `container_type`, `pickup_window`, `empty_return_depot`,
+  `price_cap`); los nombres propios en español (Textiles del Plata, Carlos,
+  González Catán, Terminal 4). Regla rápida: si es schema/etiqueta → inglés;
+  si es un valor con identidad → español.
+- Pendiente: confirmar con la organización el idioma del juez del trial by
+  fire; si es English-only, ensayar las escenas en inglés.
+
+## Auditoría
+
+- La grabación de llamadas de Twilio queda activada.
+- Los eventos relevantes marcan checkpoints temporales para poder reproducir
+  la porción de la llamada que produjo cada compromiso.
