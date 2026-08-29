@@ -174,7 +174,11 @@ app.post("/openai/webhook", express.raw({ type: "*/*" }), async (req, res) => {
         body: JSON.stringify({
           type: "realtime",
 
-          model: "gpt-realtime",
+          model: "gpt-realtime-2.1",
+
+          reasoning: {
+            effort: "low",
+          },
 
           output_modalities: ["audio"],
 
@@ -186,6 +190,10 @@ app.post("/openai/webhook", express.raw({ type: "*/*" }), async (req, res) => {
               transcription: {
                 model: "gpt-transcribe",
               },
+            },
+            output: {
+              voice: "cedar",
+              speed: 1.05,
             },
           },
 
