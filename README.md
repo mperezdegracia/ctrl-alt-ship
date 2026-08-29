@@ -40,7 +40,19 @@ The seed is idempotent for the same caller IDs and refuses to overwrite an
 existing identity. Caller IDs are validated globally before any write, and a
 database trigger also prevents a phone from belonging to both a contact and a
 provider. Use only consented test numbers; replace one provider number with the
-judge's number immediately before the trial-by-fire run.
+judge's number immediately before the trial-by-fire run. Alternatively, set
+`SEED_JUDGE_PHONE` to add the judge as a separate temporary provider.
+
+The seed also upserts the stable operation fixture `OP-900001` for Textiles del
+Plata: a 40-foot dry container, 24 t gross, Terminal 4 to Gonzalez Catan, fixed
+empty return in Dock Sud and an ARS 950,000 demo cap recorded in its cargo
+notes. It remains in `collecting_details`; an actual mandate must still be
+confirmed during a call.
+
+Server and worker code can use
+`backend/src/tango/supabase/erp.ts` to resolve an inbound caller across both
+ERP identity tables or list active providers. The lookup intentionally returns
+authorization/activity flags so inbound routing can reject callers explicitly.
 
 ## Demo authentication
 

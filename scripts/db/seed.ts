@@ -19,6 +19,22 @@ type ExistingCounterparty = {
 const E164_PHONE = /^\+[1-9][0-9]{7,14}$/;
 const dryRun = process.argv.includes("--dry-run");
 
+const demoOperation = {
+  reference: environment("SEED_OPERATION_REFERENCE", "OP-900001"),
+  companyName: "Textiles del Plata",
+  container_type: "40_dry",
+  gross_weight_kg: 24_000,
+  pickup_location: "Terminal 4, Puerto de Buenos Aires",
+  delivery_location: "Deposito Textiles del Plata, Gonzalez Catan, Buenos Aires",
+  empty_return_depot: "Deposito de vacios Dock Sud",
+  operational_constraints: [
+    "Delivery appointment required",
+    "Non-refrigerated cargo",
+    "Non-hazardous cargo",
+  ],
+  cargo_notes: "Palletized textile cargo. Demo price cap: ARS 950000.",
+};
+
 function requiredEnvironment(name: string): string {
   const value = process.env[name]?.trim();
   if (!value) {
@@ -73,6 +89,20 @@ const counterparties: SeedCounterparty[] = [
     },
   },
 ];
+
+const judgePhone = process.env.SEED_JUDGE_PHONE?.trim();
+if (judgePhone) {
+  counterparties.push({
+    role: "provider",
+    name: environment("SEED_JUDGE_NAME", "Trial by Fire Judge"),
+    phone: judgePhone,
+    email: environment("SEED_JUDGE_EMAIL", "judge@example.com"),
+    capabilities: {
+      seed_scenario: "trial_by_fire",
+      responds_to_quotes: true,
+    },
+  });
+}
 
 function validateCallerIds(fixtures: SeedCounterparty[]): void {
   const owners = new Map<string, SeedCounterparty>();
@@ -136,6 +166,7 @@ async function main(): Promise<void> {
     for (const fixture of counterparties) {
       console.log(`- ${fixture.role}: ${fixture.name} (${maskedPhone(fixture.phone)})`);
     }
+    console.log(`- operation fixture: ${demoOperation.reference} (${demoOperation.companyName})`);
     return;
   }
 
@@ -203,7 +234,44 @@ async function main(): Promise<void> {
   if (providerUpsert.error) throw providerUpsert.error;
   if (!providerUpsert.data) throw new Error("Supabase no devolvio los transportistas creados");
 
-  console.log(`Seed completo: ${contactUpsert.data.name} y ${providerUpsert.data.length} transportistas.`);
+  const existingOperation = await supabase
+    .from("operations")
+    .select("id,reference,contact_id")
+    .eq("reference", demoOperation.reference)
+    .maybeSingle();
+  if (existingOperation.error) throw existingOperation.error;
+  if (existingOperation.data && existingOperation.data.contact_id !== contactUpsert.data.id) {
+    throw new Error(
+      `La referencia ${demoOperation.reference} ya pertenece a otro contacto; no se sobrescribio`,
+    );
+  }
+
+  let operationReference = existingOperation.data?.reference;
+  if (!operationReference) {
+    const operationInsert = await supabase
+      .from("operations")
+      .insert({
+        reference: demoOperation.reference,
+        contact_id: contactUpsert.data.id,
+        status: "collecting_details",
+        container_type: demoOperation.container_type,
+        gross_weight_kg: demoOperation.gross_weight_kg,
+        pickup_location: demoOperation.pickup_location,
+        delivery_location: demoOperation.delivery_location,
+        empty_return_depot: demoOperation.empty_return_depot,
+        operational_constraints: demoOperation.operational_constraints,
+        cargo_notes: demoOperation.cargo_notes,
+      })
+      .select("id,reference")
+      .single();
+    if (operationInsert.error) throw operationInsert.error;
+    if (!operationInsert.data) throw new Error("Supabase no devolvio la operacion de demo");
+    operationReference = operationInsert.data.reference;
+  }
+
+  console.log(
+    `Seed completo: ${contactUpsert.data.name}, ${providerUpsert.data.length} transportistas y operacion ${operationReference}.`,
+  );
 }
 
 main().catch((error: unknown) => {
