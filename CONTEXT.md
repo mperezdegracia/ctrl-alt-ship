@@ -19,7 +19,12 @@ Transportista que cotiza y puede aceptar una reserva.
 _Avoid_: carrier, fletero, despachante (el despachante es la persona que atiende del lado del proveedor)
 
 **Mandato**:
-Autorización dada por voz por el cliente — tope de precio con moneda y ventana de acción — bajo la cual el agente negocia y cierra solo; el servidor valida todo contra él, el modelo nunca es la autoridad.
+Conjunto versionado de reglas dado por voz por el cliente — tope de precio con
+moneda, una o más ventanas de acción y plazo mínimo de pago contado desde la
+factura — bajo el cual el agente negocia y cierra solo. No existe una capa
+separada de "preferencias": todo lo que condiciona una cotización vive en el
+mandato. El servidor valida contra la versión vigente; el modelo nunca es la
+autoridad.
 _Avoid_: presupuesto, límite, budget
 
 **Ventana de acción**:
@@ -31,7 +36,10 @@ Trabajo idempotente que solicita a un proveedor una oferta para una operación.
 _Avoid_: solicitud, request
 
 **Cotización**:
-Oferta estructurada de un proveedor (precio, moneda, vigencia, condiciones); nunca equivale a reserva.
+Oferta estructurada e inmutable de un proveedor (precio, moneda, ventana de
+retiro, plazo de pago, vigencia y condiciones); nunca equivale a booking. Una
+negociación conserva cada versión enlazada con la anterior. Las propuestas
+fuera del mandato también se guardan, pero no generan un compromiso aceptado.
 _Avoid_: quote, oferta, propuesta
 
 **Booking**:
@@ -39,8 +47,17 @@ Compromiso de reserva sobre la cotización seleccionada, con confirmación expl�
 _Avoid_: reserva, cierre
 
 **Compromiso**:
-Hecho verificable acordado en una llamada (cotización, booking, reprogramación) anclado a la llamada, al instante y al mandato que lo produjeron.
+Hecho verificable acordado en una llamada (cotización aceptada, booking,
+reprogramación o cancelación) anclado a la llamada, al instante y a la versión
+del mandato que lo produjo. Es inmutable; un cambio crea otro compromiso que
+reemplaza al anterior sin borrarlo.
 _Avoid_: transcript, acuerdo, promesa
+
+**Solicitud de cambio**:
+Pedido explícito de un cliente o proveedor sobre un booking vigente. En el MVP
+es una reprogramación con una única ventana propuesta o una cancelación. El
+servidor la evalúa contra el mandato y la aplica o escala.
+_Avoid_: editar el booking sin registrar el pedido
 
 **Renegociación**:
 Llamada saliente del agente para mover un compromiso existente, siempre dentro del mandato; produce un compromiso nuevo que reemplaza al anterior sin borrar el rastro.
@@ -88,15 +105,28 @@ Hecho inmutable de auditoría con timestamp; los relevantes marcan checkpoints t
 
 **Outbox**:
 Registro transaccional de trabajo pendiente que sobrevive caídas del servidor.
+En la primera versión, una cancelación deja contactos alternativos en estado
+pendiente; ningún worker los consume todavía.
 
 ## Relationships
 
-- Una **Operación** pertenece a un **Cliente** y tiene exactamente un **Mandato** vigente
+- Una **Operación** representa exactamente un contenedor, pertenece a un
+  **Cliente**, conserva todas las versiones de **Mandato** y referencia una
+  sola como vigente
 - Una **Operación** genera N **Pedidos de cotización**, cada uno hacia un **Proveedor** distinto
-- Un **Pedido de cotización** produce a lo sumo una **Cotización**
+- Un **Pedido de cotización** puede producir varias versiones inmutables de
+  **Cotización** durante la negociación
 - Un **Booking** selecciona exactamente una **Cotización**
-- **Cotización**, **Booking** y **Renegociación** producen **Compromisos**; cada **Compromiso** ancla a una **Llamada** y un instante
+- Sólo una **Cotización** aceptada dentro del mandato puede producir un
+  **Compromiso** y ser seleccionada para un **Booking**
+- El **Booking** guarda el estado vigente; sus **Compromisos** guardan la
+  historia inmutable
+- **Cotización** aceptada, **Booking**, **Renegociación** y cancelación producen
+  **Compromisos**; cada **Compromiso** ancla a una **Llamada**, un instante y
+  una versión del **Mandato**
 - Una **Renegociación** reemplaza un **Compromiso** anterior sin borrarlo
+- Una cancelación del proveedor cancela el **Booking**, crea un compromiso de
+  cancelación y deja nuevos contactos a proveedores en el **Outbox**
 - Una **Escalación** entrega una **Llamada** viva al **Supervisor**, con los **Compromisos** y el **Mandato** como contexto
 - Todo cambio dentro de la **Ventana de acción** lo resuelve el agente solo; fuera de ella, **Escalación**
 
@@ -114,3 +144,7 @@ Registro transaccional de trabajo pendiente que sobrevive caídas del servidor.
 - Compromiso ≠ transcript — el transcript es evidencia; el **Compromiso** es el hecho estructurado que se puede exigir.
 - Nombre del agente: el pizarrón decía "Jarvis" y el challenge "Volta" — resuelto: **Tango**.
 - "Nuestros proveedores" — resuelto: los proveedores pertenecen al **ERP del cliente**; Tango llama a los fleteros habituales de la empresa de Carlos, no a un marketplace de Nauta.
+- "Preferencias" vs. **Mandato** — resuelto: no son capas distintas; todas las
+  reglas expresadas por el cliente viven en una versión del mandato.
+- Una cotización cara que luego mejora no se sobrescribe: se conservan ambas
+  versiones. Sólo la versión aceptada produce compromiso.

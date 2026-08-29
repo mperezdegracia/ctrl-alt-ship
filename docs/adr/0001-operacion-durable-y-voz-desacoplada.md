@@ -18,7 +18,8 @@ usar el historial de un agente como la fuente de verdad.
 ## Decisión
 
 1. `operation` es el agregado y la fuente de verdad. Se persiste antes de
-   iniciar el contacto con proveedores.
+   iniciar el contacto con proveedores y conserva versiones inmutables del
+   mandato, con una referencia explícita a la versión vigente.
 2. Los dos agentes son configuraciones de conversación con responsabilidades
    distintas, no dos backends con estados independientes:
    - **Agente de cliente:** toma el pedido, completa campos faltantes y obtiene

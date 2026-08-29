@@ -16,18 +16,25 @@ draft
   -> notifications_sent
 
 sourcing / booking_pending -> needs_follow_up | cancelled | failed
+booking_confirmed / notifications_sent -> sourcing  # cancelación del provider
 ```
 
 Para el demo, `quotes_received` puede comenzar cuando llega la primera oferta
 válida. El sistema no debe requerir que respondan todos los proveedores para
 seguir; usa un timeout declarativo.
 
+Una reprogramación aceptada actualiza el booking sin abandonar
+`booking_confirmed`. Una cancelación del provider puede reabrir una operación
+ya notificada y devolverla a `sourcing`; los emails enviados y compromisos
+anteriores permanecen como historia.
+
 ## Datos que el agente de cliente debe confirmar
 
 - Puerto/terminal de retiro y dirección de entrega (con localidad).
 - Fecha o ventana de retiro, restricciones de turno y contacto en origen.
 - Tipo de carga: contenedor/bultos, dimensiones, peso y necesidades especiales.
-- El mandato: tope de precio y ventana de acción, confirmados verbalmente.
+- El mandato: tope de precio con moneda, una o más ventanas de acción y plazo
+  mínimo de pago desde factura, confirmados verbalmente.
   Carlos cierra todo en esa llamada; no hay aprobación posterior. El email
   final es confirmación de lo hecho, no un pedido de aprobación.
 
@@ -69,3 +76,8 @@ Si un dato crítico falta, el agente lo pregunta o deja la operación en
 - La grabación de llamadas de Twilio queda activada.
 - Los eventos relevantes marcan checkpoints temporales para poder reproducir
   la porción de la llamada que produjo cada compromiso.
+- Los compromisos son inmutables. Una reprogramación o cancelación crea uno
+  nuevo con referencia al compromiso reemplazado; nunca edita el anterior.
+- Las propuestas de un proveedor se conservan como versiones de cotización,
+  incluso cuando quedan fuera del mandato. Sólo una versión aceptada produce
+  un compromiso.
