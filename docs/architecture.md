@@ -8,6 +8,7 @@ raíz:
 ```text
 .
 ├── backend/                 # Runtime Node/TypeScript en Render
+│   ├── render.yaml           # Blueprint del runtime de Render
 │   └── src/
 │       ├── config/          # Variables de entorno y composición de dependencias
 │       ├── http/            # Express: rutas, webhooks y middleware

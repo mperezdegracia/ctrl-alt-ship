@@ -47,7 +47,8 @@ key; server-only routes verify its Bearer JWT before accessing domain data.
 
 ## Render
 
-`render.yaml` defines the single Node web service. In the Render Dashboard,
-create a Blueprint from this repository and enter the values marked as secrets.
+`backend/render.yaml` defines the single Node web service. In the Render
+Dashboard, create a Blueprint from this file and enter the values marked as
+secrets.
 The initial service uses the Free plan for development and health-checks
 `/health` against Supabase. Use a paid always-on instance before a voice demo.
