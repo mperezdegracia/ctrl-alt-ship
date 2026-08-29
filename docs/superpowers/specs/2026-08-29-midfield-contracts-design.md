@@ -192,8 +192,10 @@ representa que el provider abandona su compromiso y devuelve la operación a
 entidades de dominio opcionales, fragmento de transcript, checkpoint y posible
 compromiso reemplazado. Una cotización rechazada no crea compromiso.
 
-`events` es el log inmutable del dominio con tipo, payload, operación, llamada o
-compromiso opcionales, instante y checkpoint.
+`events` es el log inmutable del dominio con tipo enumerado, versión de schema,
+payload, operación, llamada o compromiso opcionales, instante y checkpoint.
+Sólo `call.rejected` puede ser global y carecer de operación; los demás eventos
+pertenecen a un timeline. Un checkpoint siempre exige una llamada correlacionada.
 
 `outbox` guarda trabajo transaccional pendiente con operación, pedido de
 cotización opcional, tipo, payload, estado, intentos, idempotency key y tiempos.

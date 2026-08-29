@@ -24,6 +24,18 @@ CREATE TYPE change_request_status AS ENUM ('pending', 'applied', 'rejected', 'es
 CREATE TYPE escalation_status AS ENUM ('started', 'supervisor_joined', 'resolved', 'failed');
 CREATE TYPE commitment_type AS ENUM ('quote', 'booking', 'reschedule', 'cancellation');
 CREATE TYPE outbox_status AS ENUM ('pending', 'processing', 'processed', 'failed');
+CREATE TYPE domain_event_type AS ENUM (
+  'call.rejected', 'call.routed', 'call.completed', 'call.failed', 'call.transferred',
+  'operation.created', 'operation.updated', 'operation.cancelled',
+  'mandate.confirmed', 'sourcing.started',
+  'quote.requested', 'quote.received', 'quote.counteroffer_requested',
+  'quote.declined', 'quote.expired', 'quote.selected',
+  'booking.pending', 'booking.confirmed', 'booking.declined',
+  'booking.rescheduled', 'booking.reschedule_declined', 'booking.cancelled',
+  'escalation.started', 'escalation.supervisor_joined',
+  'escalation.resolved', 'escalation.failed',
+  'email.queued', 'email.sent', 'email.failed'
+);
 
 CREATE FUNCTION is_window(value jsonb)
 RETURNS boolean
@@ -700,14 +712,20 @@ CREATE INDEX commitments_operation_occurred_idx ON commitments(operation_id, occ
 
 CREATE TABLE events (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  operation_id uuid NOT NULL REFERENCES operations(id),
+  operation_id uuid REFERENCES operations(id),
   call_id uuid REFERENCES calls(id),
   commitment_id uuid REFERENCES commitments(id),
-  type text NOT NULL CHECK (btrim(type) <> ''),
+  type domain_event_type NOT NULL,
+  schema_version smallint NOT NULL DEFAULT 1 CHECK (schema_version > 0),
   payload jsonb NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(payload) = 'object'),
   recording_checkpoint numeric(12,3) CHECK (recording_checkpoint >= 0),
   occurred_at timestamptz NOT NULL DEFAULT now(),
-  created_at timestamptz NOT NULL DEFAULT now()
+  created_at timestamptz NOT NULL DEFAULT now(),
+  CHECK (
+    operation_id IS NOT NULL
+    OR (type = 'call.rejected' AND call_id IS NULL AND commitment_id IS NULL)
+  ),
+  CHECK (recording_checkpoint IS NULL OR call_id IS NOT NULL)
 );
 
 CREATE FUNCTION validate_event_context()
