@@ -1,0 +1,31 @@
+{
+  "name": "@ctrl-alt-ship/backend",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Voice runtime and authenticated operations API.",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "start": "tsx src/server.ts",
+    "db:smoke": "tsx scripts/harnesses/supabase-smoke.ts",
+    "db:seed": "tsx scripts/db/seed.ts",
+    "auth:smoke": "tsx scripts/harnesses/auth-smoke.ts",
+    "typecheck": "tsc --project tsconfig.json"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.112.4",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "openai": "^7.8.0",
+    "ws": "^8.21.3"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/node": "^26.4.0",
+    "@types/ws": "^8.18.1",
+    "tsx": "^4.23.12",
+    "typescript": "^7.0.2"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

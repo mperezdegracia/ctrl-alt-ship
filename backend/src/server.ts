@@ -1,4 +1,5 @@
 import express from "express";
+import OpenAI from "openai";
 import WebSocket from "ws";
 
 import "./config/environment";
@@ -38,13 +39,26 @@ app.use((req, res, next) => {
   next();
 });
 
-app.use(express.json());
+// OpenAI signs the raw request bytes, so its webhook must bypass the JSON
+// parser. All other routes retain normal JSON parsing below.
+const jsonBodyParser = express.json();
+
+app.use((req, res, next) => {
+  if (req.path === "/openai/webhook") {
+    next();
+    return;
+  }
+
+  jsonBodyParser(req, res, next);
+});
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 
 if (!OPENAI_API_KEY) {
   throw new Error("Falta OPENAI_API_KEY");
 }
+
+const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 
 /*
  * ============================================================
@@ -94,18 +108,38 @@ app.get("/api/me", requireDashboardAuth, (req: DashboardRequest, res) => {
   res.json({ user: req.dashboardUser });
 });
 
-app.post("/openai/webhook", async (req, res) => {
-  const event = req.body;
+app.post("/openai/webhook", express.raw({ type: "*/*" }), async (req, res) => {
+  const webhookSecret = process.env.OPENAI_WEBHOOK_SECRET;
 
-  console.log(
-    "Webhook received:",
-    JSON.stringify(event, null, 2)
-  );
+  if (!webhookSecret) {
+    console.error("OPENAI_WEBHOOK_SECRET no está configurado");
+    res.status(503).json({ error: "voice_webhook_not_configured" });
+    return;
+  }
 
-  // Respondemos rápido al webhook.
-  res.sendStatus(200);
+  if (!Buffer.isBuffer(req.body)) {
+    res.status(400).json({ error: "expected_raw_webhook_body" });
+    return;
+  }
+
+  let event: { type?: string; data?: { call_id?: string } };
+
+  try {
+    event = (await openai.webhooks.unwrap(
+      req.body.toString("utf8"),
+      req.headers,
+      webhookSecret
+    )) as typeof event;
+  } catch (error) {
+    console.error("Invalid OpenAI webhook signature:", error);
+    res.status(400).json({ error: "invalid_webhook_signature" });
+    return;
+  }
+
+  console.log("Verified OpenAI webhook:", event.type);
 
   if (event.type !== "realtime.call.incoming") {
+    res.sendStatus(200);
     return;
   }
 
@@ -226,8 +260,14 @@ usá get_operation_status antes de responder.
 
     if (!acceptResponse.ok) {
       console.error("Could not accept call");
+      res.status(502).json({ error: "openai_call_accept_failed" });
       return;
     }
+
+    // The Realtime SIP connector expects the API key in the acknowledgement.
+    // This response is sent only after a valid OpenAI signature was verified.
+    res.setHeader("Authorization", `Bearer ${OPENAI_API_KEY}`);
+    res.sendStatus(200);
 
     /*
      * ============================================================

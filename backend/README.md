@@ -6,5 +6,6 @@ Express is the HTTP edge, `domain/` holds the business rules, and `tango/` is
 the operational facade for Supabase, telephony, AI, external services and
 workers.
 
-The dashboard built from `../frontend/` will be served statically by this
-runtime; it does not run as a separate service during the demo.
+This application deploys to Render. The dashboard in `../frontend/` is a
+separate Next.js application that deploys to Vercel and calls this API with a
+Supabase access token.

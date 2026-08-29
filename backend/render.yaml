@@ -4,14 +4,21 @@ services:
     runtime: node
     region: oregon
     plan: free
+    buildFilter:
+      paths:
+        - backend/**
+        - package.json
+        - package-lock.json
     buildCommand: npm ci --include=dev
-    startCommand: npm start
+    startCommand: npm run start --workspace @ctrl-alt-ship/backend
     healthCheckPath: /health
     autoDeployTrigger: commit
     envVars:
       - key: NODE_ENV
         value: production
       - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENAI_WEBHOOK_SECRET
         sync: false
       - key: SUPABASE_URL
         sync: false

@@ -1,7 +1,7 @@
 import dotenv from "dotenv";
 import { resolve } from "node:path";
 
-dotenv.config({ path: resolve(__dirname, "../../backend/.env") });
+dotenv.config({ path: resolve(__dirname, "../../.env") });
 
 const requiredEnvironment = ["SUPABASE_URL", "SUPABASE_SECRET_KEY"] as const;
 

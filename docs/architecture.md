@@ -9,6 +9,7 @@ raíz:
 .
 ├── backend/                 # Runtime Node/TypeScript en Render
 │   ├── .env.example          # Formato local: secretos sólo del backend
+│   ├── package.json          # Dependencias y comandos del runtime
 │   ├── render.yaml           # Blueprint del runtime de Render
 │   └── src/
 │       ├── config/          # Variables de entorno y composición de dependencias
@@ -27,6 +28,7 @@ raíz:
 │       └── shared/          # Tipos, errores y utilidades sin lógica de negocio
 ├── frontend/                # Código fuente del dashboard de operaciones
 │   ├── .env.local.example    # Configuración pública para Next.js
+│   ├── package.json          # Dependencias y comandos de Next.js
 │   ├── public/
 │   └── src/
 │       ├── app/             # Arranque, rutas y layout
@@ -34,7 +36,7 @@ raíz:
 │       ├── components/      # Componentes reutilizables de UI
 │       └── lib/             # Cliente API y formateadores
 ├── contracts/               # Midfield congelado: schema, tools y eventos
-└── scripts/harnesses/       # Harnesses ejecutables independientes por frente
+└── package.json              # Workspace y atajos para las dos aplicaciones
 ```
 
 `frontend/` produce el dashboard de operaciones y se despliega de forma

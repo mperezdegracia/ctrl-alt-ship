@@ -2,7 +2,7 @@ import { createClient } from "@supabase/supabase-js";
 import dotenv from "dotenv";
 import { resolve } from "node:path";
 
-dotenv.config({ path: resolve(__dirname, "../../backend/.env") });
+dotenv.config({ path: resolve(__dirname, "../../.env") });
 
 type SeedCounterparty = {
   role: "contact" | "provider";

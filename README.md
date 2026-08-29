@@ -82,6 +82,26 @@ secrets.
 The initial service uses the Free plan for development and health-checks
 `/health` against Supabase. Use a paid always-on instance before a voice demo.
 
+## Realtime SIP test
+
+The voice spike is deployed at `https://ctrl-alt-ship.onrender.com` and its
+incoming OpenAI endpoint is `/openai/webhook`. It now accepts only signed
+OpenAI webhooks:
+
+1. In OpenAI Project Settings > Webhooks, create an endpoint for
+   `https://ctrl-alt-ship.onrender.com/openai/webhook` and select
+   `realtime.call.incoming`.
+2. Copy its webhook secret to `OPENAI_WEBHOOK_SECRET` in Render and, for local
+   work, in `backend/.env`. Do not commit or share that secret in chat.
+3. Point the Twilio Elastic SIP Trunk origination URI at
+   `sip:<OPENAI_PROJECT_ID>@sip.api.openai.com;transport=tls`, then assign the
+   demo phone number to that trunk.
+4. Call the demo number and inspect Render logs for a verified webhook, a
+   successful call acceptance, and a connected Realtime sideband.
+
+The OpenAI API key must remain only in `backend/.env` locally and in Render.
+The browser never receives it.
+
 ## Running locally
 
 Supabase remains hosted and shared; neither app starts a local database or Auth
@@ -98,9 +118,7 @@ separately:
 
 ```bash
 cp frontend/.env.local.example frontend/.env.local
-cd frontend
-npm install
-npm run dev -- --port 3001
+npm run dev --workspace @ctrl-alt-ship/frontend -- --port 3001
 ```
 
 `frontend/.env.local` contains only browser-safe Supabase settings and the
@@ -108,3 +126,8 @@ local Render API URL. Production Vercel settings use the same two
 `NEXT_PUBLIC_SUPABASE_*` values, with `NEXT_PUBLIC_API_URL` pointing to the
 Render service. Add the Vercel URL to `DASHBOARD_ORIGINS` in Render before
 the browser calls the API directly.
+
+The frontend workspace is intentionally dependency-free until the Next.js
+dashboard branch lands. Its package owns the forthcoming Next.js dependencies
+and `dev` command; the root workspace only provides the shared install and
+backend shortcuts.

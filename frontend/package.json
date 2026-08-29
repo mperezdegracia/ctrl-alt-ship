@@ -1,0 +1,6 @@
+{
+  "name": "@ctrl-alt-ship/frontend",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Next.js operations dashboard."
+}
