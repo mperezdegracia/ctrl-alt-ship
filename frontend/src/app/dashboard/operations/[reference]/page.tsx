@@ -42,7 +42,7 @@ export default async function OperationPage({ params }: { params: Promise<{ refe
         <header className="operation-detail-header">
           <div>
             <p className="operation-reference">{operation.reference}</p>
-            <h1>{operation.clientName}</h1>
+            <h1>Operation record</h1>
             <p className="operation-route">{operation.pickupLocation ?? "Pickup not recorded"} <span aria-hidden="true">→</span> {operation.deliveryLocation ?? "Delivery not recorded"}</p>
           </div>
           <div className="operation-status-block">
@@ -50,6 +50,13 @@ export default async function OperationPage({ params }: { params: Promise<{ refe
             <p>Updated {formatDateTime(operation.updatedAt)}</p>
           </div>
         </header>
+
+        <section className="operation-command-strip" aria-label="Operation at a glance">
+          <div><span>Client</span><strong>{operation.clientName}</strong></div>
+          <div><span>Next action</span><strong>{operation.nextStep}</strong></div>
+          <div><span>Mandate</span><strong>{operation.mandate ? `Version ${operation.mandate.version}` : "Awaiting authorization"}</strong></div>
+          <div><span>Booking</span><strong>{operation.booking ? formatStatus(operation.booking.status) : "Not recorded"}</strong></div>
+        </section>
 
         <OperationLiveUpdates reference={operation.reference} updatedAt={operation.updatedAt} />
 
@@ -73,17 +80,19 @@ export default async function OperationPage({ params }: { params: Promise<{ refe
 
         <div className="detail-grid">
           <section className="detail-section">
-            <h2>Operation</h2>
+            <h2>Shipment details</h2>
             <dl className="facts-list">
               <div><dt>Container</dt><dd>{operation.containerType ?? "Not recorded"}</dd></div>
               <div><dt>Gross weight</dt><dd>{operation.grossWeightKg === null ? "Not recorded" : `${operation.grossWeightKg.toLocaleString("en-US")} kg`}</dd></div>
               <div><dt>Pickup</dt><dd>{operation.pickupLocation ?? "Not recorded"}</dd></div>
               <div><dt>Delivery</dt><dd>{operation.deliveryLocation ?? "Not recorded"}</dd></div>
               <div><dt>Empty return</dt><dd>{operation.emptyReturnDepot ?? "Not recorded"}</dd></div>
+              <div><dt>Constraints</dt><dd>{operation.operationalConstraints.length > 0 ? operation.operationalConstraints.join(" · ") : "None recorded"}</dd></div>
+              <div><dt>Cargo notes</dt><dd>{operation.cargoNotes ?? "None recorded"}</dd></div>
             </dl>
           </section>
           <section className="detail-section mandate-section">
-            <h2>Current Mandate {operation.mandate && <span>v{operation.mandate.version}</span>}</h2>
+            <h2>Authorization mandate {operation.mandate && <span>v{operation.mandate.version}</span>}</h2>
             {operation.mandate ? (
               <dl className="facts-list">
                 <div><dt>Maximum price</dt><dd>{formatMoney(operation.mandate.priceCap, operation.mandate.currency)}</dd></div>

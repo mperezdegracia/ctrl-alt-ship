@@ -53,4 +53,7 @@ ALTER TABLE public.dashboard_saved_views ENABLE ROW LEVEL SECURITY;
 REVOKE ALL PRIVILEGES ON public.operator_actions, public.dashboard_saved_views FROM PUBLIC, anon, authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON public.operator_actions, public.dashboard_saved_views TO service_role;
 
+-- Supabase's REST layer must see the new saved-view relation immediately.
+NOTIFY pgrst, 'reload schema';
+
 COMMIT;
