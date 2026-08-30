@@ -2,13 +2,14 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Nauta | Operaciones",
-  description: "Centro de control operativo de Nauta.",
+  title: "Tango | Operations",
+  description: "Tango freight operations control center.",
+  icons: { icon: "/tango.png", shortcut: "/tango.png", apple: "/tango.png" },
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="es">
+    <html lang="en">
       <body>{children}</body>
     </html>
   );
