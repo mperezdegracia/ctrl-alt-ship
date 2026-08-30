@@ -32,6 +32,8 @@ import { TwilioGateway } from "./tango/telephony/twilio-gateway";
 import { EscalationHandoffCoordinator } from "./tango/telephony/escalation-handoff-coordinator";
 import { MockEscalationTool } from "./tango/tools/mock-escalation-tool";
 import { NegotiationStallTracker } from "./tango/telephony/negotiation-stall-tracker";
+import { createTwilioOutboundCall, verifyTwilioSignature } from "./tango/telephony/twilio-outbound";
+import { extractOutboundCallRecordId, routeOutboundCall } from "./tango/telephony/outbound-routing";
 
 const app = express();
 
@@ -119,6 +121,33 @@ app.get("/health", async (_req, res) => {
   res.json({ status: "ok" });
 });
 
+app.post("/calls/outbound", async (req, res) => {
+  if (!environment.OUTBOUND_CALLS_TOKEN || req.header("authorization") !== `Bearer ${environment.OUTBOUND_CALLS_TOKEN}`) return res.sendStatus(401);
+  const body = req.body as { operation_id?: string; provider_id?: string; purpose?: "quote_request" | "renegotiation" };
+  if (!body.operation_id || !body.provider_id || !body.purpose) return res.status(400).json({ error: "invalid_outbound_call" });
+  const provider = await supabaseAdmin.from("providers").select("phone,active").eq("id", body.provider_id).single();
+  if (provider.error || !provider.data?.active) return res.status(404).json({ error: "active_provider_not_found" });
+  const call = await supabaseAdmin.from("calls").insert({ operation_id: body.operation_id, provider_id: body.provider_id, provider_intent: "quote", persona: "provider", direction: "outbound", outcome: "active" }).select("id").single();
+  if (call.error || !call.data) return res.status(502).json({ error: "outbound_call_persist_failed" });
+  try {
+    const twilio = await createTwilioOutboundCall({ to: provider.data.phone, callRecordId: call.data.id, purpose: body.purpose });
+    await supabaseAdmin.from("calls").update({ twilio_call_sid: twilio.sid }).eq("id", call.data.id);
+    return res.status(202).json({ call_id: call.data.id, twilio_call_sid: twilio.sid });
+  } catch (error) {
+    await supabaseAdmin.from("calls").update({ outcome: "failed", ended_at: new Date().toISOString() }).eq("id", call.data.id);
+    logger.error("outbound_call.failed", { error });
+    return res.status(502).json({ error: "twilio_outbound_call_failed" });
+  }
+});
+
+app.post("/twilio/recording-status", (req, res) => {
+  const baseUrl = environment.PUBLIC_BASE_URL?.replace(/\/$/, "");
+  if (!baseUrl || !verifyTwilioSignature(`${baseUrl}${req.originalUrl}`, req.body as Record<string, string>, req.header("x-twilio-signature") ?? undefined)) return res.sendStatus(403);
+  const body = req.body as { CallSid?: string; RecordingUrl?: string };
+  if (body.CallSid && body.RecordingUrl) void supabaseAdmin.from("calls").update({ recording_url: body.RecordingUrl }).eq("twilio_call_sid", body.CallSid);
+  return res.sendStatus(204);
+});
+
 // Temporary protected endpoint. It proves the dashboard auth boundary before
 // the dashboard routes exist. Voice webhooks deliberately do not use it.
 app.get("/api/me", requireDashboardAuth, (req: DashboardRequest, res) => {
@@ -169,8 +198,11 @@ app.post("/openai/webhook", express.raw({ type: "*/*" }), async (req, res) => {
 
   try {
     let routingDecision;
+    const outboundId = extractOutboundCallRecordId((event as IncomingCallEvent).data.sip_headers);
     try {
-      routingDecision = await routeIncomingCall(event as IncomingCallEvent, {
+      routingDecision = outboundId
+        ? await routeOutboundCall(outboundId, callId, (event as IncomingCallEvent).data.sip_headers?.find((header) => header.name.toLowerCase() === "x-twilio-callsid")?.value ?? "unknown")
+        : await routeIncomingCall(event as IncomingCallEvent, {
         findIdentity: findCounterpartyByCallerId,
         listClientOperations: listOpenOperationsForContact,
         listProviderOperations: listActiveOperationsForProvider,
