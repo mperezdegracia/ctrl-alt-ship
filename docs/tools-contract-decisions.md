@@ -61,8 +61,9 @@ Ver [decisión, límites y despliegue](realtime-confirmation-review.md).
   de producir el primer audio porque no puede cambiarse después dentro de la
   misma sesión.
 - El agente saluda primero en inglés, tanto a clientes como a proveedores.
-  Después responde en el idioma del usuario. Cambia ante un pedido explícito o una intervención clara en
-  otro idioma; nombres, direcciones, acentos o palabras aisladas no disparan
+  Después responde en el idioma dominante de cada intervención sustantiva del
+  usuario y cambia automáticamente en el siguiente turno; no espera un pedido
+  explícito. Nombres, direcciones, acentos o palabras aisladas no disparan
   cambios una vez establecido el idioma.
 - Las instrucciones se componen con una base compartida, reglas polimórficas de
   cliente/provider y contexto verificado al final. Teléfono, email, SIP, UUIDs,
