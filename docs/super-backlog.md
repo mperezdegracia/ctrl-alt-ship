@@ -20,6 +20,22 @@ compartido. El coordinador integró y realizó commits incrementales:
 `944758a` guards de selección; `71c1604` M3 y wiring del servidor;
 `31a1fc5` esquema de referencia. El cierre documental acompaña estos commits.
 
+Continuación posterior al cierre documental (misma entrega, no nuevos diferidos):
+
+- `82cfda4`: TEL-304 rechaza secuencias fuera del rango PostgreSQL integer y
+  correlación duplicada en la URL del callback.
+- `00405d1` y `009ddfb`: corrigen delimitadores de tres funciones y una expresión
+  de referencia OP dañada en M2. Esos errores muestran que el cierre documental
+  anterior no acreditaba que la migración pudiera ejecutarse. M2 sigue sin aplicar.
+- `0a95428`: VO-201/BL-002 valida y proyecta respuestas outbound completas,
+  incluidos estado, targets y resultados, sin propagar claves desconocidas.
+- `c72fe4c`: valida respuestas inbound, exige selección para perfiles de gestión
+  y reautoriza el listado con estado vigente. El lector genérico reutiliza esa
+  validación y comprueba dirección/propósito de la llamada.
+
+Solo se inspeccionó código y se ejecutó `git diff --check`; no hubo typecheck,
+pruebas, ejecución SQL, migraciones remotas ni activación.
+
 Todos los renglones siguientes significan **implementación local integrada, sin
 validación por ejecución**. M0/MB/M1/M2/M3 son las cinco migraciones forward
 reservadas en §6; no se aplicaron. Las rutas cortas de código parten de
