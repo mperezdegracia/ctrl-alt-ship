@@ -34,8 +34,9 @@ import { SupabaseEscalationRepository } from "./tango/supabase/escalation-reposi
 import { SupabaseCallTranscriptRepository, SupabaseEscalationHandoffRepository } from "./tango/supabase/call-transcript-repository";
 import { OpenAIRealtimeGateway } from "./tango/realtime/openai-realtime-gateway";
 import { EscalationHandoffCoordinator } from "./tango/telephony/escalation-handoff-coordinator";
-import { EscalationTool } from "./tango/tools/mock-escalation-tool";
+import { EscalationTool, EscalationControlTool } from "./tango/tools/mock-escalation-tool";
 import { EscalationService, type CreatedEscalation } from "./domain/escalation-service";
+import { ToolError } from "./domain/tool-error";
 import { createTwilioOutboundCall, verifyTwilioSignature } from "./tango/telephony/twilio-outbound";
 import { extractOutboundCallRecordId, routeOutboundCall } from "./tango/telephony/outbound-routing";
 import { PreviewEmailGateway, SmtpEmailGateway } from "./tango/services/email-gateway";
@@ -488,11 +489,30 @@ app.post("/openai/webhook", express.raw({ type: "*/*" }), async (req, res) => {
       });
       return true;
     };
+    const escalationService = new EscalationService(toolScope, escalationRepository);
     const escalationTool = new EscalationTool(
-      new EscalationService(toolScope, escalationRepository),
+      escalationService,
       prepareHandoff,
     );
-    const realtimeTools = callToolFactory.create(toolScope, escalationTool);
+    const escalationControls = [
+      new EscalationControlTool("confirm_escalation", async () => {
+        if (!activeEscalation?.recipient || !handoffCoordinator.prepared || !handoffCoordinator.canReturn) {
+          throw new ToolError("invalid_transition", "The live transfer is unavailable or has already started. Do not claim a new transfer.");
+        }
+        return { status: "confirmed", handoff_ready: true };
+      }),
+      new EscalationControlTool("cancel_escalation", async () => {
+        if (!activeEscalation || !handoffCoordinator.canReturn) {
+          throw new ToolError("invalid_transition", "The transfer has already started or no handoff is pending. It cannot be cancelled here.");
+        }
+        const escalation = activeEscalation;
+        await handoffCoordinator.cancel(() => escalationService.cancel(escalation.escalationId));
+        activeEscalation = undefined;
+        callLogger.info("escalation.returned_to_flow", { escalation_id: escalation.escalationId });
+        return { status: "cancelled", handoff_ready: false, resumed_previous_flow: true };
+      }),
+    ];
+    const realtimeTools = callToolFactory.create(toolScope, escalationTool, escalationControls);
     try {
       await realtimeTools.refresh();
       callLogger.info("call.tools_configured", {
@@ -577,11 +597,13 @@ app.post("/openai/webhook", express.raw({ type: "*/*" }), async (req, res) => {
            */
 
           case "input_audio_buffer.speech_started":
+            handoffCoordinator.onCallerSpeechStarted();
             callLogger.info("audio.speech_started", { escalation_prepared: handoffCoordinator.prepared,
               refer_accepted: handoffCoordinator.referAccepted });
             break;
 
           case "input_audio_buffer.speech_stopped":
+            handoffCoordinator.onCallerSpeechStopped();
             callLogger.info("audio.speech_stopped");
             break;
 

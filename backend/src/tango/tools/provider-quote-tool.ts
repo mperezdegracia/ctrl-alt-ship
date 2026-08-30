@@ -4,10 +4,12 @@ import { RealtimeTool, type JsonSchema, type ToolInvocation } from "./realtime-t
 export class CreateQuoteTool extends RealtimeTool {
   readonly definition = {
     type: "function" as const, name: "create_quote",
-    description: "Records only the provider's price for the verified job after one brief verbal approval. For a fixed amount use equal min/max. Currency and pickup come from verified context; do not ask for or send payment, expiry or conditions. Counteroffers change only price. The server evaluates against the private mandate.",
+    description: "Records the actual price returned or maintained by the provider after a discount attempt. Try at most twice, counting the opening counteroffer; stop sooner if the provider is frustrated or refuses more bargaining. After final approval, accept_above_budget permits a price exception once attempts are exhausted, or earlier with negotiation_stopped_by_provider true. Within-budget quotes require final approval. Never simulate attempts, disclose private limits or promise selection.",
     parameters: {
       type: "object", properties: {
         operation_reference: { type: "string", pattern: "^OP-[0-9]{6,}$" },
+        accept_above_budget: { type: "boolean", description: "True after explicit final approval, once attempts are exhausted or the provider stopped bargaining. Permits a price exception, not changes to fixed terms. Never infer approval from stating a price alone." },
+        negotiation_stopped_by_provider: { type: "boolean", description: "With accept_above_budget true, records that the provider showed frustration or explicitly refused more bargaining (e.g. stop asking, final price). Allows early final approval without exhausting attempts. Do not infer consent from frustration." },
         price_range: { type: "object", properties: {
           min: { type: "number", exclusiveMinimum: 0 }, max: { type: "number", exclusiveMinimum: 0 },
         }, required: ["min", "max"], additionalProperties: false },

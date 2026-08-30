@@ -11,6 +11,8 @@ const errors: Record<string, [ToolErrorCode, string]> = {
   operation_not_available: ["operation_not_available", "That operation is not available in this call."],
   intent_locked: ["intent_locked", "This call is already linked to a different operation."],
   idempotency_conflict: ["idempotency_conflict", "This escalation request was already used with different details."],
+  invalid_transition: ["invalid_transition", "This escalation can no longer be cancelled or reused. The transfer may have started."],
+  stale_operation: ["stale_operation", "This call changed. Refresh its current state before continuing."],
 };
 
 type EscalationResult = {
@@ -25,6 +27,16 @@ type EscalationResult = {
 
 export class SupabaseEscalationRepository implements EscalationRepository {
   constructor(private readonly client: SupabaseClient) {}
+
+  async cancel(scope: ToolCallScope, escalationId: string): Promise<void> {
+    const { error } = await this.client.rpc("cancel_call_escalation", {
+      p_call_id: scope.callId,
+      p_realtime_call_id: scope.realtimeCallId,
+      p_counterparty_id: scope.counterpartyId,
+      p_escalation_id: escalationId,
+    });
+    if (error) this.rethrow(error);
+  }
 
   async create(scope: ToolCallScope, request: EscalationRequest, toolCallId: string): Promise<CreatedEscalation> {
     const { data, error } = await this.client.rpc("create_call_escalation", {

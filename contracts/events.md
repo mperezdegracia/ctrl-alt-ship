@@ -164,12 +164,27 @@ events nor counteroffer responses expose the mandate price cap.
 
 ### Booking events
 
-The provider quote rollout permits three counteroffers by default, tracked per
-quote request across calls. `negotiation_rounds_remaining` is the number of revised
-proposals still permitted after this quote (3, 2, 1, then 0 if all remain outside).
-An accepted or final outside quote reports zero. Structural/fixed-term errors do
-not persist a quote, emit success events or consume a round. No numerical client
-limit is included in quote tool results or counteroffer events.
+The provider bargain flow attempts up to two discounts in total, including
+the opening counteroffer. Each real outside-price response is persisted as an
+immutable version; reaffirming the same price after a new discount request is
+allowed. `negotiation_rounds_remaining` reports 1, then 0 with the default
+limit, and is consistent with refreshed state. Limits above two are capped
+at two; a request with a lower configured limit keeps that limit. Replays,
+structural errors and fixed-term errors do not consume attempts.
+
+After attempts are exhausted, or earlier if the provider is frustrated or refuses
+further bargaining, explicit final approval permits a new immutable
+version with `accepted_above_budget: true`, even at the same price. Its verdict
+stays `fuera` to preserve the factual comparison. Only this accepted exception
+may be selected above the cap; a plain outside quote or price observation cannot.
+`negotiation_stopped_by_provider: true` records an early stop on the accepted
+quote and the quote/selection/booking events; it never substitutes for final
+approval. A voluntary within-cap final offer can also be submitted after the second attempt.
+`quote.received`, `quote.selected` and `booking.confirmed` record the acceptance
+flag. This records the provider's confirmed offer under Tango's price-exception
+policy, not a new client mandate or a supervisor approval. Other eligibility
+checks and the five-minute selection policy stay unchanged. No numerical client
+limit is included in quote results or counteroffer events.
 
 | Event | When emitted | Payload v1 |
 | --- | --- | --- |
@@ -189,18 +204,24 @@ current_booking_id without mutating the historical Booking.
 the same transaction. `commitment_created:false` is a deprecated compatibility
 field only. No recording checkpoint, transcript range or acceptance is fabricated.
 An out-of-mandate request is saved without a booking change event;
-`escalation.started` requires the subsequent handoff, not merely saving the request.
+`escalation.started` requires the subsequent `escalate` call, not merely saving the change request.
 
 ### Escalation events
 
 | Event | When emitted | Payload v1 |
 | --- | --- | --- |
-| `escalation.started` | `escalate` starts the live handoff. | `escalation_id`, `trigger`, `reason`, `supervisor_notified` |
+| `escalation.started` | `escalate` opens the durable review, before transfer confirmation. | `escalation_id`, `trigger`, `handoff_status`, `operation_reference` |
 | `escalation.supervisor_joined` | The supervisor joins the conference. | `escalation_id`, `join_latency_seconds` |
-| `escalation.resolved` | The supervisor completes the handoff. | `escalation_id`, `resolution` |
+| `escalation.resolved` | An operator records an outcome, or the caller cancels before transfer. | `escalation_id`, `resolution`, `source?`, `resumed_previous_flow?` |
 | `escalation.failed` | Conference or supervisor contact fails. | `escalation_id`, `failure_reason`, `operation_status` |
 
-`escalation.resolved.resolution` is `approved`, `rejected` or `follow_up`.
+`escalation.resolved.resolution` is `approved`, `rejected`, `follow_up` or
+`cancelled`. The last value is recorded only by `cancel_call_escalation`, with
+`source: "caller"` and `resumed_previous_flow: true`. It closes the pending review
+without changing operation data, booking, mandate, quote rounds or call intent.
+While pending, the voice session exposes only `confirm_escalation` and
+`cancel_escalation`; successful cancellation reloads the current domain profile.
+Requests outside the mandate remain unauthorized after returning.
 `escalation.failed.failure_reason` is `supervisor_unavailable`,
 `conference_failed` or `notification_failed`.
 

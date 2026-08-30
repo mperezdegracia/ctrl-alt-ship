@@ -110,6 +110,7 @@ export type DashboardOperationDossier = DashboardOperation & {
     priceMax: number;
     currency: string;
     verdict: string;
+    acceptedAboveBudget: boolean;
     status: string;
     validUntil: string | null;
     selected: boolean;

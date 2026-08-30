@@ -39,10 +39,18 @@ _Avoid_: solicitud, request
 Oferta estructurada e inmutable de un proveedor (precio, moneda, ventana de
 retiro, plazo de pago, vigencia y condiciones); nunca equivale a booking. Una
 negociación conserva cada versión enlazada con la anterior. Las propuestas
-fuera del mandato también se guardan, pero no generan una reserva.
+fuera del mandato también se guardan; las que superan únicamente el tope de precio
+pueden seleccionarse si tienen una **Aceptación sobre el tope** explícita.
 Una Cotización completa confirmada por el Proveedor durante la Llamada autoriza
 su selección, pero no crea un Booking por sí sola.
 _Avoid_: quote, confundir con una mera Propuesta de precio
+
+**Aceptación sobre el tope**:
+Confirmación explícita de avanzar con el importe final de una Cotización aunque
+supere el precio del Mandato, después de intentar mejorarlo hasta dos veces o dejar de negociar antes por
+fastidio o negativa del Proveedor a seguir regateando.
+Es una excepción para esa Cotización, sin modificar
+el Mandato ni autorizar otros cambios de condiciones.
 
 **Propuesta de precio**:
 Importe o rango que el Proveedor ofrece para una Operación, incluida su primera
@@ -83,7 +91,8 @@ _Avoid_: nuestra base de proveedores (los proveedores son de la empresa de Carlo
 Persona de conversación que atiende al cliente: toma el pedido, completa faltantes y captura el mandato.
 
 **Agente de proveedor**:
-Persona de conversación de cara a proveedores: presenta el pedido, negocia y registra Bookings; nunca cierra fuera del mandato.
+Persona de conversación de cara a proveedores: presenta el pedido, negocia y registra Cotizaciones, incluida una Aceptación sobre el tope cuando se confirma
+explícitamente el importe final; las demás condiciones del Mandato siguen vigentes.
 
 **Devolución del vacío**:
 Tramo final del drayage: entregar el contenedor vacío en el depósito indicado por la naviera; afecta la cotización del fletero y en el demo es un dato fijo, no negociable.
@@ -157,7 +166,7 @@ pendiente; ningún worker los consume todavía.
 - Un **Pedido de cotización** puede producir varias versiones inmutables de
   **Cotización** durante la negociación
 - Un **Booking** selecciona exactamente una **Cotización**
-- Sólo una **Cotización** aceptada dentro del mandato puede ser seleccionada para un **Booking**
+- Sólo una **Cotización** aceptada dentro del mandato, o con **Aceptación sobre el tope** y las demás condiciones vigentes, puede ser seleccionada para un **Booking**
 - El **Booking** es inmutable; la Operación conserva la referencia al Booking vigente y los Bookings anteriores forman su historia
 - Una **Renegociación** crea un Booking nuevo y reemplaza la referencia de Booking vigente sin borrar el anterior
 - Durante una **Renegociación**, el **Booking** anterior sigue vigente y queda pendiente de reemplazo hasta que se confirme otro; si no hay Cotización válida, se conserva y se produce una **Escalación**

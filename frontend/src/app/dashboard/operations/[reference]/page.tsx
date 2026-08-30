@@ -140,7 +140,7 @@ export default async function OperationPage({ params }: { params: Promise<{ refe
                 <div key={quote.id} className={quote.selected ? "is-selected" : undefined}>
                   <span>{quote.providerName}{quote.selected ? " · selected" : ""}</span>
                   <strong>{quote.priceMin === quote.priceMax ? formatMoney(quote.priceMax, quote.currency) : `${formatMoney(quote.priceMin, quote.currency)}–${formatMoney(quote.priceMax, quote.currency)}`}</strong>
-                  <em>{formatStatus(quote.verdict)}</em>
+                  <em>{quote.acceptedAboveBudget ? "Accepted above budget" : formatStatus(quote.verdict)}</em>
                 </div>
               ))}
             </div>

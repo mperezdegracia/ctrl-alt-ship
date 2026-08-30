@@ -39,6 +39,8 @@ export type BookingTransition = {
 };
 export type ProviderLastQuote = {
   quote_version: number; verdict: string;
+  accepted_above_budget?: boolean;
+  negotiation_stopped_by_provider?: boolean;
   price_range: { min: number; max: number; currency: string };
   negotiation_rounds_remaining: number;
   fixed_terms?: {

@@ -105,6 +105,7 @@ export type DashboardOperationDossier = DashboardOperation & {
     priceMax: number;
     currency: string;
     verdict: string;
+    acceptedAboveBudget: boolean;
     status: string;
     validUntil: string | null;
     selected: boolean;
@@ -329,6 +330,9 @@ function traceChanges(payloadValue: unknown): DashboardOperationDossier["trace"]
 
 function traceEventDetail(type: string, payloadValue: unknown): string | null {
   const payload = asRecord(payloadValue);
+  if (["quote.received", "quote.selected", "booking.confirmed"].includes(type) && payload.accepted_above_budget === true) {
+    return "Explicitly accepted above budget";
+  }
   if (type === "quote.offered") {
     const price = asRecord(payload.price_range);
     const min = typeof price.min === "number" ? price.min : null;
@@ -771,14 +775,14 @@ export async function getDashboardOperationDossier(
 
   const requests = (requestsResult.data ?? []) as Array<{ id: string; provider_id: string }>;
   const quoteResult = requests.length > 0
-    ? await client.from("quotes").select("id,quote_request_id,price_min,price_max,currency,verdict,status,valid_until").in("quote_request_id", requests.map((request) => request.id)).order("received_at", { ascending: false })
+    ? await client.from("quotes").select("id,quote_request_id,price_min,price_max,currency,verdict,accepted_above_budget,status,valid_until").in("quote_request_id", requests.map((request) => request.id)).order("received_at", { ascending: false })
     : { data: [], error: null };
   if (quoteResult.error) throw quoteResult.error;
 
   const requestProvider = new Map(requests.map((request) => [request.id, request.provider_id]));
   const quotes = quoteResult.data as Array<{
     id: string; quote_request_id: string; price_min: number | string; price_max: number | string; currency: string;
-    verdict: string; status: string; valid_until: string | null;
+    verdict: string; accepted_above_budget: boolean; status: string; valid_until: string | null;
   }>;
   const booking = bookingResult.data as {
     id: string; quote_id: string; confirmed_price: number | string | null; pickup_window_start: string;
@@ -853,6 +857,7 @@ export async function getDashboardOperationDossier(
       priceMax: asNumber(quote.price_max) ?? 0,
       currency: quote.currency,
       verdict: quote.verdict,
+      acceptedAboveBudget: quote.accepted_above_budget === true,
       status: quote.status,
       validUntil: quote.valid_until,
       selected: quote.id === booking?.quote_id,

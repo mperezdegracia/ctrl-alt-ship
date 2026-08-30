@@ -26,19 +26,23 @@
       "list_open_operations",
       "create_operation",
       "update_operation",
-      "cancel_operation"
+      "cancel_operation",
+      "escalate"
     ],
     "client_create": [
       "update_operation",
-      "confirm_mandate"
+      "confirm_mandate",
+      "escalate"
     ],
     "client_update": [
       "update_operation",
-      "confirm_mandate"
+      "confirm_mandate",
+      "escalate"
     ],
     "client_confirm": [
       "update_operation",
-      "confirm_mandate"
+      "confirm_mandate",
+      "escalate"
     ],
     "terminal": [],
     "provider_inbound_entry": [
@@ -63,7 +67,11 @@
       "decline_quote_request",
       "escalate"
     ],
-    "provider_unavailable": []
+    "provider_unavailable": [],
+    "human_escalation": [
+      "confirm_escalation",
+      "cancel_escalation"
+    ]
   },
   "tools": [
     {
@@ -489,7 +497,7 @@
     {
       "type": "function",
       "name": "create_quote",
-      "description": "Records only the provider's price for the verified job after one brief verbal approval. For a fixed amount use equal min/max. Currency and pickup come from verified context; do not ask for or send payment, expiry or conditions. Counteroffers change only price. The server evaluates against the private mandate.",
+      "description": "Records the actual price returned or maintained by the provider after a discount attempt. Try at most twice, counting the opening counteroffer; stop sooner if the provider is frustrated or refuses more bargaining. After final approval, accept_above_budget permits a price exception once attempts are exhausted, or earlier with negotiation_stopped_by_provider true. Within-budget quotes require final approval. Never simulate attempts, disclose private limits or promise selection.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -514,6 +522,14 @@
               "max"
             ],
             "additionalProperties": false
+          },
+          "accept_above_budget": {
+            "type": "boolean",
+            "description": "True after explicit final approval, once attempts are exhausted or the provider stopped bargaining. Permits a price exception, not changes to fixed terms. Never infer approval from stating a price alone."
+          },
+          "negotiation_stopped_by_provider": {
+            "type": "boolean",
+            "description": "With accept_above_budget true, records that the provider showed frustration or explicitly refused more bargaining (e.g. stop asking, final price). Allows early final approval without exhausting attempts. Do not infer consent from frustration."
           }
         },
         "required": [
@@ -553,6 +569,12 @@
           "negotiation_rounds_remaining": {
             "type": "integer",
             "minimum": 0
+          },
+          "accepted_above_budget": {
+            "type": "boolean"
+          },
+          "negotiation_stopped_by_provider": {
+            "type": "boolean"
           }
         },
         "required": [
@@ -933,7 +955,7 @@
     {
       "type": "function",
       "name": "escalate",
-      "description": "Starts a live supervisor handoff for a provider conversation. It sends the current booking, mandate and reason out of band, never the raw transcript or price cap.",
+      "description": "Opens a durable human-review case. Wait for the caller to choose confirm_escalation or cancel_escalation before attempting a live transfer.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -946,19 +968,30 @@
             "enum": [
               "explicit_human_request",
               "outside_mandate",
-              "negotiation_stalled",
-              "identity_concern",
-              "other"
+              "negotiation_stalled"
             ]
           },
           "reason": {
             "type": "string",
-            "minLength": 1
+            "minLength": 1,
+            "maxLength": 500
+          },
+          "summary": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          },
+          "requested_action": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
           }
         },
         "required": [
           "trigger",
-          "reason"
+          "reason",
+          "summary",
+          "requested_action"
         ],
         "additionalProperties": false
       },
@@ -966,27 +999,34 @@
         "type": "object",
         "properties": {
           "status": {
-            "type": "string",
-            "enum": [
-              "started",
-              "failed"
-            ]
+            "const": "started"
           },
-          "supervisor_notified": {
+          "operation_reference": {
+            "type": "string"
+          },
+          "handoff_ready": {
             "type": "boolean"
+          },
+          "handoff_status": {
+            "enum": [
+              "pending",
+              "not_configured"
+            ]
           }
         },
         "required": [
           "status",
-          "supervisor_notified"
+          "operation_reference",
+          "handoff_ready",
+          "handoff_status"
         ],
         "additionalProperties": false
       },
       "x-personas": [
+        "client",
         "provider"
       ],
-      "x-mutating": true,
-      "x-locks-intent": "escalation"
+      "x-mutating": true
     },
     {
       "type": "function",
@@ -1124,6 +1164,74 @@
         "additionalProperties": false
       },
       "x-personas": [
+        "provider"
+      ],
+      "x-mutating": true
+    },
+    {
+      "type": "function",
+      "name": "confirm_escalation",
+      "description": "Confirm the pending transfer after an explicit caller confirmation. Internal case and recipient are server-owned.",
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "returns": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "const": "confirmed"
+          },
+          "handoff_ready": {
+            "const": true
+          }
+        },
+        "required": [
+          "status",
+          "handoff_ready"
+        ],
+        "additionalProperties": false
+      },
+      "x-personas": [
+        "client",
+        "provider"
+      ],
+      "x-mutating": true
+    },
+    {
+      "type": "function",
+      "name": "cancel_escalation",
+      "description": "Cancel only the pending human handoff and resume the authorized operation flow, preserving data and call intent. Unavailable once the transfer starts.",
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "returns": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "const": "cancelled"
+          },
+          "handoff_ready": {
+            "const": false
+          },
+          "resumed_previous_flow": {
+            "const": true
+          }
+        },
+        "required": [
+          "status",
+          "handoff_ready",
+          "resumed_previous_flow"
+        ],
+        "additionalProperties": false
+      },
+      "x-personas": [
+        "client",
         "provider"
       ],
       "x-mutating": true

@@ -19,7 +19,7 @@ export class CallToolFactory {
     private readonly logger?: StructuredLogger,
   ) {}
 
-  create(scope: ToolCallScope, escalationTool?: RealtimeTool): CallToolSession {
+  create(scope: ToolCallScope, escalationTool?: RealtimeTool, escalationControls: RealtimeTool[] = []): CallToolSession {
     if (scope.persona === "provider" && scope.direction === "inbound" && !this.providerBookings) {
       throw new Error("Provider inbound booking repository is not configured");
     }
@@ -33,7 +33,7 @@ export class CallToolFactory {
       ? new ProviderQuoteService(scope, this.providerMutations) : undefined;
     const bookingService = scope.persona === "provider" && scope.direction === "inbound" && this.providerBookings
       ? new ProviderBookingService(scope, this.providerBookings) : undefined;
-    const tools: RealtimeTool[] = [];
+    const tools: RealtimeTool[] = [...escalationControls];
     if (scope.persona === "client") tools.push(new ListOpenOperationsTool(service));
     else if (bookingService) tools.push(new ListProviderOperationsTool(service, bookingService));
     if (clientService) tools.push(

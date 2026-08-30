@@ -14,6 +14,8 @@ export type ProviderFlowState = ProviderOutboundState;
 export type ProviderQuoteResult = {
   operation_reference: string; quote_version: number; verdict: "dentro" | "contraoferta" | "fuera";
   reason_codes: string[]; negotiation_remaining: boolean; negotiation_rounds_remaining: number;
+  accepted_above_budget?: boolean;
+  negotiation_stopped_by_provider?: boolean;
 } | { status: "declined"; commitment_created: false };
 export interface ProviderQuoteRepository {
   getState(scope: ToolCallScope): Promise<ProviderFlowState>;
@@ -73,7 +75,10 @@ export class ProviderQuoteService {
   private validateQuote(args: Record<string, unknown>): void {
     const required = ["price_range"];
     if (required.some((key) => !(key in args))
-      || Object.keys(args).some((key) => ![...required, "operation_reference"].includes(key))) this.invalid();
+      || Object.keys(args).some((key) => ![...required, "operation_reference", "accept_above_budget", "negotiation_stopped_by_provider"].includes(key))
+      || ("accept_above_budget" in args && typeof args.accept_above_budget !== "boolean")
+      || ("negotiation_stopped_by_provider" in args && typeof args.negotiation_stopped_by_provider !== "boolean")
+      || (args.negotiation_stopped_by_provider === true && args.accept_above_budget !== true)) this.invalid();
     const price = args.price_range;
     this.object(price);
     if (Object.keys(price).length !== 2 || !this.money(price.min) || !this.money(price.max)
@@ -92,6 +97,6 @@ export class ProviderQuoteService {
     if (this.scope.persona !== "provider" || this.scope.direction !== "outbound") throw new ToolError("not_authorized", "Only an authenticated provider outbound quote call can submit this quote.");
   }
   private invalid(): never {
-    throw new ToolError("invalid_arguments", "Send only price_range with positive min/max amounts and at most two decimals; optionally operation_reference to select a job. Do not send currency, dates, payment, expiry, conditions, IDs or verdicts.");
+    throw new ToolError("invalid_arguments", "Send price_range with positive min/max amounts and at most two decimals; optionally operation_reference, boolean accept_above_budget after final approval, and negotiation_stopped_by_provider for frustration or refusal to continue bargaining. Do not send currency, dates, payment, expiry, conditions, IDs or verdicts.");
   }
 }

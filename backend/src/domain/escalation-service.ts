@@ -29,6 +29,7 @@ export type CreatedEscalation = Readonly<{
 
 export interface EscalationRepository {
   create(scope: ToolCallScope, request: EscalationRequest, toolCallId: string): Promise<CreatedEscalation>;
+  cancel(scope: ToolCallScope, escalationId: string): Promise<void>;
 }
 
 /** Persists an escalation before any telephony transfer begins. */
@@ -43,6 +44,10 @@ export class EscalationService {
     if (!toolCallId.trim()) this.invalid();
     const request = this.request(value);
     return this.repository.create(this.scope, request, toolCallId);
+  }
+
+  async cancel(escalationId: string): Promise<void> {
+    await this.repository.cancel(this.scope, escalationId);
   }
 
   private request(value: unknown): EscalationRequest {

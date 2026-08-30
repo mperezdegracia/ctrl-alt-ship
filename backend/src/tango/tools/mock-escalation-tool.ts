@@ -9,7 +9,7 @@ export class EscalationTool extends RealtimeTool {
   readonly definition = {
     type: "function" as const,
     name: "escalate",
-    description: "Creates a durable human-review case and, when a recipient is configured, starts the live voice handoff.",
+    description: "Opens a human-review case. Then ask whether to transfer or return to the previous flow; the live transfer requires confirm_escalation.",
     parameters: {
       type: "object",
       properties: {
@@ -28,13 +28,36 @@ export class EscalationTool extends RealtimeTool {
 
   async execute(value: unknown, invocation?: { toolCallId: string }): Promise<unknown> {
     const escalation = await this.service.start(value, invocation?.toolCallId ?? "");
-    const handoffReady = escalation.recipient ? await this.prepareHandoff(escalation) : false;
+    const handoffReady = await this.prepareHandoff(escalation);
     return {
       status: "started",
       operation_reference: escalation.operationReference,
       handoff_ready: handoffReady,
       handoff_status: escalation.handoffStatus,
     };
+  }
+}
+
+/** Call-local controls: the model cannot choose a case ID or a destination. */
+export class EscalationControlTool extends RealtimeTool {
+  readonly definition;
+
+  constructor(name: "confirm_escalation" | "cancel_escalation", private readonly run: () => Promise<unknown>) {
+    super();
+    this.definition = {
+      type: "function" as const, name,
+      description: name === "confirm_escalation"
+        ? "Start the pending human transfer only after the caller explicitly confirms it."
+        : "Cancel the pending human handoff when the caller asks to go back or continue with Tango. Preserve all operation data and resume the previous flow.",
+      parameters: { type: "object", properties: {}, required: [], additionalProperties: false } as JsonSchema,
+    };
+  }
+
+  async execute(value: unknown): Promise<unknown> {
+    if (!value || typeof value !== "object" || Array.isArray(value) || Object.keys(value).length) {
+      throw new ToolError("invalid_arguments", "This action takes no arguments.");
+    }
+    return this.run();
   }
 }
 

@@ -10,6 +10,9 @@ export class CallToolSession extends RealtimeToolRegistry {
   private ready: boolean;
   private state?: ClientFlowState;
   private providerState?: ProviderCallState;
+  private pendingEscalation = false;
+
+  get escalationPending(): boolean { return this.pendingEscalation; }
 
   constructor(tools: RealtimeTool[], private readonly clientService?: ClientOperationService, private readonly providerService?: ProviderQuoteService, private readonly bookingService?: ProviderBookingService, private readonly logger?: DiagnosticLogger) {
     super(tools);
@@ -23,6 +26,7 @@ export class CallToolSession extends RealtimeToolRegistry {
   get definitions() {
     if (!this.ready) return [];
     const definitions = super.definitions;
+    if (this.pendingEscalation) return definitions.filter((tool) => ["confirm_escalation", "cancel_escalation"].includes(tool.name));
     if (this.providerService || this.bookingService) {
       const names = this.providerState?.profile === "terminal" ? []
         : this.providerState?.flow === "provider_outbound" && this.providerState.profile === "provider_quote" ? ["record_provider_offer", "create_quote", "decline_quote_request", "escalate"]
@@ -34,7 +38,7 @@ export class CallToolSession extends RealtimeToolRegistry {
         : [];
       return definitions.filter((tool) => names.includes(tool.name));
     }
-    if (!this.clientService) return definitions;
+    if (!this.clientService) return definitions.filter((tool) => !["confirm_escalation", "cancel_escalation"].includes(tool.name));
     const names = this.state?.profile === "client_entry"
       ? ["list_open_operations", "create_operation", "update_operation", "cancel_operation", "escalate"]
       : this.state?.profile === "terminal" ? []
@@ -83,6 +87,8 @@ export class CallToolSession extends RealtimeToolRegistry {
     });
     try {
       const result = await this.executeInFlow(name, args, invocation);
+      if (name === "escalate") this.pendingEscalation = true;
+      if (name === "cancel_escalation") this.pendingEscalation = false;
       this.logger?.info("tool.execution_succeeded", { ...fields, duration_ms: Date.now() - started });
       return result;
     } catch (error) {
@@ -92,6 +98,12 @@ export class CallToolSession extends RealtimeToolRegistry {
   }
 
   private async executeInFlow(name: string, args: unknown, invocation?: ToolInvocation): Promise<unknown> {
+    if (this.pendingEscalation || name === "confirm_escalation" || name === "cancel_escalation") {
+      if (!this.definitions.some((tool) => tool.name === name)) {
+        throw new ToolError("tool_unavailable", "Confirm or cancel the pending human handoff before continuing.");
+      }
+      return super.execute(name, args, invocation);
+    }
     if (this.providerService && ["create_quote", "decline_quote_request", "record_provider_offer"].includes(name)) {
       return super.execute(name, args, invocation);
     }

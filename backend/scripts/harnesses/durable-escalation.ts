@@ -6,6 +6,10 @@ import { EscalationTool } from "../../src/tango/tools/mock-escalation-tool";
 
 class Repository implements EscalationRepository {
   requests: Array<{ scope: ToolCallScope; request: EscalationRequest; toolCallId: string }> = [];
+  cancellations: Array<{ scope: ToolCallScope; escalationId: string }> = [];
+  async cancel(scope: ToolCallScope, escalationId: string): Promise<void> {
+    this.cancellations.push({ scope, escalationId });
+  }
   result: CreatedEscalation = {
     escalationId: "11111111-1111-4111-8111-111111111111",
     operationReference: "OP-900001",
@@ -56,10 +60,12 @@ async function main(): Promise<void> {
     handoff_status: "pending",
   });
   assert.doesNotMatch(JSON.stringify(result), /5829|escalationId|recipient/i);
+  await clientService.cancel(repository.result.escalationId);
+  assert.deepEqual(repository.cancellations, [{ scope: clientScope, escalationId: repository.result.escalationId }]);
 
   repository.result = { ...repository.result, handoffStatus: "not_configured", recipient: null };
   const unconfigured = new EscalationTool(clientService, async () => {
-    throw new Error("A missing recipient must not attempt a transfer");
+    return false; // Register the case so it can still be cancelled without a recipient.
   });
   assert.deepEqual(await unconfigured.execute(request, { toolCallId: "tool-unconfigured" }), {
     status: "started",

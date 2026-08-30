@@ -53,9 +53,58 @@ async function main(): Promise<void> {
   await verifyOpenAISipRefer();
 
   await verifyFarewellOrdering();
+  await verifyReturnBeforeTransfer();
   await verifyMockEscalationTool();
 
   console.log("Escalation handoff harness passed.");
+}
+
+async function verifyReturnBeforeTransfer(): Promise<void> {
+  let transfers = 0;
+  let releaseRefer!: () => void;
+  const coordinator = new EscalationHandoffCoordinator({ refer: async () => {
+    transfers++;
+    await new Promise<void>((resolve) => { releaseRefer = resolve; });
+    return { status: 200, requestId: "refer-return-test" };
+  } });
+  const handoff = { realtimeCallId: "rtc-return", supervisorTargetUri: "tel:+5491100000000" };
+  await coordinator.prepare(handoff);
+  coordinator.beginFarewell();
+  coordinator.observeResponseCreated("interrupted-farewell");
+  coordinator.onCallerSpeechStarted();
+  assert.equal(await coordinator.onAudioStopped("interrupted-farewell"), undefined);
+  coordinator.onCallerSpeechStopped();
+  assert.equal(transfers, 0, "Barge-in must disarm the transfer before interpreting speech");
+  let releaseCancel!: () => void;
+  const cancellation = coordinator.cancel(() => new Promise<void>((resolve) => { releaseCancel = resolve; }));
+  assert.equal(coordinator.canReturn, false);
+  assert.equal(await coordinator.onAudioStopped("interrupted-farewell"), undefined);
+  releaseCancel();
+  await cancellation;
+  assert.equal(coordinator.prepared, false);
+  assert.equal(coordinator.observeResponseCreated("late-farewell"), false);
+  await coordinator.prepare(handoff);
+  coordinator.beginFarewell();
+  coordinator.observeResponseCreated("cancel-failed");
+  await assert.rejects(coordinator.cancel(async () => { throw new Error("DB unavailable"); }), /DB unavailable/);
+  assert.equal(coordinator.prepared, true, "Failed persistence keeps the case open");
+  assert.equal(await coordinator.onAudioStopped("cancel-failed"), undefined, "Failed cancellation must still disarm audio");
+  coordinator.beginFarewell();
+  coordinator.observeResponseCreated("confirmed-again");
+  const transfer = coordinator.onAudioStopped("confirmed-again");
+  assert.equal(transfers, 1);
+  await assert.rejects(coordinator.cancel(async () => assert.fail("Must not cancel an in-flight REFER")), /already started/);
+  assert.equal(await coordinator.onAudioStopped("confirmed-again"), undefined, "Concurrent audio events must not duplicate REFER");
+  releaseRefer();
+  await transfer;
+  await assert.rejects(coordinator.cancel(async () => {}), /already started/);
+
+  const failedRefer = new EscalationHandoffCoordinator({ refer: async () => { throw new Error("timeout"); } });
+  await failedRefer.prepare(handoff);
+  failedRefer.beginFarewell();
+  failedRefer.observeResponseCreated("uncertain-transfer");
+  await assert.rejects(failedRefer.onAudioStopped("uncertain-transfer"), /timeout/);
+  assert.equal(failedRefer.canReturn, false, "A timeout does not prove the transfer was rejected");
 }
 
 async function verifyOpenAISipRefer(): Promise<void> {

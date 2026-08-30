@@ -588,7 +588,7 @@ CREATE TABLE quote_requests (
   operation_id uuid NOT NULL REFERENCES operations(id),
   provider_id uuid NOT NULL REFERENCES providers(id),
   mandate_id uuid REFERENCES mandates(id),
-  negotiation_limit smallint NOT NULL DEFAULT 3 CHECK (negotiation_limit BETWEEN 1 AND 10),
+  negotiation_limit smallint NOT NULL DEFAULT 2 CHECK (negotiation_limit BETWEEN 1 AND 10),
   provider_decline_reason text CHECK (provider_decline_reason IN (
     'no_capacity', 'unavailable_window', 'price_terms', 'route_unsupported', 'operational_constraints', 'other')),
   provider_declined_at timestamptz,
@@ -644,6 +644,8 @@ CREATE TABLE quotes (
   valid_until timestamptz,
   conditions jsonb CHECK (jsonb_typeof(conditions) = 'object'),
   verdict quote_verdict NOT NULL,
+  accepted_above_budget boolean NOT NULL DEFAULT false CHECK (NOT accepted_above_budget OR verdict = 'fuera'),
+  negotiation_stopped_by_provider boolean NOT NULL DEFAULT false CHECK (NOT negotiation_stopped_by_provider OR accepted_above_budget),
   status quote_status NOT NULL DEFAULT 'received',
   received_at timestamptz NOT NULL DEFAULT now(),
   created_at timestamptz NOT NULL DEFAULT now(),
@@ -696,6 +698,9 @@ CREATE TABLE quote_transcript_evidence (
 );
 ALTER TABLE quote_transcript_evidence ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON quote_transcript_evidence FROM PUBLIC, anon, authenticated, service_role;
+CREATE TRIGGER quote_transcript_evidence_append_only
+BEFORE UPDATE OR DELETE ON quote_transcript_evidence
+FOR EACH ROW EXECUTE FUNCTION reject_mutation();
 
 CREATE FUNCTION validate_price_only_quote_revision()
 RETURNS trigger LANGUAGE plpgsql SET search_path = public, pg_temp AS $$
@@ -712,12 +717,28 @@ BEGIN
     OR NEW.conditions IS DISTINCT FROM previous.conditions THEN
     RAISE EXCEPTION 'fixed_terms_conflict' USING ERRCODE = 'P0001';
   END IF;
-  IF NEW.price_min = previous.price_min AND NEW.price_max = previous.price_max THEN
+  IF NEW.price_min = previous.price_min AND NEW.price_max = previous.price_max
+    AND NOT (NEW.accepted_above_budget AND NOT previous.accepted_above_budget)
+    AND NOT (previous.verdict = 'contraoferta' AND NOT previous.accepted_above_budget
+      AND NEW.verdict IN ('contraoferta', 'fuera') AND NOT NEW.accepted_above_budget) THEN
     RAISE EXCEPTION 'invalid_arguments' USING ERRCODE = 'P0001';
   END IF;
   RETURN NEW;
 END;
 $$;
+CREATE OR REPLACE FUNCTION public.validate_quote_price_acceptance()
+RETURNS trigger LANGUAGE plpgsql SET search_path = public, pg_temp AS $$
+BEGIN
+  IF NEW.accepted_above_budget AND NOT EXISTS (
+    SELECT 1 FROM public.mandates m WHERE m.id=NEW.evaluated_mandate_id
+      AND NEW.price_max > m.price_cap AND NEW.currency = m.currency
+  ) THEN RAISE EXCEPTION 'invalid_arguments' USING ERRCODE='P0001'; END IF;
+  RETURN NEW;
+END;
+$$;
+CREATE TRIGGER quotes_validate_price_acceptance BEFORE INSERT ON public.quotes
+FOR EACH ROW EXECUTE FUNCTION public.validate_quote_price_acceptance();
+
 CREATE TRIGGER quotes_price_only_revision
 BEFORE INSERT ON quotes FOR EACH ROW
 EXECUTE FUNCTION validate_price_only_quote_revision();
@@ -888,7 +909,8 @@ BEGIN
     END IF;
     RETURN NEW;
   END IF;
-  IF request_operation IS DISTINCT FROM NEW.operation_id OR q.verdict <> 'dentro' OR q.status <> 'received'
+  IF request_operation IS DISTINCT FROM NEW.operation_id
+    OR (q.verdict <> 'dentro' AND NOT (q.verdict = 'fuera' AND q.accepted_above_budget)) OR q.status <> 'received'
     OR (q.valid_until IS NOT NULL AND q.valid_until <= now()) OR q.evaluated_mandate_id IS DISTINCT FROM op.current_mandate_id
     OR EXISTS (SELECT 1 FROM public.quotes successor WHERE successor.supersedes_quote_id = q.id)
     OR NEW.pickup_window_start IS DISTINCT FROM (q.proposed_pickup_window->>'start_at')::timestamptz

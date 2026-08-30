@@ -6,7 +6,7 @@ import { ToolError } from "../../src/domain/tool-error";
 import type { AcceptedRoutingDecision } from "../../src/tango/agents/routing-instructions";
 import { AgentsCallSession } from "../../src/tango/realtime/agents-call-session";
 import { CallToolFactory } from "../../src/tango/tools/call-tool-factory";
-import { MockEscalationTool } from "../../src/tango/tools/mock-escalation-tool";
+import { EscalationControlTool, MockEscalationTool } from "../../src/tango/tools/mock-escalation-tool";
 
 class FakeSocket extends EventTarget {
   readyState = 1;
@@ -149,40 +149,66 @@ async function main(): Promise<void> {
   assert.equal(logs.filter((entry) => entry.event === "realtime.error").length, 0, JSON.stringify(logs));
   call.session.close();
 
-  // Provider scope and live escalation keep using the same SDK loop. The SDK
-  // must send the result before a single supervisor farewell, without auto reply.
-  const providerDecision: AcceptedRoutingDecision = {
-    action: "accept", outbound: false, direction: "inbound", purpose: "booking_management",
-    callId: "rtc-provider", twilioCallSid: "CAprovider", callerPhone: "+541100000001",
-    identity: { persona: "provider", providerId: "provider-1", name: "Theo", phone: "+541100000001", email: null, active: true },
-    operations: [],
-  };
-  const providerBookingRepository: ProviderBookingRepository = {
-    getState: async () => ({ flow: "provider_inbound", profile: "provider_booking_escalation", intent: "cancel_booking",
-      bookings: [], selectedBooking: null, commandTarget: null, lastResult: null }),
-    select: async () => { throw new Error("not exercised"); },
-    execute: async () => { throw new Error("not exercised"); },
-  };
-  const providerTools = new CallToolFactory(reads, undefined, undefined, providerBookingRepository).create({
-    callId: scope.callId, realtimeCallId: scope.realtimeCallId, counterpartyId: "provider-1",
-    persona: "provider", direction: "inbound", purpose: "booking_management",
-  }, new MockEscalationTool(async () => {}));
-  await providerTools.refresh();
-  const providerSocket = new FakeSocket();
+  // A pending handoff blocks writes until cancellation, without losing data.
+  state = { profile: "client_create", intent: "create", operationRevision: "revision-saved", operation: {
+    operation_reference: "OP-000123", status: "collecting_details", container_type: "40_dry",
+    gross_weight_kg: null, pickup_location: "Terminal 4", delivery_location: "Pilar", empty_return_depot: null,
+    cargo_notes: null, operational_constraints: [], missing_fields: ["gross_weight_kg"], mandate_confirmation_required: false,
+  } };
+  const savedState = structuredClone(state);
+  let cancellations = 0;
+  let rejectCancellation = false;
+  const handoffTools = new CallToolFactory(reads, repository).create(scope, new MockEscalationTool(async () => {}), [
+    new EscalationControlTool("confirm_escalation", async () => ({ handoff_ready: true })),
+    new EscalationControlTool("cancel_escalation", async () => {
+      if (rejectCancellation) throw new Error("Database unavailable");
+      cancellations++;
+      return { status: "cancelled", resumed_previous_flow: true };
+    }),
+  ]);
+  await handoffTools.refresh();
+  const handoffSocket = new FakeSocket();
   let farewells = 0;
-  const provider = new AgentsCallSession(providerDecision, providerTools, logger, { onEscalationReady: () => {
-    assert.ok(providerSocket.output("escalation"));
+  const handoffCall = new AgentsCallSession(decision, handoffTools, logger, { onEscalationReady: () => {
+    assert.ok(handoffSocket.output("confirm-transfer"));
     farewells++;
-    provider.transport.requestResponse({ instructions: "Supervisor farewell" });
-  } }, { skipOpenEventListeners: true, createWebSocket: async () => providerSocket as unknown as WebSocket });
-  assert.deepEqual((await provider.initialConfiguration()).tools?.map((tool) => tool.type === "function" ? tool.name : "mcp"), ["escalate"]);
-  assert.deepEqual((await provider.initialConfiguration()).audio?.input?.noise_reduction, { type: "far_field" });
-  await provider.connect("rtc-provider", "fixture-key");
-  invoke(providerSocket, "escalate", { reason: "Please contact supervisor", trigger: "explicit_human_request" }, "escalation");
-  await until(() => providerSocket.output("escalation"));
-  assert.equal(farewells, 1, providerSocket.output("escalation").output);
-  assert.equal(providerSocket.sent.filter((event) => event.type === "response.create").length, 2, "Greeting plus exactly one farewell");
-  provider.session.close();
+    handoffCall.transport.requestResponse({ instructions: "Supervisor farewell" });
+  } }, { skipOpenEventListeners: true, createWebSocket: async () => handoffSocket as unknown as WebSocket });
+  await handoffCall.connect("rtc-test", "fixture-key");
+  const escalationArgs = { reason: "Please contact supervisor", trigger: "explicit_human_request" };
+  invoke(handoffSocket, "escalate", escalationArgs, "escalation");
+  await until(() => handoffSocket.output("escalation"));
+  assert.equal(farewells, 0, "Opening review must wait for the caller's confirmation");
+  const pendingUpdate = handoffSocket.sent.filter((event) => event.type === "session.update" && "tools" in event.session).at(-1)!;
+  assert.deepEqual(pendingUpdate.session.tools.map((tool: { name: string }) => tool.name), ["confirm_escalation", "cancel_escalation"]);
+  assert.match(pendingUpdate.session.instructions, /volver atrás/);
+  const writesBefore = commands.length;
+  await assert.rejects(handoffTools.execute("update_operation", {}, { toolCallId: "stale-write" }), { code: "tool_unavailable" });
+  assert.equal(commands.length, writesBefore, "Hidden stale writes cannot escape the pending handoff");
+  rejectCancellation = true;
+  invoke(handoffSocket, "cancel_escalation", {}, "failed-go-back");
+  await until(() => handoffSocket.output("failed-go-back"));
+  assert.equal(JSON.parse(handoffSocket.output("failed-go-back").output).ok, false);
+  assert.equal(handoffTools.escalationPending, true, "Failed cancellation cannot restore writes");
+  rejectCancellation = false;
+  const cancelEvent = invoke(handoffSocket, "cancel_escalation", {}, "go-back", "r-go-back", false);
+  await until(() => handoffSocket.output("go-back"));
+  assert.equal(JSON.parse(handoffSocket.output("go-back").output).resumed_previous_flow, true);
+  assert.deepEqual(state, savedState, "Going back must preserve the saved operation");
+  const resumedUpdate = handoffSocket.sent.filter((event) => event.type === "session.update" && "tools" in event.session).at(-1)!;
+  assert.deepEqual(resumedUpdate.session.tools.map((tool: { name: string }) => tool.name), ["update_operation", "confirm_mandate", "escalate"]);
+  assert.ok(handoffSocket.sent.indexOf(resumedUpdate) < handoffSocket.sent.findIndex((event) => event.item?.call_id === "go-back"));
+  handoffSocket.receive(cancelEvent);
+  await until(() => handoffSocket.sent.filter((event) => event.item?.call_id === "go-back").length === 2);
+  assert.equal(cancellations, 1, "SDK cancellation replay must not cancel a later case");
+  handoffSocket.receive({ type: "response.done", response: { id: "r-go-back", status: "completed", output: [cancelEvent.item] } });
+  await assert.rejects(handoffTools.execute("confirm_escalation", {}), { code: "tool_unavailable" });
+  invoke(handoffSocket, "escalate", escalationArgs, "escalation-again");
+  await until(() => handoffSocket.output("escalation-again"));
+  invoke(handoffSocket, "confirm_escalation", {}, "confirm-transfer");
+  await until(() => handoffSocket.output("confirm-transfer"));
+  assert.equal(farewells, 1, "Only explicit confirmation may request the controlled farewell");
+  handoffCall.session.close();
 
   // A committed command must retain its success result if reloading the next
   // profile fails, while all server-side tools are explicitly removed.

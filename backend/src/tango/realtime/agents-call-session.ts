@@ -117,7 +117,7 @@ export class AgentsCallSession {
         tool_name: invokedTool.name,
         escalation_ready: this.escalationReady,
       });
-      if (invokedTool.name === "escalate" && this.escalationReady) {
+      if (invokedTool.name === "confirm_escalation" && this.escalationReady) {
         this.escalationReady = false;
         this.logger.info("escalation.farewell_requested");
         this.hooks.onEscalationReady?.();
@@ -233,19 +233,23 @@ export class AgentsCallSession {
         tool_name: name, tool_call_id: toolCallId, result, error,
       });
     }
-    const escalationCommitted = succeeded && name === "escalate";
-    const escalation = escalationCommitted && isHandoffReady(result) && Boolean(this.hooks.onEscalationReady);
+    const escalation = succeeded && name === "confirm_escalation" && isHandoffReady(result) && Boolean(this.hooks.onEscalationReady);
     // The SDK may emit agent_tool_end while updateAgent is flushing the tool
     // result. Arm the one-shot callback before that await, not after it.
     this.escalationReady = escalation;
-    // A durable escalation finishes Tango's authority for this call. When a
-    // configured recipient exists, the background result makes room for the
-    // controlled farewell; without one, the model receives the result and can
-    // explain that a human review was opened without claiming a transfer.
-    this.agent.tools = escalationCommitted || refreshFailed ? [] : this.buildTools();
+    // While review is pending only its confirm/cancel controls are available.
+    // Cancellation refreshes the original domain profile, never an old snapshot
+    // of permissions or operational data.
+    this.agent.tools = refreshFailed ? [] : this.buildTools();
     this.agent.instructions = refreshFailed
       ? "No further actions are available. Explain the actual tool result briefly in the caller's language and close the conversation. A successful write remains committed; do not claim it was rolled back or retry it. Do not claim a human transfer unless the result explicitly says handoff_ready."
-      : this.factory.create(this.decision, [], this.tools.flowState, this.tools.providerFlowState).instructions;
+      : this.tools.escalationPending
+        ? `You are Tango. Continue in the caller's active language. A human review is pending. No operation changes are authorized in this step. Never reveal private client mandate limits or another provider's prices. Do not invent approvals or claim an out-of-mandate request was accepted.
+Ask whether they want the human transfer now or prefer to go back and continue with Tango, then WAIT for their answer. Never call confirm_escalation in the same turn as escalate.
+If the caller says "volver atrás", "seguir con vos", "cancel the transfer", changes their mind or asks to return, call cancel_escalation. This cancels only the handoff, never the shipment or booking. After success resume the previous flow using the preserved conversation and verified state; do not ask for already recorded information. Returning does not authorize requests outside the mandate.
+Only after an explicit yes to the transfer call confirm_escalation. If they interrupt the farewell, listen and reconfirm before calling confirm_escalation again; do not assume the transfer happened.
+If handoff_ready is false, explain that no live transfer is available: the review remains open for follow-up, or they may cancel it and continue with Tango. If cancellation fails, do not claim it succeeded.`
+        : this.factory.create(this.decision, [], this.tools.flowState, this.tools.providerFlowState).instructions;
     this.updateToolCallId = toolCallId;
     try {
       // Same agent identity preserves the SDK's in-flight/replay bookkeeping.

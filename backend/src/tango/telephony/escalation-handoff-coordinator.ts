@@ -20,11 +20,40 @@ export class EscalationHandoffCoordinator {
   private farewellResponseId?: string;
   private awaitingFarewellResponse = false;
   private referred = false;
+  private transferStarted = false;
+  private cancelling = false;
+  private callerSpeaking = false;
 
   constructor(private readonly realtime: SipReferPort, private readonly logger?: DiagnosticLogger) {}
 
   get prepared(): boolean { return this.handoff !== undefined; }
   get referAccepted(): boolean { return this.referred; }
+  get canReturn(): boolean { return !this.transferStarted && !this.cancelling; }
+
+  /** Disarm synchronously before awaiting persistence or processing barge-in. */
+  interruptFarewell(): void {
+    this.awaitingFarewellResponse = false;
+    this.farewellResponseId = undefined;
+  }
+
+  onCallerSpeechStarted(): void {
+    this.callerSpeaking = true;
+    this.interruptFarewell();
+  }
+
+  onCallerSpeechStopped(): void { this.callerSpeaking = false; }
+
+  async cancel(persist: () => Promise<void>): Promise<void> {
+    if (!this.canReturn) throw new Error("The transfer has already started or cancellation is in progress");
+    this.cancelling = true;
+    this.interruptFarewell();
+    try {
+      await persist();
+      this.handoff = undefined;
+    } finally {
+      this.cancelling = false;
+    }
+  }
 
   async prepare(handoff: EscalationHandoff): Promise<void> {
     if (this.handoff) throw new Error("Escalation handoff is already prepared");
@@ -39,7 +68,9 @@ export class EscalationHandoffCoordinator {
 
   beginFarewell(): void {
     if (!this.handoff) throw new Error("Escalation handoff is not prepared");
-    this.awaitingFarewellResponse = true;
+    if (!this.canReturn) throw new Error("The transfer has already started");
+    this.interruptFarewell();
+    this.awaitingFarewellResponse = !this.callerSpeaking;
   }
 
   observeResponseCreated(responseId: string): boolean {
@@ -51,12 +82,15 @@ export class EscalationHandoffCoordinator {
 
   async onAudioStopped(responseId: string): Promise<EscalationReferResult | undefined> {
     if (!this.handoff) return undefined;
-    if (this.referred || responseId !== this.farewellResponseId) {
+    if (this.transferStarted || this.cancelling || responseId !== this.farewellResponseId) {
       this.logger?.info("escalation.audio_stop_ignored", { response_id: responseId,
         farewell_response_id: this.farewellResponseId, refer_accepted: this.referred });
       return undefined;
     }
     const started = Date.now();
+    // Fence cancellation and duplicate audio events before the first await.
+    // A failed network response does not prove that the transfer was rejected.
+    this.transferStarted = true;
     this.logger?.info("escalation.refer_requested", { response_id: responseId,
       target_phone_suffix: this.handoff.supervisorTargetUri.slice(-4) });
     try {

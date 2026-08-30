@@ -6,11 +6,12 @@ import { ToolError, type ToolErrorCode } from "../../domain/tool-error";
 
 const errors: Record<string, [ToolErrorCode, string]> = {
   not_authorized: ["not_authorized", "This provider or call is no longer authorized."],
-  invalid_arguments: ["invalid_arguments", "Send only the price min/max, positive and ordered with at most two decimals. A counteroffer must change the price. Do not request payment terms, expiry or conditions."],
+  invalid_arguments: ["invalid_arguments", "Send positive, ordered price min/max with at most two decimals and optional boolean accept_above_budget. An unchanged amount may record a new failed discount attempt or final approval, never a repeated old response. Do not request payment terms, expiry or conditions."],
   operation_reference_required: ["invalid_arguments", "Choose the exact operation_reference from this provider's available quote requests."],
   operation_not_available: ["operation_not_available", "No available quote request for this operation and provider."],
   intent_locked: ["intent_locked", "This call is locked to another operation or path."],
   invalid_transition: ["invalid_transition", "This quote request is no longer open for a proposal."],
+  negotiation_required: ["negotiation_required", "Try to lower the price before accepting it above budget. Try at most twice, or stop early when the provider is frustrated or refuses more bargaining. Record that early stop with negotiation_stopped_by_provider and obtain explicit final approval; frustration alone is not consent. Never simulate attempts by repeating tools without a caller response."],
   idempotency_conflict: ["idempotency_conflict", "This invocation ID already belongs to a different command."],
   stale_operation: ["stale_operation", "The operation or quote request changed. Review the refreshed shipment and obtain fresh confirmation. Do not reuse an earlier yes."],
   fixed_terms_conflict: ["fixed_terms_conflict", "Only the numeric price is negotiable. Shipment, currency, pickup, payment, expiry and conditions stay fixed; do not exchange a lower price for changes to those terms. No quote was saved or round consumed. Offer human help for a requested non-price change; never infer or reveal client limits."],
@@ -66,6 +67,8 @@ const operationSchema = z.object({
 const targetSchema = z.object({ operation_revision: z.string(), quote_request_id: z.string(), mandate_id: z.string(), round_id: z.string(), previous_quote_id: z.string().nullable() });
 const lastQuoteSchema = z.object({
   quote_version: z.number().int(), verdict: z.string(),
+  accepted_above_budget: z.boolean().optional(),
+  negotiation_stopped_by_provider: z.boolean().optional(),
   price_range: z.object({ min: z.number(), max: z.number(), currency: z.string() }),
   negotiation_rounds_remaining: z.number().int(),
   fixed_terms: z.object({ proposed_pickup_window: pickupWindowSchema, payment_term_days: z.number().int().nullable(), valid_until: z.string().nullable(), conditions: z.object({ notes: z.array(z.string()).default([]) }).nullable() }).optional(),
@@ -85,7 +88,7 @@ function parseFlowState(value: unknown): ProviderFlowState {
 function parseQuoteResult(value: unknown): ProviderQuoteResult {
   const declined = z.object({ status: z.literal("declined"), commitment_created: z.literal(false) }).safeParse(value);
   if (declined.success) return declined.data;
-  const accepted = z.object({ operation_reference: z.string(), quote_version: z.number().int(), verdict: z.enum(["dentro", "contraoferta", "fuera"]), reason_codes: z.array(z.string()), negotiation_remaining: z.boolean(), negotiation_rounds_remaining: z.number().int() }).safeParse(value);
+  const accepted = z.object({ operation_reference: z.string(), quote_version: z.number().int(), verdict: z.enum(["dentro", "contraoferta", "fuera"]), reason_codes: z.array(z.string()), negotiation_remaining: z.boolean(), negotiation_rounds_remaining: z.number().int(), accepted_above_budget: z.boolean().optional(), negotiation_stopped_by_provider: z.boolean().optional() }).safeParse(value);
   if (!accepted.success) throw new Error("Provider quote result unavailable");
   return accepted.data;
 }
