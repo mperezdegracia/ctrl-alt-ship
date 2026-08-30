@@ -86,6 +86,16 @@ export type DashboardOperationDossier = DashboardOperation & {
       detail: string | null;
       branchDepth: number;
       recordingCheckpoint: number | null;
+      sourceCall: {
+        label: string;
+        description: string;
+        branchDepth: number;
+      } | null;
+      changes: Array<{
+        label: string;
+        before: string | null;
+        after: string;
+      }>;
     }>;
   };
 };

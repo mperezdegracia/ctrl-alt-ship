@@ -132,6 +132,16 @@ export type DashboardOperationDossier = DashboardOperation & {
       detail: string | null;
       branchDepth: number;
       recordingCheckpoint: number | null;
+      sourceCall: {
+        label: string;
+        description: string;
+        branchDepth: number;
+      } | null;
+      changes: Array<{
+        label: string;
+        before: string | null;
+        after: string;
+      }>;
     }>;
   };
 };
@@ -287,8 +297,62 @@ function traceEventTitle(type: string): string {
   return titles[type] ?? type.replaceAll(".", " ").replaceAll("_", " ");
 }
 
-function traceEventDetail(payloadValue: unknown): string | null {
+function humanize(value: string): string {
+  return value.replaceAll("_", " ").replace(/\b\w/g, (character) => character.toUpperCase());
+}
+
+function traceFieldValue(field: string, value: unknown): string | null {
+  if (value === null || value === undefined) return null;
+  if (field === "gross_weight_kg") {
+    const number = asNumber(typeof value === "number" || typeof value === "string" ? value : null);
+    return number === null ? null : `${new Intl.NumberFormat("en-US", { maximumFractionDigits: 3 }).format(number)} kg`;
+  }
+  if (field === "operational_constraints" && Array.isArray(value)) {
+    return `${value.length} condition${value.length === 1 ? "" : "s"}`;
+  }
+  if (field === "cargo_notes" && typeof value === "string") return value;
+  if (typeof value === "string" || typeof value === "number") return String(value);
+  return null;
+}
+
+function traceChanges(payloadValue: unknown): DashboardOperationDossier["trace"]["nodes"][number]["changes"] {
+  const changes = asRecord(asRecord(payloadValue).changes);
+  const labels: Record<string, string> = {
+    container_type: "Container",
+    gross_weight_kg: "Gross weight",
+    pickup_location: "Pickup",
+    delivery_location: "Delivery",
+    empty_return_depot: "Empty return",
+    operational_constraints: "Conditions",
+    cargo_notes: "Cargo notes",
+  };
+  return Object.entries(changes).flatMap(([field, changeValue]) => {
+    const change = asRecord(changeValue);
+    const after = traceFieldValue(field, change.after);
+    if (!after) return [];
+    return [{
+      label: labels[field] ?? humanize(field),
+      before: traceFieldValue(field, change.before),
+      after,
+    }];
+  });
+}
+
+function traceEventDetail(type: string, payloadValue: unknown): string | null {
   const payload = asRecord(payloadValue);
+  if (type === "operation.created") {
+    const missingFields = Array.isArray(payload.missing_fields) ? payload.missing_fields.length : null;
+    const status = typeof payload.status === "string" ? humanize(payload.status) : null;
+    if (status && missingFields !== null) return `${status} · ${missingFields} detail${missingFields === 1 ? "" : "s"} still required`;
+    return status;
+  }
+  if (type === "operation.updated") {
+    const changeCount = Object.keys(asRecord(payload.changes)).length;
+    return changeCount > 0 ? `${changeCount} field${changeCount === 1 ? "" : "s"} changed` : null;
+  }
+  if (type === "mandate.confirmed" && typeof payload.mandate_version === "number") {
+    return `Mandate v${payload.mandate_version}`;
+  }
   if (typeof payload.reason === "string" && payload.reason.trim()) return payload.reason;
   if (typeof payload.selection_reason === "string" && payload.selection_reason.trim()) return payload.selection_reason;
   if (typeof payload.provider_count === "number") {
@@ -311,10 +375,10 @@ function toOperationTrace(
 ): DashboardOperationDossier["trace"] {
   const orderedCalls = [...calls].sort((left, right) => left.started_at.localeCompare(right.started_at));
   const lanes: DashboardOperationDossier["trace"]["lanes"] = [
-    { id: "operation", label: "Operation record", description: "Durable state", kind: "operation" },
+    { id: "operation", label: "Operation state", description: "Persists after every call", kind: "operation" },
     ...orderedCalls.map((call) => ({
       id: `call:${call.id}`,
-      label: callLaneLabel(call, names),
+      label: `Call with ${callLaneLabel(call, names)}`,
       description: `${call.direction === "outbound" ? "Outbound" : "Inbound"} call`,
       kind: "call" as const,
     })),
@@ -335,6 +399,8 @@ function toOperationTrace(
         detail: counterparty === "Counterparty not recorded" ? null : counterparty,
         branchDepth,
         recordingCheckpoint: null,
+        sourceCall: null,
+        changes: [],
       };
       const ended = call.ended_at ? [{
         id: `${call.id}:ended`,
@@ -345,6 +411,8 @@ function toOperationTrace(
         detail: call.outcome.replaceAll("_", " "),
         branchDepth,
         recordingCheckpoint: null,
+        sourceCall: null,
+        changes: [],
       }] : [];
       return [started, ...ended];
     }),
@@ -355,15 +423,25 @@ function toOperationTrace(
         const laneId = !OPERATION_STATE_EVENTS.has(event.type) && callLaneId && laneIndexById.has(callLaneId)
           ? callLaneId
           : "operation";
+        const sourceCall = laneId === "operation" && callLaneId && laneIndexById.has(callLaneId)
+          ? calls.find((call) => `call:${call.id}` === callLaneId)
+          : undefined;
+        const sourceCallDepth = sourceCall ? laneIndexById.get(callLaneId ?? "") ?? 0 : 0;
         return {
           id: event.id,
           laneId,
           kind: "event" as const,
           occurredAt: event.occurred_at,
           title: traceEventTitle(event.type),
-          detail: traceEventDetail(event.payload),
+          detail: traceEventDetail(event.type, event.payload),
           branchDepth: laneIndexById.get(laneId) ?? 0,
           recordingCheckpoint: asNumber(event.recording_checkpoint),
+          sourceCall: sourceCall ? {
+            label: callLaneLabel(sourceCall, names),
+            description: `${sourceCall.direction === "outbound" ? "Outbound" : "Inbound"} call`,
+            branchDepth: sourceCallDepth,
+          } : null,
+          changes: event.type === "operation.updated" ? traceChanges(event.payload) : [],
         };
       }),
   ].sort((left, right) => {

@@ -7,10 +7,14 @@ type OperationTraceProps = {
   trace: DashboardOperationDossier["trace"];
 };
 
-function nodeClassName(kind: DashboardOperationDossier["trace"]["nodes"][number]["kind"]): string {
-  if (kind === "call_started") return "trace-node is-call-start";
-  if (kind === "call_ended") return "trace-node is-call-end";
-  return "trace-node is-event";
+function nodeClassName(node: DashboardOperationDossier["trace"]["nodes"][number]): string {
+  const classes = ["trace-node"];
+  if (node.kind === "call_started") classes.push("is-call-start");
+  if (node.kind === "call_ended") classes.push("is-call-end");
+  if (node.kind === "event") classes.push("is-event");
+  if (node.sourceCall) classes.push("has-call-origin");
+  if (node.changes.length > 0) classes.push("has-changes");
+  return classes.join(" ");
 }
 
 export function OperationTrace({ trace }: OperationTraceProps) {
@@ -30,8 +34,8 @@ export function OperationTrace({ trace }: OperationTraceProps) {
 
   const boardStyle = {
     "--trace-lanes": trace.lanes.length,
-    "--trace-min-width": `${6.5 + (trace.lanes.length * 13)}rem`,
-    "--trace-mobile-min-width": `${5.25 + (trace.lanes.length * 12.5)}rem`,
+    "--trace-min-width": `${6.5 + (trace.lanes.length * 19)}rem`,
+    "--trace-mobile-min-width": `${5.25 + (trace.lanes.length * 15.5)}rem`,
   } as CSSProperties;
   const lanePositions = new Map(trace.lanes.map((lane, index) => [lane.id, index]));
 
@@ -40,7 +44,7 @@ export function OperationTrace({ trace }: OperationTraceProps) {
       <div className="trace-heading">
         <div>
           <h2 id="trace-heading">Operation trace</h2>
-          <p>Calls branch from the durable operation record; decisions remain tied to the call that produced them.</p>
+          <p>Read top to bottom. The main lane is the operation state; side lanes are calls. A return line means that call changed the operation record.</p>
         </div>
         <span>{trace.nodes.length} recorded events</span>
       </div>
@@ -61,15 +65,27 @@ export function OperationTrace({ trace }: OperationTraceProps) {
                 "--trace-lane": lanePosition + 2,
                 "--trace-branch-width": `${node.branchDepth * 100}%`,
                 "--trace-branch-offset": `${node.branchDepth * -100}%`,
+                "--trace-return-width": `${(node.sourceCall?.branchDepth ?? 0) * 100}%`,
               } as CSSProperties;
               return (
                 <li className="trace-row" key={node.id}>
                   <time dateTime={node.occurredAt}>{formatDateTime(node.occurredAt)}</time>
                   {trace.lanes.map((lane, index) => <span className="trace-spine" key={lane.id} style={{ gridColumn: index + 2 }} aria-hidden="true" />)}
-                  <div className={nodeClassName(node.kind)} style={nodeStyle}>
-                    <span className="trace-node-kind">{node.kind === "event" ? "Recorded decision" : node.kind === "call_started" ? "Call opened" : "Call closed"}</span>
+                  <div className={nodeClassName(node)} style={nodeStyle}>
+                    <span className="trace-node-kind">{node.kind === "event" ? "Operation state changed" : node.kind === "call_started" ? "Call branch opened" : "Call branch closed"}</span>
                     <strong>{node.title}</strong>
                     {node.detail && <p>{node.detail}</p>}
+                    {node.sourceCall && <span className="trace-node-origin">Changed during {node.sourceCall.description.toLocaleLowerCase()} with {node.sourceCall.label}</span>}
+                    {node.changes.length > 0 && (
+                      <dl className="trace-changes">
+                        {node.changes.map((change) => (
+                          <div key={change.label}>
+                            <dt>{change.label}</dt>
+                            <dd>{change.before && <span>{change.before}</span>}<strong>{change.after}</strong></dd>
+                          </div>
+                        ))}
+                      </dl>
+                    )}
                     {node.recordingCheckpoint !== null && <small>Evidence checkpoint {node.recordingCheckpoint.toFixed(2)}s</small>}
                   </div>
                 </li>
