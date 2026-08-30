@@ -1,3 +1,5 @@
+import { environment } from "../config/environment";
+
 export type LogFields = Record<string, unknown>;
 
 type LogLevel = "debug" | "info" | "warn" | "error";
@@ -12,8 +14,7 @@ const LEVEL_WEIGHT: Record<LogLevel, number> = {
 const REDACTED_KEY = /(authorization|api[-_]?key|secret|password|token)/i;
 
 function configuredLevel(): LogLevel {
-  const value = process.env.LOG_LEVEL?.toLowerCase();
-  return value === "debug" || value === "warn" || value === "error" ? value : "info";
+  return environment.LOG_LEVEL;
 }
 
 function serialize(value: unknown, key = ""): unknown {

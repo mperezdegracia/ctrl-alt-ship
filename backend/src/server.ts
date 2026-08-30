@@ -2,7 +2,7 @@ import express from "express";
 import OpenAI from "openai";
 import WebSocket from "ws";
 
-import "./config/environment";
+import { environment } from "./config/environment";
 import { supabaseAdmin } from "./config/supabase";
 import {
   requireDashboardAuth,
@@ -29,7 +29,7 @@ import { RealtimeToolRegistry } from "./tango/tools/realtime-tool";
 const app = express();
 
 const dashboardOrigins = new Set(
-  (process.env.DASHBOARD_ORIGINS ?? "http://localhost:3001")
+  environment.DASHBOARD_ORIGINS
     .split(",")
     .map((origin) => origin.trim())
     .filter(Boolean)
@@ -69,16 +69,12 @@ app.use((req, res, next) => {
   jsonBodyParser(req, res, next);
 });
 
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+const OPENAI_API_KEY = environment.OPENAI_API_KEY;
 const logger = new StructuredLogger("tango-backend");
 const realtimeSessionFactory = new RealtimeSessionFactory();
 const realtimeTools = new RealtimeToolRegistry([
   new OperationStatusTool(),
 ]);
-
-if (!OPENAI_API_KEY) {
-  throw new Error("Falta OPENAI_API_KEY");
-}
 
 const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 
@@ -126,13 +122,7 @@ app.get("/api/me", requireDashboardAuth, (req: DashboardRequest, res) => {
 });
 
 app.post("/openai/webhook", express.raw({ type: "*/*" }), async (req, res) => {
-  const webhookSecret = process.env.OPENAI_WEBHOOK_SECRET;
-
-  if (!webhookSecret) {
-    logger.error("webhook.secret_missing");
-    res.status(503).json({ error: "voice_webhook_not_configured" });
-    return;
-  }
+  const webhookSecret = environment.OPENAI_WEBHOOK_SECRET;
 
   if (!Buffer.isBuffer(req.body)) {
     res.status(400).json({ error: "expected_raw_webhook_body" });
@@ -515,14 +505,12 @@ app.post("/openai/webhook", express.raw({ type: "*/*" }), async (req, res) => {
   }
 });
 
-const PORT = Number(
-  process.env.PORT || 3000
-);
+const PORT = environment.PORT;
 
 app.listen(PORT, () => {
   logger.info("server.started", {
     port: PORT,
     webhook_path: "/openai/webhook",
-    log_level: process.env.LOG_LEVEL ?? "info",
+    log_level: environment.LOG_LEVEL,
   });
 });

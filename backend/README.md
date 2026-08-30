@@ -10,4 +10,4 @@ This application deploys to Render. The dashboard in `../frontend/` is a
 separate Next.js application that deploys to Vercel and calls this API with a
 Supabase access token.
 
-Run it locally from this directory with `npm install` and `npm run dev`.
+Run it locally from this directory with `npm ci` and `npm run dev`.

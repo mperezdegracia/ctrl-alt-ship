@@ -141,7 +141,33 @@ service's `DASHBOARD_ORIGINS` environment variable.
 To run the backend locally as well, start it in another terminal. It defaults
 to port 3000, so run the frontend on a different port in that case:
 
+At startup, the backend validates its runtime configuration with Zod before it
+opens its HTTP port. `SUPABASE_URL`, `SUPABASE_SECRET_KEY`,
+`SUPABASE_PUBLISHABLE_KEY`, `OPENAI_API_KEY`, and `OPENAI_WEBHOOK_SECRET` are
+required; `PORT`, `NODE_ENV`, `LOG_LEVEL`, and `DASHBOARD_ORIGINS` have safe
+defaults documented in `backend/.env.example`. A missing or malformed value
+stops the process with a list of configuration errors, rather than failing in
+the middle of a call.
+
 ```bash
 npm --prefix backend run dev
 npm --prefix frontend run dev -- --port 3001
 ```
+
+`frontend/.env.local` contains only browser-safe Supabase settings and the
+
+## Verification commands
+
+The following local commands are focused checks, not separate production
+workers:
+
+```bash
+npm --prefix backend run db:smoke        # Supabase connectivity and server key
+npm --prefix backend run inbound:routing # caller-ID routing, without calls
+npm --prefix backend run auth:smoke      # Supabase Auth login flow
+npm --prefix backend run db:seed         # demo fixture data
+```
+
+`db:smoke` is retained because the team shares a hosted Supabase project: it
+quickly confirms that the configured server credentials can reach the versioned
+domain tables before testing a call in Render.
