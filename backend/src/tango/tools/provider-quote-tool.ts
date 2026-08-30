@@ -37,3 +37,20 @@ export class DeclineQuoteRequestTool extends RealtimeTool {
     return this.service.execute("decline_quote_request", args, invocation?.toolCallId ?? "");
   }
 }
+
+export class RecordProviderOfferTool extends RealtimeTool {
+  readonly definition = {
+    type: "function" as const, name: "record_provider_offer",
+    description: "Records the provider's observed price before negotiation; it does not approve or book the quote.",
+    parameters: {
+      type: "object", properties: {
+        price_range: { type: "object", properties: { min: { type: "number", exclusiveMinimum: 0 }, max: { type: "number", exclusiveMinimum: 0 } }, required: ["min", "max"], additionalProperties: false },
+        currency: { type: "string", minLength: 1 },
+      }, required: ["price_range"], additionalProperties: false,
+    } as JsonSchema,
+  };
+  constructor(private readonly service: ProviderQuoteService) { super(); }
+  execute(args: unknown, invocation?: ToolInvocation): Promise<unknown> {
+    return this.service.recordOffer(args, invocation?.toolCallId ?? "");
+  }
+}

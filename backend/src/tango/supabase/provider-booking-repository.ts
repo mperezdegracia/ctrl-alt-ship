@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { ToolCallScope } from "../../domain/operation-read-service";
-import type { ProviderBookingRepository, ProviderBookingResult, ProviderBookingTarget, ProviderBookingToolName } from "../../domain/provider-booking-service";
+import type { ToolCallScope } from "../../domain/call-flow";
+import type { ProviderBookingRepository, ProviderBookingResult, ProviderBookingTarget, ProviderBookingToolName, ProviderBookingSelectionName, ProviderBookingSelectionResult } from "../../domain/provider-booking-service";
+import type { ProviderInboundState } from "../../domain/provider-call-state";
 import { ToolError, type ToolErrorCode } from "../../domain/tool-error";
 
 const errors: Record<string, [ToolErrorCode, string]> = {
@@ -15,6 +16,16 @@ const errors: Record<string, [ToolErrorCode, string]> = {
 };
 export class SupabaseProviderBookingRepository implements ProviderBookingRepository {
   constructor(private readonly client: SupabaseClient) {}
+  async getState(scope: ToolCallScope): Promise<ProviderInboundState> {
+    const { data, error } = await this.client.rpc("get_provider_tool_state", this.context(scope));
+    if (error) this.rethrow(error);
+    if (!data || data.flow !== "provider_inbound"
+      || !["provider_inbound_entry", "provider_reschedule", "provider_cancel_booking", "provider_booking_escalation", "provider_unavailable", "terminal"].includes(data.profile)
+      || !Array.isArray(data.bookings) || !("selectedBooking" in data) || !("commandTarget" in data)) {
+      throw new Error("Invalid provider inbound tool state");
+    }
+    return data as ProviderInboundState;
+  }
   async execute(scope: ToolCallScope, name: ProviderBookingToolName, id: string, args: object, target: ProviderBookingTarget | null): Promise<ProviderBookingResult> {
     const { data, error } = await this.client.rpc("execute_provider_booking_tool", {
       p_call_id: scope.callId, p_realtime_call_id: scope.realtimeCallId, p_provider_id: scope.counterpartyId,
@@ -27,5 +38,22 @@ export class SupabaseProviderBookingRepository implements ProviderBookingReposit
     }
     if (!data) throw new Error("Missing provider booking result");
     return data as ProviderBookingResult;
+  }
+  async select(scope: ToolCallScope, name: ProviderBookingSelectionName, id: string, operationReference: string): Promise<ProviderBookingSelectionResult> {
+    const { data, error } = await this.client.rpc("select_provider_booking", {
+      ...this.context(scope), p_tool_call_id: id, p_tool_name: name,
+      p_arguments: { operation_reference: operationReference },
+    });
+    if (error) this.rethrow(error);
+    if (!data) throw new Error("Missing provider booking selection result");
+    return data as ProviderBookingSelectionResult;
+  }
+  private context(scope: ToolCallScope) {
+    return { p_call_id: scope.callId, p_realtime_call_id: scope.realtimeCallId, p_provider_id: scope.counterpartyId };
+  }
+  private rethrow(error: { code?: string; message: string }): never {
+    const safe = error.code === "P0001" ? errors[error.message] : undefined;
+    if (safe) throw new ToolError(...safe);
+    throw error;
   }
 }

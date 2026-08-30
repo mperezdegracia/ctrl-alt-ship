@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { ToolCallScope } from "../../domain/operation-read-service";
-import type { ProviderCommandTarget, ProviderFlowState, ProviderQuoteRepository, ProviderQuoteResult, ProviderQuoteToolName } from "../../domain/provider-quote-service";
+import type { ToolCallScope } from "../../domain/call-flow";
+import type { ProviderCommandTarget, ProviderFlowState, ProviderOfferArguments, ProviderOfferResult, ProviderQuoteRepository, ProviderQuoteResult, ProviderQuoteToolName } from "../../domain/provider-quote-service";
 import { ToolError, type ToolErrorCode } from "../../domain/tool-error";
 
 const errors: Record<string, [ToolErrorCode, string]> = {
@@ -20,9 +20,18 @@ export class SupabaseProviderQuoteRepository implements ProviderQuoteRepository 
   async getState(scope: ToolCallScope): Promise<ProviderFlowState> {
     const { data, error } = await this.client.rpc("get_provider_tool_state", this.context(scope));
     if (error) this.rethrow(error);
-    if (!data || !["provider_inbound_entry", "provider_quote", "provider_reschedule", "provider_cancel_booking", "provider_booking_escalation", "provider_unavailable", "terminal"].includes(data.profile)
-      || !Array.isArray(data.candidates) || !data.commandTargets) throw new Error("Invalid provider tool state");
+    if (!data || data.flow !== "provider_outbound"
+      || !["provider_quote", "provider_unavailable", "terminal"].includes(data.profile)
+      || data.intent !== "quote" || !("operation" in data) || !("commandTarget" in data)) throw new Error("Invalid provider outbound tool state");
     return data as ProviderFlowState;
+  }
+  async recordOffer(scope: ToolCallScope, id: string, args: ProviderOfferArguments): Promise<ProviderOfferResult> {
+    const { data, error } = await this.client.rpc("record_provider_offer", {
+      ...this.context(scope), p_tool_call_id: id, p_arguments: args,
+    });
+    if (error) this.rethrow(error);
+    if (!data) throw new Error("Missing provider offer result");
+    return data as ProviderOfferResult;
   }
   async execute(scope: ToolCallScope, name: ProviderQuoteToolName, id: string, args: object, target: ProviderCommandTarget | null): Promise<ProviderQuoteResult> {
     const { data, error } = await this.client.rpc("execute_provider_quote_tool", {

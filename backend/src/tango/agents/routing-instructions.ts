@@ -1,8 +1,9 @@
 import type { OperationContext } from "../supabase/erp";
 import type { RoutingDecision } from "../telephony/inbound-routing";
 import type { ClientFlowState } from "../../domain/client-operation-service";
-import type { ProviderFlowState } from "../../domain/provider-quote-service";
+import type { ProviderCallState } from "../../domain/provider-call-state";
 import { ProviderQuoteInstructions, providerPriceNegotiationFlow } from "./provider-quote-instructions";
+import { ProviderInboundInstructions } from "./provider-inbound-instructions";
 import { CurrentDateInstructions } from "./current-date-instructions";
 
 export type AcceptedRoutingDecision = Extract<RoutingDecision, { action: "accept" }>;
@@ -142,7 +143,7 @@ ${providerPriceNegotiationFlow}
 
 export class RoutingInstructionsBuilder {
   constructor(private readonly decision: AcceptedRoutingDecision, private readonly flowState?: ClientFlowState,
-    private readonly providerState?: ProviderFlowState) {}
+    private readonly providerState?: ProviderCallState) {}
 
   build(): string {
     return [
@@ -156,7 +157,10 @@ export class RoutingInstructionsBuilder {
   private get personaInstructions(): PersonaInstructions {
     return this.decision.identity.persona === "client"
       ? new ClientInstructions(this.flowState)
-      : this.providerState ? new ProviderQuoteInstructions(this.providerState) : new ProviderInstructions();
+      : this.providerState?.flow === "provider_outbound"
+        ? new ProviderQuoteInstructions(this.providerState)
+        : this.providerState?.flow === "provider_inbound"
+          ? new ProviderInboundInstructions(this.providerState) : new ProviderInstructions();
   }
 
   private buildSharedInstructions(): string {
@@ -210,8 +214,11 @@ You are Tango, a realtime voice agent for logistics operations. Resolve the call
   }
 
   private buildVerifiedContext(): string {
-    if (this.decision.identity.persona === "provider" && this.providerState) {
+    if (this.decision.identity.persona === "provider" && this.providerState?.flow === "provider_outbound") {
       return new ProviderQuoteInstructions(this.providerState).context();
+    }
+    if (this.decision.identity.persona === "provider" && this.providerState?.flow === "provider_inbound") {
+      return new ProviderInboundInstructions(this.providerState).context();
     }
     if (this.decision.identity.persona === "client" && this.flowState?.operation) {
       return `# VERIFIED CALL CONTEXT

@@ -1,38 +1,16 @@
-import type { ToolCallScope } from "./operation-read-service";
+import type { ToolCallScope } from "./call-flow";
 import { ToolError } from "./tool-error";
-import type { ProviderBooking, ProviderBookingTarget } from "./provider-booking-service";
+import type {
+  ProviderCommandTarget,
+  ProviderOfferArguments,
+  ProviderOfferResult,
+  ProviderOperation,
+  ProviderOutboundState,
+} from "./provider-call-state";
 
 export type ProviderQuoteToolName = "create_quote" | "decline_quote_request";
-export type ProviderOperation = {
-  operation_reference: string; container_type: string | null; gross_weight_kg: number | null;
-  pickup_location: string; delivery_location: string; empty_return_depot: string | null;
-  operational_constraints: string[]; cargo_notes: string | null;
-  currency?: string | null; pickup_window?: { start_at: string; end_at: string } | null;
-};
-export type ProviderCommandTarget = {
-  operation_revision: string; quote_request_id: string; mandate_id: string; previous_quote_id: string | null;
-};
-export type ProviderFlowState = {
-  profile: "provider_inbound_entry" | "provider_quote" | "provider_reschedule" | "provider_cancel_booking" | "provider_booking_escalation" | "provider_unavailable" | "terminal";
-  intent: string;
-  operation: ProviderOperation | null;
-  candidates: ProviderOperation[];
-  bookingCandidates?: ProviderBooking[];
-  bookingTargets?: Record<string, ProviderBookingTarget>;
-  // Private concurrency context: never put this map in prompts/tool results.
-  commandTargets: Record<string, ProviderCommandTarget>;
-  // Agent-only guidance, not public operation data or tool arguments/results.
-  privatePriceLimits?: Record<string, { price_cap: number; currency: string } | null>;
-  lastQuote: {
-    quote_version: number; verdict: string;
-    price_range: { min: number; max: number; currency: string };
-    negotiation_rounds_remaining: number;
-    fixed_terms?: {
-      proposed_pickup_window: { start_at: string; end_at: string };
-      payment_term_days: number | null; valid_until: string | null; conditions: { notes: string[] } | null;
-    };
-  } | null;
-};
+export type { ProviderCommandTarget, ProviderOfferArguments, ProviderOfferResult, ProviderOperation, ProviderOutboundState } from "./provider-call-state";
+export type ProviderFlowState = ProviderOutboundState;
 export type ProviderQuoteResult = {
   operation_reference: string; quote_version: number; verdict: "dentro" | "contraoferta" | "fuera";
   reason_codes: string[]; negotiation_remaining: boolean; negotiation_rounds_remaining: number;
@@ -41,6 +19,7 @@ export interface ProviderQuoteRepository {
   getState(scope: ToolCallScope): Promise<ProviderFlowState>;
   execute(scope: ToolCallScope, name: ProviderQuoteToolName, id: string, args: object,
     target: ProviderCommandTarget | null): Promise<ProviderQuoteResult>;
+  recordOffer(scope: ToolCallScope, id: string, args: ProviderOfferArguments): Promise<ProviderOfferResult>;
 }
 
 /** Conversational consent stays in the agent; authorization/evaluation stay in SQL. */
@@ -73,8 +52,22 @@ export class ProviderQuoteService {
     }
     const reference = typeof args.operation_reference === "string" ? args.operation_reference : this.state?.operation?.operation_reference;
     // Replay must reach SQL even after terminal/refresh removes command targets.
-    const target = reference && this.state?.commandTargets[reference] || null;
+    const target = reference && reference === this.state?.operation?.operation_reference
+      ? this.state.commandTarget : null;
     return this.repository.execute(this.scope, name, id, args, target);
+  }
+
+  async recordOffer(args: unknown, id: string): Promise<ProviderOfferResult> {
+    this.authorize();
+    if (typeof id !== "string" || !id.trim()) this.invalid();
+    this.object(args);
+    const price = args.price_range;
+    this.object(price);
+    if (Object.keys(args).some((key) => !["price_range", "currency"].includes(key))
+      || Object.keys(price).some((key) => !["min", "max"].includes(key))
+      || !this.money(price.min) || !this.money(price.max) || price.min > price.max
+      || ("currency" in args && (typeof args.currency !== "string" || !args.currency.trim()))) this.invalid();
+    return this.repository.recordOffer(this.scope, id, args as ProviderOfferArguments);
   }
 
   private validateQuote(args: Record<string, unknown>): void {
@@ -96,7 +89,7 @@ export class ProviderQuoteService {
       || ![Object.prototype, null].includes(Object.getPrototypeOf(value))) this.invalid();
   }
   private authorize(): void {
-    if (this.scope.persona !== "provider") throw new ToolError("not_authorized", "Only the authenticated provider can submit this quote.");
+    if (this.scope.persona !== "provider" || this.scope.direction !== "outbound") throw new ToolError("not_authorized", "Only an authenticated provider outbound quote call can submit this quote.");
   }
   private invalid(): never {
     throw new ToolError("invalid_arguments", "Send only price_range with positive min/max amounts and at most two decimals; optionally operation_reference to select a job. Do not send currency, dates, payment, expiry, conditions, IDs or verdicts.");

@@ -5,9 +5,9 @@ import { CancelOperationTool, ConfirmMandateTool, CreateOperationTool, UpdateOpe
 import { CallToolSession } from "./call-tool-session";
 import type { RealtimeTool } from "./realtime-tool";
 import { ProviderQuoteService, type ProviderQuoteRepository } from "../../domain/provider-quote-service";
-import { CreateQuoteTool, DeclineQuoteRequestTool } from "./provider-quote-tool";
+import { CreateQuoteTool, DeclineQuoteRequestTool, RecordProviderOfferTool } from "./provider-quote-tool";
 import { ProviderBookingService, type ProviderBookingRepository } from "../../domain/provider-booking-service";
-import { CancelBookingTool, RescheduleBookingTool } from "./provider-booking-tool";
+import { CancelBookingTool, RescheduleBookingTool, SelectBookingForCancellationTool, SelectBookingForRescheduleTool } from "./provider-booking-tool";
 import type { StructuredLogger } from "../../observability/logger";
 
 export class CallToolFactory {
@@ -23,19 +23,18 @@ export class CallToolFactory {
     const service = new OperationReadService(scope, this.repository);
     const clientService = scope.persona === "client" && this.mutations
       ? new ClientOperationService(scope, this.mutations) : undefined;
-    const providerService = scope.persona === "provider" && this.providerMutations
+    const providerService = scope.persona === "provider" && scope.direction === "outbound" && this.providerMutations
       ? new ProviderQuoteService(scope, this.providerMutations) : undefined;
-    const bookingService = providerService && this.providerBookings
-      ? new ProviderBookingService(scope, this.providerBookings, () => providerService.currentState) : undefined;
+    const bookingService = scope.persona === "provider" && scope.direction === "inbound" && this.providerBookings
+      ? new ProviderBookingService(scope, this.providerBookings) : undefined;
     return new CallToolSession([
-      scope.persona === "client"
-        ? new ListOpenOperationsTool(service)
-        : new ListProviderOperationsTool(service),
+      ...(scope.persona === "client" ? [new ListOpenOperationsTool(service)]
+        : bookingService ? [new ListProviderOperationsTool(service, bookingService)] : []),
       ...(clientService ? [new CreateOperationTool(clientService), new UpdateOperationTool(clientService), new CancelOperationTool(clientService), new ConfirmMandateTool(clientService)] : []),
       ...(escalationTool ? [escalationTool] : []),
-      ...(providerService ? [new CreateQuoteTool(providerService), new DeclineQuoteRequestTool(providerService)] : []),
-      ...(bookingService ? [new RescheduleBookingTool(bookingService), new CancelBookingTool(bookingService)] : []),
-    ], clientService, providerService, this.logger?.child({
+      ...(providerService ? [new CreateQuoteTool(providerService), new DeclineQuoteRequestTool(providerService), new RecordProviderOfferTool(providerService)] : []),
+      ...(bookingService ? [new RescheduleBookingTool(bookingService), new CancelBookingTool(bookingService), new SelectBookingForRescheduleTool(bookingService), new SelectBookingForCancellationTool(bookingService)] : []),
+    ], clientService, providerService, bookingService, this.logger?.child({
       call_record_id: scope.callId, call_id: scope.realtimeCallId,
       persona: scope.persona, counterparty_id: scope.counterpartyId,
     }));

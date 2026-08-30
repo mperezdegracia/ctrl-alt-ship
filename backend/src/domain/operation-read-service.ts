@@ -1,11 +1,8 @@
 import { ToolError } from "./tool-error";
+import type { ToolCallScope } from "./call-flow";
 
-export type ToolCallScope = Readonly<{
-  callId: string;
-  realtimeCallId: string;
-  persona: "client" | "provider";
-  counterpartyId: string;
-}>;
+export type { ToolCallScope } from "./call-flow";
+
 
 export type ClientOperationSummary = {
   operation_reference: string;

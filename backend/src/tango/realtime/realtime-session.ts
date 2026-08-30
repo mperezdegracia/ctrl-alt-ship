@@ -5,7 +5,7 @@ import {
 import type { RealtimeFunctionToolDefinition } from "../tools/realtime-tool";
 import type { ClientFlowState } from "../../domain/client-operation-service";
 import type { SessionUpdateEvent } from "openai/resources/realtime/realtime";
-import type { ProviderFlowState } from "../../domain/provider-quote-service";
+import type { ProviderCallState } from "../../domain/provider-call-state";
 
 export type RealtimeSessionConfiguration = {
   type: "realtime";
@@ -34,7 +34,7 @@ export class RealtimeSessionFactory {
     decision: AcceptedRoutingDecision,
     tools: RealtimeFunctionToolDefinition[],
     flowState?: ClientFlowState,
-    providerState?: ProviderFlowState,
+    providerState?: ProviderCallState,
   ): RealtimeSessionConfiguration {
     return {
       type: "realtime",
@@ -63,7 +63,7 @@ export class RealtimeSessionFactory {
     decision: AcceptedRoutingDecision,
     tools: RealtimeFunctionToolDefinition[],
     flowState?: ClientFlowState,
-    providerState?: ProviderFlowState,
+    providerState?: ProviderCallState,
   ): SessionUpdateEvent {
     return {
       type: "session.update",

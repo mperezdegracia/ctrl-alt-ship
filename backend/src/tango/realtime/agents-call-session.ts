@@ -67,10 +67,15 @@ export class AgentsCallSession {
   ) {
     const initial = this.factory.create(decision, tools.definitions, tools.flowState, tools.providerFlowState);
     this.diagnostics = new RealtimeSessionDiagnostics(logger, initial, tools.profile);
-    this.transport = new ObservedSIPTransport(transportOptions, (event) => event.type === "session.update"
-      && ("tools" in event.session || "instructions" in event.session)
-      ? this.diagnostics.prepareUpdate(event as SessionUpdateEvent, tools.flowState ?? tools.providerFlowState, this.updateToolCallId)
-      : event);
+    this.transport = new ObservedSIPTransport(transportOptions, (event) => {
+      if (event.type !== "session.update" || !("tools" in event.session || "instructions" in event.session)) return event;
+      const provider = tools.providerFlowState;
+      const state = tools.flowState ?? (provider ? {
+        profile: provider.profile, intent: provider.intent,
+        operation: provider.flow === "provider_inbound" ? provider.selectedBooking?.operation ?? null : provider.operation,
+      } : undefined);
+      return this.diagnostics.prepareUpdate(event as SessionUpdateEvent, state, this.updateToolCallId);
+    });
     this.agent = new RealtimeAgent({
       name: `Tango ${decision.identity.persona}`, voice: initial.audio.output.voice,
       instructions: initial.instructions, tools: this.buildTools(),
@@ -195,17 +200,20 @@ export class AgentsCallSession {
       if (name !== "escalate") this.hooks.onProgress?.();
       this.logger.info("tool.completed", {
         tool_name: name, tool_call_id: toolCallId, result,
-        flow_state_before: this.tools.flowState ?? null,
+        profile_before: this.tools.profile,
       });
     } catch (error) {
       result = publicToolError(error);
       this.logger.error("tool.failed", {
-        tool_name: name, tool_call_id: toolCallId, arguments: args,
-        flow_state: this.tools.flowState ?? null, error, public_result: result,
+        tool_name: name, tool_call_id: toolCallId,
+        argument_fields: args && typeof args === "object" ? Object.keys(args) : [],
+        profile: this.tools.profile, error, public_result: result,
       });
     }
 
+    let refreshFailed = false;
     try { await this.tools.refresh(); } catch (error) {
+      refreshFailed = true;
       // A mutation might already be committed. Keep its result, remove tools.
       this.logger.error("tool.profile_refresh_failed", {
         tool_name: name, tool_call_id: toolCallId, result, error,
@@ -220,8 +228,10 @@ export class AgentsCallSession {
     // configured recipient exists, the background result makes room for the
     // controlled farewell; without one, the model receives the result and can
     // explain that a human review was opened without claiming a transfer.
-    this.agent.tools = escalationCommitted ? [] : this.buildTools();
-    this.agent.instructions = this.factory.create(this.decision, [], this.tools.flowState, this.tools.providerFlowState).instructions;
+    this.agent.tools = escalationCommitted || refreshFailed ? [] : this.buildTools();
+    this.agent.instructions = refreshFailed
+      ? "No further actions are available. Explain the actual tool result briefly in the caller's language and close the conversation. A successful write remains committed; do not claim it was rolled back or retry it. Do not claim a human transfer unless the result explicitly says handoff_ready."
+      : this.factory.create(this.decision, [], this.tools.flowState, this.tools.providerFlowState).instructions;
     this.updateToolCallId = toolCallId;
     try {
       // Same agent identity preserves the SDK's in-flight/replay bookkeeping.

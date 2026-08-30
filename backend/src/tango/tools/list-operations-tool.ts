@@ -1,6 +1,7 @@
 import { OperationReadService } from "../../domain/operation-read-service";
 import { ToolError } from "../../domain/tool-error";
 import { RealtimeTool, type RealtimeFunctionToolDefinition } from "./realtime-tool";
+import type { ProviderBookingService } from "../../domain/provider-booking-service";
 
 abstract class ListOperationsTool extends RealtimeTool {
   constructor(protected readonly service: OperationReadService) {
@@ -35,11 +36,15 @@ export class ListProviderOperationsTool extends ListOperationsTool {
   readonly definition: RealtimeFunctionToolDefinition = {
     type: "function",
     name: "list_provider_operations",
-    description: "Lists only operations where the authenticated provider has an active quote request or booking, for inbound intent selection.",
+    description: "Lists only the authenticated provider's currently confirmed Bookings for inbound intent selection.",
     parameters: { type: "object", properties: {}, required: [], additionalProperties: false },
   };
 
+  constructor(service: OperationReadService, private readonly bookingService: ProviderBookingService) {
+    super(service);
+  }
+
   protected list(): Promise<unknown> {
-    return this.service.listProviderOperations();
+    return this.bookingService.listBookings();
   }
 }
