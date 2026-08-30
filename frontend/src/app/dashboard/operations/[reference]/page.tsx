@@ -1,8 +1,9 @@
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
-import { getOperation } from "@/lib/mock-operations";
+import { getOperation, getOperationDossier } from "@/lib/mock-operations";
 import { isSupabaseConfigured } from "@/lib/supabase/config";
 import { createClient } from "@/lib/supabase/server";
+import { CommitmentEvidence } from "@/features/operation/commitment-evidence";
 import { DashboardHeader } from "../../dashboard-header";
 
 export const dynamic = "force-dynamic";
@@ -14,7 +15,7 @@ export default async function OperationPage({ params }: { params: Promise<{ refe
   if (!claimsData) redirect("/login");
 
   const { reference } = await params;
-  const operation = await getOperation(reference);
+  const [operation, dossier] = await Promise.all([getOperation(reference), getOperationDossier(reference)]);
   if (!operation) notFound();
   const email = typeof claimsData.claims.email === "string" ? claimsData.claims.email : "Supervisor";
 
@@ -24,25 +25,85 @@ export default async function OperationPage({ params }: { params: Promise<{ refe
       <article className="operation-detail">
         <Link href="/dashboard" className="back-to-operations">Back to active operations</Link>
         <header className="operation-detail-header">
-          <div><p className="operation-reference">{operation.reference}</p><h1>{operation.client}</h1></div>
-          <span className="status-mark status-needs-follow-up">Needs follow-up</span>
+          <div>
+            <p className="operation-reference">{operation.reference}</p>
+            <h1>{operation.client}</h1>
+            <p className="operation-route">{operation.origin} <span aria-hidden="true">→</span> {operation.destination}</p>
+          </div>
+          <div className="operation-status-block">
+            <span className={`status-mark status-${operation.status.toLowerCase().replaceAll(" ", "-")}`}>{operation.status}</span>
+            <p>Updated {operation.updated}</p>
+          </div>
         </header>
 
-        <section className="detail-escalation" aria-labelledby="live-decision-title">
-          <div><span className="live-dot" aria-hidden="true" /> Live call · Transporte Sur</div>
-          <h2 id="live-decision-title">Pickup reschedule needs your review.</h2>
-          <p>The provider proposes Tue 02 Sep, 16:00–18:00. That time sits outside the current Action Window, so Tango paused the conversation and escalated it.</p>
-          <dl><div><dt>Requested pickup</dt><dd>Tue 02 Sep · 16:00–18:00</dd></div><div><dt>Action Window</dt><dd>Mon 01 Sep · 08:00–14:00</dd></div><div><dt>Escalation started</dt><dd>14:40 ART · 2 min ago</dd></div></dl>
-        </section>
+        {dossier ? (
+          <>
+            <section className="detail-escalation" aria-labelledby="live-decision-title">
+              <div><span className="live-dot" aria-hidden="true" /> Live call · {dossier.escalation.counterparty}</div>
+              <div className="escalation-grid">
+                <div>
+                  <h2 id="live-decision-title">Pickup reschedule needs your review.</h2>
+                  <p>The provider proposed a change outside the Action Window. Tango kept the booking intact and escalated instead of making an unsupported promise.</p>
+                </div>
+                <dl>
+                  <div><dt>Requested pickup</dt><dd>{dossier.escalation.requested}</dd></div>
+                  <div><dt>Action Window</dt><dd>{dossier.escalation.authorized}</dd></div>
+                  <div><dt>Escalated</dt><dd>{dossier.escalation.startedAt}</dd></div>
+                </dl>
+              </div>
+            </section>
 
-        <div className="detail-grid">
-          <section className="detail-section"><h2>Operation</h2><dl className="facts-list"><div><dt>Container</dt><dd>{operation.container} · {operation.containerType}</dd></div><div><dt>Gross weight</dt><dd>{operation.weight}</dd></div><div><dt>Pickup</dt><dd>{operation.origin}</dd></div><div><dt>Delivery</dt><dd>{operation.destination}</dd></div><div><dt>Empty return</dt><dd>{operation.emptyReturn}</dd></div></dl></section>
-          <section className="detail-section mandate-section"><h2>Current Mandate <span>v3</span></h2><dl className="facts-list"><div><dt>Maximum price</dt><dd>ARS 950,000</dd></div><div><dt>Payment term</dt><dd>30 days from invoice date</dd></div><div><dt>Action Window</dt><dd>Mon 01 Sep · 08:00–14:00</dd></div><div><dt>Operational constraints</dt><dd>Delivery appointment required · Non-hazardous cargo</dd></div></dl></section>
-        </div>
+            <div className="detail-grid">
+              <section className="detail-section">
+                <h2>Operation</h2>
+                <dl className="facts-list">
+                  <div><dt>Container</dt><dd>{operation.container} · {operation.containerType}</dd></div>
+                  <div><dt>Gross weight</dt><dd>{operation.weight}</dd></div>
+                  <div><dt>Pickup</dt><dd>{operation.origin}</dd></div>
+                  <div><dt>Delivery</dt><dd>{operation.destination}</dd></div>
+                  <div><dt>Empty return</dt><dd>{operation.emptyReturn}</dd></div>
+                </dl>
+              </section>
+              <section className="detail-section mandate-section">
+                <h2>Current Mandate <span>{dossier.mandate.version}</span></h2>
+                <dl className="facts-list">
+                  <div><dt>Maximum price</dt><dd>{dossier.mandate.priceCap}</dd></div>
+                  <div><dt>Payment term</dt><dd>{dossier.mandate.paymentTerm}</dd></div>
+                  <div><dt>Action Window</dt><dd>{dossier.mandate.actionWindow}</dd></div>
+                  <div><dt>Constraints</dt><dd>{dossier.mandate.constraints}</dd></div>
+                </dl>
+              </section>
+            </div>
 
-        <section className="detail-section booking-section"><div className="section-heading-row"><h2>Current Booking</h2><p>Confirmed · BK-49218</p></div><div className="booking-summary"><div><span>Provider</span><strong>Transporte Sur</strong></div><div><span>Confirmed price</span><strong>ARS 908,000</strong></div><div><span>Original pickup</span><strong>Mon 01 Sep · 10:00–12:00</strong></div></div><div className="quote-comparison"><p>Relevant quotes</p><div><span>Transporte Sur · selected</span><strong>ARS 908,000</strong><em>Within Mandate</em></div><div><span>Logística Ruta 3</span><strong>ARS 932,000</strong><em>Within Mandate</em></div><div><span>Fletes del Plata</span><strong>—</strong><em>Request expired</em></div></div></section>
+            <section className="detail-section booking-section">
+              <div className="section-heading-row"><h2>Current Booking</h2><p>Confirmed · {dossier.booking.reference}</p></div>
+              <div className="booking-summary">
+                <div><span>Provider</span><strong>{dossier.booking.provider}</strong></div>
+                <div><span>Confirmed price</span><strong>{dossier.booking.confirmedPrice}</strong></div>
+                <div><span>Current pickup</span><strong>{dossier.booking.pickup}</strong><small>Originally {dossier.booking.previousPickup}</small></div>
+              </div>
+              <div className="selection-rationale"><span>Why this provider</span><p>{dossier.selectionReason}</p></div>
+              <div className="quote-comparison">
+                <p>Relevant quotes</p>
+                {dossier.quotes.map((quote) => (
+                  <div key={quote.provider} className={quote.selected ? "is-selected" : undefined}>
+                    <span>{quote.provider}{quote.selected ? " · selected" : ""}</span>
+                    <strong>{quote.price}</strong>
+                    <em>{quote.verdict}</em>
+                  </div>
+                ))}
+              </div>
+            </section>
 
-        <section className="detail-section commitments-section"><h2>Commitments</h2><ol className="commitment-timeline"><li><time>14:40</time><div><strong>Escalation started</strong><span>Provider requested a reschedule outside the Action Window.</span><small>Call checkpoint 08:14</small></div></li><li><time>11:18</time><div><strong>Booking confirmed</strong><span>Transporte Sur confirmed pickup for Mon 01 Sep, 10:00–12:00.</span><small>Call checkpoint 05:42</small></div></li><li><time>10:54</time><div><strong>Quote accepted</strong><span>ARS 908,000 evaluated within Mandate v3.</span><small>Call checkpoint 03:17</small></div></li><li><time>10:12</time><div><strong>Mandate confirmed</strong><span>Client confirmed price cap, payment term and Action Window.</span><small>Call checkpoint 01:08</small></div></li></ol></section>
+            <CommitmentEvidence commitments={dossier.commitments} />
+          </>
+        ) : (
+          <section className="detail-section dossier-pending">
+            <p className="section-label">Evidence intake</p>
+            <h2>The operation record is waiting for its first verified commitment.</h2>
+            <p>Shipment details are available above. The mandate, quotes, booking rationale and call evidence will appear here as Tango records them.</p>
+          </section>
+        )}
       </article>
     </main>
   );
