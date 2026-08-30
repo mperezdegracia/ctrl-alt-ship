@@ -4,6 +4,22 @@ Voice-driven freight coordination with a durable operation as the source of
 truth. Tango can converse on a phone call; only the server can create an
 operational fact.
 
+## Probar Tango
+
+El dashboard requiere login, pero estas son credenciales de demo para probar el
+sistema sin configuración adicional:
+
+| Acceso | Valor |
+| --- | --- |
+| Dashboard | [https://ctrl-alt-ship-frontend.onrender.com/login](https://ctrl-alt-ship-frontend.onrender.com/login) |
+| Email | `tango@ctrlalt.ship` |
+| Contraseña | `tangotango` |
+| Llamar a Tango | [+1 (272) 225-6144](tel:+12722256144) |
+
+Después de iniciar sesión, abrí la operación de demo `OP-900001`. Para probar
+la voz, llamá al número de Tango desde un número de prueba registrado en el
+Directory; los callers desconocidos se rechazan intencionalmente.
+
 ## Pitch and demo materials
 
 The seven-minute English pitch, standalone architecture diagram, rehearsal
