@@ -7,6 +7,7 @@ const preparedSchema = z.object({
   input_hash: z.string().min(1),
   context: z.object({
     operation_id: z.string().uuid(),
+    round_id: z.string().uuid(),
     selected_quote: z.object({ id: z.string().uuid() }).passthrough(),
     mandate: z.object({ id: z.string().uuid() }).passthrough(),
   }).passthrough(),
@@ -14,6 +15,7 @@ const preparedSchema = z.object({
 
 type Decision = {
   finalized?: boolean; reason?: string; booking_id?: string; review_id?: string; judge_review_id?: string;
+  round_id?: string;
 };
 type Logger = {
   info(event: string, fields?: Record<string, unknown>): void;
@@ -40,6 +42,7 @@ export class SourcingReviewService {
     const prepared = preparedSchema.parse(data);
     if (prepared.context.operation_id !== operationId) throw new Error("sourcing_review_scope_mismatch");
     const fields = { operation_id: operationId, quote_id: prepared.context.selected_quote.id,
+      round_id: prepared.context.round_id,
       mandate_id: prepared.context.mandate.id, input_hash: prepared.input_hash, model: this.judge.model };
     const cached = await this.database.from("sourcing_judge_reviews").select("id")
       .eq("operation_id", operationId).eq("input_hash", prepared.input_hash).maybeSingle();

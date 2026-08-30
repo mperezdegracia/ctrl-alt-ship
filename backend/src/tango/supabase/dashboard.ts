@@ -263,6 +263,7 @@ function traceEventTitle(type: string): string {
     "sourcing.started": "Provider sourcing started",
     "quote.requested": "Quote request issued",
     "quote.received": "Quote received",
+    "quote.offered": "Provider price offered",
     "quote.counteroffer_requested": "Counteroffer requested",
     "quote.declined": "Quote declined",
     "quote.expired": "Quote request expired",
@@ -328,6 +329,18 @@ function traceChanges(payloadValue: unknown): DashboardOperationDossier["trace"]
 
 function traceEventDetail(type: string, payloadValue: unknown): string | null {
   const payload = asRecord(payloadValue);
+  if (type === "quote.offered") {
+    const price = asRecord(payload.price_range);
+    const min = typeof price.min === "number" ? price.min : null;
+    const max = typeof price.max === "number" ? price.max : null;
+    const currency = typeof price.currency === "string" ? price.currency : null;
+    const classification = payload.range_status === "within" ? "Within range"
+      : payload.range_status === "outside" ? "Outside range" : "Unassessed";
+    if (min === null || max === null || !currency) return `${classification} · Not an approval`;
+    const money = new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 });
+    const amount = min === max ? money.format(min) : `${money.format(min)}–${money.format(max)}`;
+    return `${amount} ${currency} · ${classification} · Not an approval`;
+  }
   if (type === "operation.created") {
     const missingFields = Array.isArray(payload.missing_fields) ? payload.missing_fields.length : null;
     const status = typeof payload.status === "string" ? humanize(payload.status) : null;
