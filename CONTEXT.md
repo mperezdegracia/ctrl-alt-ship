@@ -42,7 +42,12 @@ negociación conserva cada versión enlazada con la anterior. Las propuestas
 fuera del mandato también se guardan, pero no generan una reserva.
 Una Cotización completa confirmada por el Proveedor durante la Llamada autoriza
 su selección, pero no crea un Booking por sí sola.
-_Avoid_: quote, oferta, propuesta
+_Avoid_: quote, confundir con una mera Propuesta de precio
+
+**Propuesta de precio**:
+Importe o rango que el Proveedor ofrece para una Operación, incluida su primera
+oferta y cada contraoferta. Se conserva como hecho histórico aunque exceda lo
+autorizado; registrarla no implica aprobación ni Booking.
 
 **Booking**:
 Reserva inmutable creada por el servidor sobre la Cotización seleccionada. Una Operación referencia explícitamente su Booking vigente; al reemplazarlo se crea otro Booking, sin modificar el anterior.
@@ -118,6 +123,22 @@ _Avoid_: Llamada operativa, llamada fallida con evidencia
 **Retención de evidencia**:
 Plazo de 90 días durante el MVP para conservar el audio y el Transcript de una Llamada operativa. Al vencer, se preservan los hechos estructurados pero no su evidencia conversacional.
 _Avoid_: archivo permanente de llamadas
+
+**Dirección de la llamada**:
+Indica quién inició la comunicación telefónica desde la perspectiva de Tango. Permanece igual aunque cambie el tema de la conversación.
+_Avoid_: deducir la dirección por quién habla primero o por la intención del Proveedor
+
+**Llamada entrante**:
+Llamada iniciada por un Cliente o Proveedor hacia Tango.
+
+**Llamada saliente**:
+Llamada iniciada por Tango hacia una contraparte autorizada.
+
+**Propósito de la llamada**:
+Motivo de negocio que enmarca la conversación, como gestionar un Booking o solicitar una Cotización. Es distinto de quién inició la llamada.
+
+**Intención en la llamada**:
+Acción concreta que se busca realizar dentro del propósito de la llamada, como reprogramar o cancelar un Booking. Puede estar sin decidir al comenzar la conversación.
 
 **Evento**:
 Hecho inmutable de auditoría con timestamp; los relevantes marcan checkpoints temporales para reproducir esa porción de la grabación.
