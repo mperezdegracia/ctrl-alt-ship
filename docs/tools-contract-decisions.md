@@ -166,3 +166,26 @@ del transportista bajo las condiciones cambiadas.
   compromiso aceptado.
 - `escalate` entrega al supervisor compromisos, mandato y motivo. Nunca envía el
   transcript crudo ni revela el tope.
+
+## Actualización 2026-08-30: alta y mandato con una sola aprobación
+
+- Para crear o modificar, el cliente conversa sobre un único pedido y sus
+  condiciones. No se piden aprobaciones separadas para guardar campos, crear
+  mandato y comenzar la búsqueda de transportistas.
+- Reutilizar lo ya dicho, preguntar solo lo faltante en grupos cortos y guardar
+  todos los campos de envío suministrados juntos. No inventar datos obligatorios.
+- Antes del mandato, guardar los datos del pedido y dar un resumen combinado
+  breve: envío/ruta, máximo y moneda, fechas/horarios, pago y restricciones relevantes.
+  Una sola aprobación posterior autoriza confirmar el mandato y contactar carriers.
+- Una corrección requiere confirmar el cambio, no recitar toda la operación otra
+  vez. Un cambio concurrente o fallo no permite anunciar éxito ni usar consentimiento
+  obsoleto. Las condiciones comerciales no se guardan como notas de carga.
+- Al aprobar, ejecutar `confirm_mandate` inmediatamente y cerrar brevemente tras
+  éxito. Las tools siguen siendo separadas internamente; no se cambió el schema,
+  la validación de campos ni la autorización en Postgres. Cancelación y proveedor
+  conservan sus reglas específicas.
+- Se alinearon el prompt de entrada, los perfiles posteriores y la descripción
+  de la tool para evitar volver a pedir aprobación tras un cambio de perfil.
+  Guía consultada: [OpenAI, prompting Realtime](https://developers.openai.com/api/docs/guides/realtime-models-prompting).
+- Sin ejecución de tests por indicación del usuario; mejora conversacional todavía
+  pendiente de validar en una llamada real. No se promete reducción de latencia de red.

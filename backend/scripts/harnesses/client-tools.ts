@@ -194,7 +194,8 @@ async function main(): Promise<void> {
   update = factory.createFlowUpdate(decision, session.definitions, session.flowState) as typeof update;
   assert.match(update.session.instructions, /# UPDATE FLOW/);
   assert.doesNotMatch(update.session.instructions, /# CREATE FLOW|# CANCEL FLOW/);
-  assert.match(update.session.instructions, /Read back the COMPLETE/, "Update without a prior mandate still requires full terms and summary");
+  assert.match(update.session.instructions, /ONE compact combined recap/, "Update without a prior mandate still confirms order and all commercial terms together");
+  assert.match(update.session.instructions, /Do not ask for a second mandate confirmation/);
   await assert.rejects(session.execute("confirm_mandate", {}, { toolCallId: "no-prior-mandate" }), /first mandate/);
 
   rpc.state.currentMandate = { ...terms, version: 1 };

@@ -70,7 +70,7 @@ export class ConfirmMandateTool extends RealtimeTool {
   readonly definition = {
     type: "function" as const,
     name: "confirm_mandate",
-    description: "Creates an immutable mandate after verbal confirmation. First mandate: provide all commercial terms and confirm the full summary. Updating an existing mandate: confirm only the changes and send only changed commercial terms (or {}); the server inherits omitted terms from the current mandate and builds the full snapshot.",
+    description: "Creates an immutable mandate immediately after ONE verbal approval of the combined order and terms; never request a separate mandate approval. First mandate: save shipment fields first, give a compact combined recap, then send all commercial terms. Updating an existing mandate: confirm only the combined changes and send changed commercial terms (or {}); the server inherits omitted terms and builds the full snapshot.",
     parameters: {
       type: "object", properties: {
         price_cap: { type: "number", exclusiveMinimum: 0, maximum: 999999999999.99, multipleOf: 0.01 },
