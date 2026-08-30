@@ -15,4 +15,13 @@ export class OpenAIRealtimeGateway {
     await this.client.realtime.calls.reject(callId, { status_code: 603 }, { maxRetries: 0, timeout: 10_000 });
   }
 
+  async refer(callId: string, targetUri: string): Promise<{ status: number; requestId: string | null }> {
+    const { response, request_id } = await this.client.realtime.calls.refer(
+      callId,
+      { target_uri: targetUri },
+      { maxRetries: 0, timeout: 10_000 },
+    ).withResponse();
+    return { status: response.status, requestId: request_id };
+  }
+
 }

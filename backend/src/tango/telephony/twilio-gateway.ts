@@ -50,7 +50,7 @@ export class TwilioGateway {
 
   /**
    * Retained for manual conference experiments. The live `escalate` path uses
-   * transferCallToSupervisor and does not invoke either conference method.
+   * OpenAI SIP REFER and does not invoke either conference method.
    */
   async moveCallToConference(move: ConferenceMove): Promise<void> {
     await this.post(`/Calls/${encodeURIComponent(move.callSid)}.json`, {

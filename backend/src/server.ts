@@ -30,7 +30,6 @@ import { SupabaseClientOperationRepository } from "./tango/supabase/client-opera
 import { SupabaseProviderQuoteRepository } from "./tango/supabase/provider-quote-repository";
 import { SupabaseProviderBookingRepository } from "./tango/supabase/provider-booking-repository";
 import { OpenAIRealtimeGateway } from "./tango/realtime/openai-realtime-gateway";
-import { TwilioGateway } from "./tango/telephony/twilio-gateway";
 import { EscalationHandoffCoordinator } from "./tango/telephony/escalation-handoff-coordinator";
 import { MockEscalationTool } from "./tango/tools/mock-escalation-tool";
 import { createTwilioOutboundCall, verifyTwilioSignature } from "./tango/telephony/twilio-outbound";
@@ -104,17 +103,6 @@ const emailWorker = new EmailOutboxWorker(
 // Temporary trial-by-fire destination. Replace with SUPERVISOR_PHONE when the
 // durable escalation service is enabled.
 const MOCK_SUPERVISOR_PHONE = "+5491132555829";
-function createTwilioGateway(callLogger: StructuredLogger): TwilioGateway {
-  return new TwilioGateway({
-    accountSid: environment.TWILIO_ACCOUNT_SID!,
-    authToken: environment.TWILIO_AUTH_TOKEN!,
-    fromNumber: environment.TWILIO_FROM_NUMBER!,
-    logger: {
-      info: (event, fields) => callLogger.info(event, fields),
-      error: (event, fields) => callLogger.error(event, fields),
-    },
-  });
-}
 
 let outboundWorkerRunning = false;
 
@@ -359,13 +347,13 @@ app.post("/openai/webhook", express.raw({ type: "*/*" }), async (req, res) => {
     }
 
     const handoffCoordinator = routingDecision.identity.persona === "provider"
-      ? new EscalationHandoffCoordinator(createTwilioGateway(callLogger)) : undefined;
+      ? new EscalationHandoffCoordinator(realtimeGateway) : undefined;
     // Negotiation uses the persisted quote-round budget, not raw turn count.
     const prepareMockHandoff = async (_request: { operationReference?: string; trigger: string; reason: string }) => {
       if (!handoffCoordinator || handoffCoordinator.prepared) return;
       await handoffCoordinator.prepare({
-        callSid: routingDecision.twilioCallSid,
-        supervisorPhone: MOCK_SUPERVISOR_PHONE,
+        realtimeCallId: callId,
+        supervisorTargetUri: `tel:${MOCK_SUPERVISOR_PHONE}`,
       });
     };
     const escalationTool = handoffCoordinator
@@ -504,8 +492,27 @@ app.post("/openai/webhook", express.raw({ type: "*/*" }), async (req, res) => {
             break;
 
           case "output_audio_buffer.stopped":
-            if (await handoffCoordinator?.onAudioStopped(message.response_id)) {
-              callLogger.info("escalation.transfer_started", { response_id: message.response_id });
+            try {
+              const escalationRefer = await handoffCoordinator?.onAudioStopped(message.response_id);
+              if (escalationRefer) {
+                callLogger.info("escalation.refer_succeeded", {
+                  response_id: message.response_id,
+                  realtime_call_id: callId,
+                  target_uri_scheme: "tel",
+                  target_phone_suffix: MOCK_SUPERVISOR_PHONE.slice(-4),
+                  status: escalationRefer.status,
+                  request_id: escalationRefer.requestId,
+                });
+              }
+            } catch (error) {
+              callLogger.error("escalation.refer_failed", {
+                realtime_call_id: callId,
+                target_uri_scheme: "tel",
+                target_phone_suffix: MOCK_SUPERVISOR_PHONE.slice(-4),
+                status: error instanceof OpenAI.APIError ? error.status : undefined,
+                request_id: error instanceof OpenAI.APIError ? error.requestID : undefined,
+              });
+              throw error;
             }
             break;
 

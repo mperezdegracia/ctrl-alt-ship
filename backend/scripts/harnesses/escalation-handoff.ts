@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
+import OpenAI from "openai";
 
+import { OpenAIRealtimeGateway } from "../../src/tango/realtime/openai-realtime-gateway";
 import { TwilioGateway } from "../../src/tango/telephony/twilio-gateway";
 import { EscalationHandoffCoordinator } from "../../src/tango/telephony/escalation-handoff-coordinator";
 import { MockEscalationTool } from "../../src/tango/tools/mock-escalation-tool";
@@ -48,11 +50,42 @@ async function main(): Promise<void> {
 
   await verifyConferenceGateway();
   await verifyFailureLogging();
+  await verifyOpenAISipRefer();
 
   await verifyFarewellOrdering();
   await verifyMockEscalationTool();
 
-  console.log("Escalation Twilio gateway harness passed.");
+  console.log("Escalation handoff harness passed.");
+}
+
+async function verifyOpenAISipRefer(): Promise<void> {
+  let request: { callId: string; targetUri: string; options: unknown } | undefined;
+  const client = {
+    realtime: {
+      calls: {
+        refer: (callId: string, body: { target_uri: string }, options: unknown) => {
+          request = { callId, targetUri: body.target_uri, options };
+          return {
+            withResponse: async () => ({
+              response: new Response(null, { status: 200 }),
+              request_id: "req_sip_refer",
+            }),
+          };
+        },
+      },
+    },
+  } as unknown as OpenAI;
+  const gateway = new OpenAIRealtimeGateway(client);
+
+  assert.deepEqual(
+    await gateway.refer("rtc_123", "tel:+5491100000000"),
+    { status: 200, requestId: "req_sip_refer" },
+  );
+  assert.deepEqual(request, {
+    callId: "rtc_123",
+    targetUri: "tel:+5491100000000",
+    options: { maxRetries: 0, timeout: 10_000 },
+  });
 }
 
 async function verifyConferenceGateway(): Promise<void> {
@@ -144,11 +177,14 @@ async function verifyMockEscalationTool(): Promise<void> {
 async function verifyFarewellOrdering(): Promise<void> {
   const actions: string[] = [];
   const coordinator = new EscalationHandoffCoordinator({
-    async transferCallToSupervisor() { actions.push("transfer-caller"); },
+    async refer(realtimeCallId, targetUri) {
+      actions.push(`${realtimeCallId}:${targetUri}`);
+      return { status: 200, requestId: "req_sip_refer" };
+    },
   });
   const handoff = {
-    callSid: "CA123",
-    supervisorPhone: "+5491100000000",
+    realtimeCallId: "rtc_123",
+    supervisorTargetUri: "tel:+5491100000000",
   };
 
   await coordinator.prepare(handoff);
@@ -156,10 +192,14 @@ async function verifyFarewellOrdering(): Promise<void> {
   coordinator.beginFarewell();
   assert.equal(coordinator.observeResponseCreated("resp-farewell"), true);
   assert.equal(coordinator.observeResponseCreated("resp-duplicate"), false);
-  assert.equal(await coordinator.onAudioStopped("resp-other"), false);
-  assert.equal(await coordinator.onAudioStopped("resp-farewell"), true);
-  assert.equal(await coordinator.onAudioStopped("resp-farewell"), false);
-  assert.deepEqual(actions, ["transfer-caller"]);
+  assert.equal(await coordinator.onAudioStopped("resp-other"), undefined);
+  assert.deepEqual(await coordinator.onAudioStopped("resp-farewell"), {
+    status: 200,
+    requestId: "req_sip_refer",
+    targetUri: "tel:+5491100000000",
+  });
+  assert.equal(await coordinator.onAudioStopped("resp-farewell"), undefined);
+  assert.deepEqual(actions, ["rtc_123:tel:+5491100000000"]);
 }
 
 function assertTwilioRequest(request: RequestRecord, path: string, expected: Record<string, string> = {}): void {

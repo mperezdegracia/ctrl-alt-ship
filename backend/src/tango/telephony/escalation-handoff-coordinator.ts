@@ -1,20 +1,26 @@
-import type { SupervisorTransfer, TwilioGateway } from "./twilio-gateway";
+import type { OpenAIRealtimeGateway } from "../realtime/openai-realtime-gateway";
 
 export type EscalationHandoff = Readonly<{
-  callSid: string;
-  supervisorPhone: string;
+  realtimeCallId: string;
+  supervisorTargetUri: string;
 }>;
 
-type TwilioHandoffPort = Pick<TwilioGateway, "transferCallToSupervisor">;
+type SipReferPort = Pick<OpenAIRealtimeGateway, "refer">;
+
+export type EscalationReferResult = Readonly<{
+  status: number;
+  requestId: string | null;
+  targetUri: string;
+}>;
 
 /** Coordinates a one-shot live handoff; persistence remains the caller's concern. */
 export class EscalationHandoffCoordinator {
   private handoff?: EscalationHandoff;
   private farewellResponseId?: string;
   private awaitingFarewellResponse = false;
-  private transferred = false;
+  private referred = false;
 
-  constructor(private readonly twilio: TwilioHandoffPort) {}
+  constructor(private readonly realtime: SipReferPort) {}
 
   get prepared(): boolean { return this.handoff !== undefined; }
 
@@ -41,13 +47,10 @@ export class EscalationHandoffCoordinator {
     return true;
   }
 
-  async onAudioStopped(responseId: string): Promise<boolean> {
-    if (!this.handoff || this.transferred || responseId !== this.farewellResponseId) return false;
-    await this.twilio.transferCallToSupervisor({
-      callSid: this.handoff.callSid,
-      to: this.handoff.supervisorPhone,
-    } satisfies SupervisorTransfer);
-    this.transferred = true;
-    return true;
+  async onAudioStopped(responseId: string): Promise<EscalationReferResult | undefined> {
+    if (!this.handoff || this.referred || responseId !== this.farewellResponseId) return undefined;
+    const result = await this.realtime.refer(this.handoff.realtimeCallId, this.handoff.supervisorTargetUri);
+    this.referred = true;
+    return { ...result, targetUri: this.handoff.supervisorTargetUri };
   }
 }
