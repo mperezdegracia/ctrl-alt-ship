@@ -1,13 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import { formatDateTime } from "@/lib/dashboard-api";
 import type { DashboardOperationDossier } from "@/lib/dashboard-api";
 
 type OperationTraceProps = { trace: DashboardOperationDossier["trace"] };
-type TraceData = NonNullable<DashboardOperationDossier["trace"]>;
-type TraceNode = TraceData["nodes"][number];
+type TraceNode = NonNullable<DashboardOperationDossier["trace"]>["nodes"][number];
 
 function eventKind(node: TraceNode): string {
   if (node.kind === "call_started") return "Call opened";
@@ -40,16 +39,68 @@ function EvidenceSource({ node }: { node: TraceNode }) {
   );
 }
 
-function StudyHeading({ id, title, copy }: { id: string; title: string; copy: string }) {
-  return <header className="trace-study-heading"><h3 id={id}>{title}</h3><p>{copy}</p></header>;
-}
-
 function DecisionLedger({ nodes, arrivedId }: { nodes: TraceNode[]; arrivedId: string | null }) {
+  const ledgerRef = useRef<HTMLOListElement>(null);
+  const knownIds = useRef<Set<string> | null>(null);
+  const previousHeight = useRef(0);
+  const pinnedToLatest = useRef(true);
+  const [unseenEntries, setUnseenEntries] = useState(0);
+  const recentNodes = useMemo(() => [...nodes].reverse(), [nodes]);
+
+  useLayoutEffect(() => {
+    const ledger = ledgerRef.current;
+    if (!ledger) return;
+
+    const previousIds = knownIds.current;
+    if (previousIds === null) {
+      knownIds.current = new Set(nodes.map((node) => node.id));
+      previousHeight.current = ledger.scrollHeight;
+      return;
+    }
+
+    const additions = nodes.filter((node) => !previousIds.has(node.id));
+    if (additions.length > 0) {
+      if (pinnedToLatest.current) {
+        ledger.scrollTop = 0;
+        setUnseenEntries(0);
+      } else {
+        ledger.scrollTop += ledger.scrollHeight - previousHeight.current;
+        setUnseenEntries((current) => current + additions.length);
+      }
+    }
+
+    knownIds.current = new Set(nodes.map((node) => node.id));
+    previousHeight.current = ledger.scrollHeight;
+  }, [nodes]);
+
+  function handleScroll() {
+    const ledger = ledgerRef.current;
+    if (!ledger) return;
+    const atLatest = ledger.scrollTop < 8;
+    pinnedToLatest.current = atLatest;
+    if (atLatest) setUnseenEntries(0);
+  }
+
+  function showLatest() {
+    const ledger = ledgerRef.current;
+    if (!ledger) return;
+    ledger.scrollTop = 0;
+    pinnedToLatest.current = true;
+    setUnseenEntries(0);
+  }
+
   return (
     <section className="trace-study trace-study-ledger" aria-labelledby="decision-ledger-title">
-      <StudyHeading id="decision-ledger-title" title="Decision ledger" copy="One chronological record: what changed, when it became durable, and the call that produced it." />
-      <ol className="decision-ledger" aria-label="Decision ledger study">
-        {nodes.map((node) => (
+      <header className="trace-study-heading">
+        <h3 id="decision-ledger-title">Decision ledger</h3>
+        <p>Latest durable evidence is first. Scroll to review the earlier record without losing your place.</p>
+      </header>
+      <div className="decision-ledger-utility">
+        <span>Latest first · {nodes.length} recorded {nodes.length === 1 ? "event" : "events"}</span>
+        {unseenEntries > 0 && <button type="button" onClick={showLatest}>Show {unseenEntries} new {unseenEntries === 1 ? "entry" : "entries"}</button>}
+      </div>
+      <ol ref={ledgerRef} className="decision-ledger" aria-label="Decision ledger, latest events first" onScroll={handleScroll} tabIndex={0}>
+        {recentNodes.map((node) => (
           <li key={node.id} className={node.id === arrivedId ? "is-new-evidence" : undefined}>
             <time dateTime={node.occurredAt}>{formatDateTime(node.occurredAt)}</time>
             <span className={`decision-mark is-${node.kind}`} aria-hidden="true" />
@@ -63,68 +114,7 @@ function DecisionLedger({ nodes, arrivedId }: { nodes: TraceNode[]; arrivedId: s
           </li>
         ))}
       </ol>
-    </section>
-  );
-}
-
-function CallDocket({ trace, arrivedId }: { trace: TraceData; arrivedId: string | null }) {
-  const operationEvents = trace.nodes.filter((node) => node.laneId === "operation");
-  const callLanes = trace.lanes.filter((lane) => lane.kind === "call");
-  return (
-    <section className="trace-study trace-study-docket" aria-labelledby="call-docket-title">
-      <StudyHeading id="call-docket-title" title="Call docket" copy="Conversations are the filing unit; durable operation effects remain visible alongside their source." />
-      {operationEvents.length > 0 && <div className="call-docket-operation">
-        <h4>Operation record</h4>
-        <ol>
-          {operationEvents.map((node) => <li key={node.id} className={node.id === arrivedId ? "is-new-evidence" : undefined}><time dateTime={node.occurredAt}>{formatDateTime(node.occurredAt)}</time><div><strong>{node.title}</strong>{node.detail && <p>{node.detail}</p>}<NodeChanges node={node} /><EvidenceSource node={node} /></div></li>)}
-        </ol>
-      </div>}
-      <ol className="call-dockets" aria-label="Call docket study">
-        {callLanes.map((lane) => {
-          const callNodes = trace.nodes.filter((node) => node.laneId === lane.id);
-          return (
-            <li key={lane.id}>
-              <header><div><h4>{lane.label}</h4><p>{lane.description}</p></div><span>{callNodes.length} evidence {callNodes.length === 1 ? "entry" : "entries"}</span></header>
-              <ol>
-                {callNodes.map((node) => <li key={node.id} className={node.id === arrivedId ? "is-new-evidence" : undefined}><time dateTime={node.occurredAt}>{formatDateTime(node.occurredAt)}</time><div><span>{eventKind(node)}</span><strong>{node.title}</strong>{node.detail && <p>{node.detail}</p>}<NodeChanges node={node} /><EvidenceSource node={node} /></div></li>)}
-              </ol>
-            </li>
-          );
-        })}
-      </ol>
-    </section>
-  );
-}
-
-function AuditSplit({ nodes, arrivedId }: { nodes: TraceNode[]; arrivedId: string | null }) {
-  const [selectedId, setSelectedId] = useState(nodes.at(-1)?.id);
-  const selected = useMemo(() => nodes.find((node) => node.id === selectedId) ?? nodes.at(-1), [nodes, selectedId]);
-  if (!selected) return null;
-  return (
-    <section className="trace-study trace-study-audit" aria-labelledby="audit-split-title">
-      <StudyHeading id="audit-split-title" title="Audit split view" copy="Scan the record on the left; select one entry to inspect the exact evidence on the right." />
-      <div className="audit-split">
-        <ol className="audit-rail" aria-label="Audit split timeline study">
-          {nodes.map((node) => {
-            const selectedNode = node.id === selected.id;
-            return <li key={node.id} className={node.id === arrivedId ? "is-new-evidence" : undefined}>
-              <button type="button" onClick={() => setSelectedId(node.id)} aria-pressed={selectedNode}>
-                <time dateTime={node.occurredAt}>{formatDateTime(node.occurredAt)}</time>
-                <span>{eventKind(node)}</span>
-                <strong>{node.title}</strong>
-              </button>
-            </li>;
-          })}
-        </ol>
-        <aside className="audit-focus" aria-live="polite" aria-label={`Evidence for ${selected.title}`}>
-          <span>{eventKind(selected)}</span>
-          <h4>{selected.title}</h4>
-          <time dateTime={selected.occurredAt}>{formatDateTime(selected.occurredAt)}</time>
-          {selected.detail && <p>{selected.detail}</p>}
-          <NodeChanges node={selected} />
-          <EvidenceSource node={selected} />
-        </aside>
-      </div>
+      <span className="sr-only" aria-live="polite">{unseenEntries > 0 ? `${unseenEntries} new ${unseenEntries === 1 ? "entry is" : "entries are"} available at the top of the decision ledger.` : ""}</span>
     </section>
   );
 }
@@ -154,12 +144,10 @@ export function OperationTrace({ trace }: OperationTraceProps) {
   return (
     <section className="detail-section trace-section trace-comparison" aria-labelledby="trace-heading">
       <header className="trace-comparison-heading">
-        <div><h2 id="trace-heading">Operation evidence</h2><p>The same append-only calls and events, shown three ways for comparison.</p></div>
+        <div><h2 id="trace-heading">Operation evidence</h2><p>Append-only calls and state changes, ordered for the operator currently on the case.</p></div>
         <span>{trace.nodes.length} recorded events</span>
       </header>
       <DecisionLedger nodes={trace.nodes} arrivedId={arrivedId} />
-      <CallDocket trace={trace} arrivedId={arrivedId} />
-      <AuditSplit nodes={trace.nodes} arrivedId={arrivedId} />
     </section>
   );
 }
