@@ -9,6 +9,39 @@ Decisiones, límites y despliegue (incluido el conflicto de versiones de migraci
 [provider-sourcing-merge-decisions.md](provider-sourcing-merge-decisions.md).
 Sin PostgreSQL ni pruebas reales de llamadas/emails en esta integración.
 
+## Estado vigente de tools (M1/M2 + factory)
+
+La siguiente matriz describe el código integrado al checkout, no un resultado de
+validación remota. Estado uniforme: **código integrado — no ejecutado, no validado,
+no activo**.
+
+| Perfil | Tools permitidas | Estado |
+| --- | --- | --- |
+| `provider_inbound_entry` | `list_provider_operations`, `select_booking_for_reschedule`, `select_booking_for_cancellation` | Código integrado — no ejecutado, no validado, no activo |
+| `provider_reschedule` | `reschedule_booking`, `escalate` | Código integrado — no ejecutado, no validado, no activo |
+| `provider_cancel_booking` | `cancel_booking`, `escalate` | Código integrado — no ejecutado, no validado, no activo |
+| `provider_booking_escalation` | `escalate` | Código integrado — no ejecutado, no validado, no activo |
+| `provider_quote` (saliente) | `record_provider_offer`, `create_quote`, `decline_quote_request`, `escalate` | Código integrado — no ejecutado, no validado, no activo |
+| `provider_unavailable` / `terminal` | ninguna (`tools: []`) | Código integrado — no ejecutado, no validado, no activo |
+
+Sin Bookings disponibles, el perfil de entrada solo ofrece listado, no selectores.
+En la entrada de Proveedor no se anuncian `quote` ni `escalate` antes de que la
+selección persistida de Booking e intención haya sido aceptada. La selección no
+modifica Booking, Mandato, Solicitud de cambio ni Outbox. En salientes, la
+Operación, request, ronda, propósito y targets vienen del trabajo persistido; el
+Proveedor puede registrar cada oferta antes de crear la Cotización formal.
+`commitment_created: false` se conserva únicamente como campo deprecated de
+compatibilidad en resultados existentes; no existe una entidad Compromiso.
+
+La `CallToolFactory` construye el registry según el scope persistido de la llamada;
+no mezcla familias de Cliente/Proveedor ni contexto de cotización con gestión de
+Bookings. Toda activación requiere aplicar las migraciones compatibles y una
+autorización separada.
+
+Las secciones posteriores conservan el historial de tramos previos y sus estados
+al momento de redactarse; cuando contradicen esta matriz vigente, prevalece esta
+matriz y no deben leerse como una lista actual de tools anunciadas.
+
 ## Primer tramo: consultas reales
 
 - `list_open_operations` consulta las operaciones abiertas del contacto autenticado.

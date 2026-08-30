@@ -1,16 +1,82 @@
 # Super backlog de Tango — implementación delegable a Luna
 
-Fecha de corte: 2026-08-30. Estado: plan de trabajo, no implementación ni despliegue.
-Revisión 2: alineada con `632fc11` y ADR 0003; los IDs existentes se conservan.
+Fecha de corte: 2026-08-30. Estado: código integrado localmente, no validado por
+ejecución ni activado. Revisión 2 alineada con `632fc11` y ADR 0003; IDs conservados.
 
-Objetivo: convertir los acuerdos existentes en tareas pequeñas y asignables, sin
-que cada agente tenga que rediseñar el producto. La entrega principal es el flujo
-integrado de Proveedores: inbound de Bookings, outbound de Cotizaciones,
-registro de propuestas, cancelación con reemplazo y reintentos durables.
+Objetivo: flujo integrado de Proveedores con inbound de Bookings, outbound de
+Cotizaciones, propuestas observadas, replacement y reintentos durables.
 
-Hay **30 tickets de implementación**, **11 pendientes diferidos de cierre** y
-**2 gates externos no autorizados por este documento**. Ningún ticket se marca
-implementado por aparecer acá. No se crearon issues ni se lanzaron agentes.
+Los **30 tickets activos** tienen implementación y wiring local; los **11 diferidos**
+y **ACT-01/02** siguen fuera del alcance autorizado. Este registro no acredita
+ejecución PostgreSQL, pruebas, despliegue ni comportamiento en llamadas reales.
+
+## Progreso de implementación y trazabilidad
+
+Implementadores Luna medium en paralelo, con ownership por archivo en checkout
+compartido. El coordinador integró y realizó commits incrementales:
+`1f04ec6` contratos; `0a6ac3c` repository; `cb038ba` routing;
+`d698f6d` worker/callbacks; `7abec82` voz/tools; `43b8015` M0/MB;
+`8842f95` M1/selección; `97d7333` M2/rondas/ofertas;
+`944758a` guards de selección; `71c1604` M3 y wiring del servidor;
+`31a1fc5` esquema de referencia. El cierre documental acompaña estos commits.
+
+Todos los renglones siguientes significan **implementación local integrada, sin
+validación por ejecución**. M0/MB/M1/M2/M3 son las cinco migraciones forward
+reservadas en §6; no se aplicaron. Las rutas cortas de código parten de
+`backend/src/`; las migraciones están en `supabase/migrations/`.
+
+| Ticket | Archivo/símbolo que implementa el resultado |
+| --- | --- |
+| BL-001 | `domain/call-flow.ts`, `domain/provider-call-state.ts`: scope/estados discriminados. |
+| BL-002 | `domain/provider-contact-contract.ts`, `docs/provider-call-contracts.md`, `contracts/tools.md`, `contracts/events.md`: RPC y schemas. |
+| DB-100 | MB: `validate_booking`, `validate_booking_evidence`, puntero, adjudicación/cancelación Cliente y trigger de email; `contracts/schema.sql`. |
+| DB-101 | M0 enum `quote.offered`; M1 columnas de purpose/selección/request y aislamiento. |
+| DB-102 | M1: `get_provider_inbound_tool_state`, `select_provider_booking`. |
+| DB-103 | M1: wrapper `execute_provider_booking_tool` y `execute_escalation_tool`, autorización antes de replay. |
+| DB-104 | M2: `sourcing_rounds`, backfill cerrado, `enqueue_mandate_sourcing`, cierre de scope obsoleto. |
+| DB-105 | M2: `record_provider_offer`, `execute_provider_quote_tool`, evento observado y enlace formal. |
+| DB-106 | MB + M2: cancelación inmutable y `enqueue_replacement_sourcing` en transacción del evento. |
+| DB-107 | M2: `prepare_sourcing_review`, `finalize_operation_sourcing`, adjudicación por ronda actual. |
+| DB-108 | M3: intentos únicos, `claim_next_provider_contact_v2`, `begin_provider_contact`. |
+| DB-109 | M3: `finish_provider_contact_v2`, persistencia idempotente del mismo SID. |
+| DB-110 | M3: `record_provider_call_status`, secuencia, atención tardía y retry no-answer. |
+| DB-111 | M3: `advance_sourcing_round`, ambigüedad/agotamiento y permisos service_role; RPC legacy revocadas. |
+| VO-201 | Servicios `domain/provider-booking-service.ts`, `provider-quote-service.ts` y repositorios separados. |
+| VO-202 | `tango/tools/provider-booking-tool.ts`, listado autorizado y selectores de acción. |
+| VO-203 | `tango/tools/provider-quote-tool.ts`: `record_provider_offer` y resultado mínimo. |
+| VO-204 | `tango/tools/call-tool-factory.ts`, `call-tool-session.ts`: familias/perfiles cerrados. |
+| VO-205 | `tango/agents/provider-inbound-instructions.ts`, `provider-booking-instructions.ts`: selección y gestión inbound. |
+| VO-206 | `tango/agents/provider-quote-instructions.ts`: propuesta observada antes de negociación/aprobación. |
+| TEL-301 | `tango/supabase/provider-contact-repository.ts`: RPC v2 escalares con guards. |
+| TEL-302 | `tango/workers/provider-contact-worker.ts`: claim/begin/POST/finish/advance sin redial técnico. |
+| TEL-303 | `tango/telephony/twilio-outbound.ts`: correlación del intento y callbacks. |
+| TEL-304 | `tango/telephony/provider-call-status-handler.ts`: firma, AccountSid, datos y persistencia esperada. |
+| INT-401 | `tango/telephony/call-scope.ts`, routing inbound/outbound y `server.ts`: scope persistido. |
+| INT-402 | `tango/realtime/agents-call-session.ts`: estado inicial antes de accept, refresh y misma sesión/updateAgent. |
+| INT-403 | `server.ts`: worker v2, endpoint outbound sin marcado directo, callback await y parser form. |
+| INT-404 | `tango/services/sourcing-review-service.ts`, `tango/agents/sourcing-judge.ts`, `tango/supabase/erp.ts`: ronda/puntero. |
+| INT-405 | `tango/supabase/dashboard.ts`: feed `quote.offered`; metadata segura en server/worker/tools. |
+| DOC-501 | Este registro y docs de worker, Bookings, Cotizaciones, tools y logs; runbook y límites explícitos. |
+
+Recorrido integrado: incoming → `resolveCallScope` persistido → estado autorizado
+→ build agent → accept; mutation → estado actualizado → `updateAgent`.
+Los agentes no hicieron commits simultáneos sobre el índice compartido.
+
+### Límites para activar
+
+- M0→MB→M1→M2→M3 y backend deben desplegarse coordinadamente. El esquema de
+  referencia no es una migración ni una alternativa para aplicar cambios.
+- El baseline histórico 200000 tiene un posible bloqueo de instalación fresca
+  por `UPDATE ... FROM LATERAL` que referencia el alias objetivo; ver ACT-01.
+  No se alteró ni se ejecutó ese archivo.
+- No hay control independiente de pausa del loop HTTP. El drenaje y la pausa
+  del autodeploy Render requieren un procedimiento operativo autorizado antes
+  de activar; ver [runbook](outbound-worker.md).
+- No se ejecutaron tests, typecheck, harnesses, db:check, migraciones, llamadas,
+  emails, push ni deploy. Los harnesses/CI históricos no se adaptaron ni se
+  consideran compatibles o aprobados por esta entrega.
+- `commitment_created: false` es compatibilidad deprecated; no existe entidad
+  Compromiso. Evidencia completa/retención/aviso siguen en DIF-06/07/09/10/11.
 
 ## 1. Autoridad, alcance y conflictos resueltos
 
@@ -1063,6 +1129,11 @@ Sus criterios son objetivos futuros, no permiso para probar o desplegar ahora.
 - Prerrequisito: establecer estado real de la migración recibida 200000 y resolver
   cualquier bloqueo de aplicación sin editarla silenciosamente ni perder historia.
   No activar el puente con writers viejos como si ya garantizara inmutabilidad.
+- Observación técnica pendiente: en una instalación fresca, la migración original
+  `20260830200000_bookings_replace_commitments.sql` contiene un `UPDATE ... FROM
+  LATERAL` cuyo subquery referencia el alias objetivo `o`; confirmar con el dueño
+  de SQL la resolución autorizada antes de aplicar migraciones. No se ejecutó ni se
+  editó la migración original como parte de este backlog.
 - Resolver el alcance de DIF-06/07/09/10/11 antes de activar llamadas operativas:
   incluir su entrega o explicitar con el usuario qué activación limitada se autoriza.
   No asumir que esos requisitos están cumplidos por aparecer en CONTEXT.
