@@ -5,7 +5,7 @@ BEGIN;
 CREATE TABLE public.handoff_recipients (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   name text NOT NULL CHECK (btrim(name) <> ''),
-  phone text NOT NULL UNIQUE CHECK (phone ~ '^\\+[1-9][0-9]{7,14}$'),
+  phone text NOT NULL UNIQUE CHECK (phone ~ '^\+[1-9][0-9]{7,14}$'),
   role text NOT NULL CHECK (role IN ('supervisor', 'operator')),
   active boolean NOT NULL DEFAULT true,
   priority smallint NOT NULL DEFAULT 100 CHECK (priority >= 1 AND priority <= 32_767),
