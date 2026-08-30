@@ -22,7 +22,9 @@ const environmentSchema = z.object({
   SUPABASE_PUBLISHABLE_KEY: z.string().min(1),
   DASHBOARD_ORIGINS: z.string().min(1).default("http://localhost:3001"),
   OPENAI_API_KEY: z.string().min(1),
+  OPENAI_PROJECT_ID: z.string().min(1).optional(),
   OPENAI_WEBHOOK_SECRET: z.string().min(1),
+  OUTBOUND_CALLS_TOKEN: z.string().min(32).optional(),
 });
 
 const parsedEnvironment = environmentSchema.safeParse(process.env);

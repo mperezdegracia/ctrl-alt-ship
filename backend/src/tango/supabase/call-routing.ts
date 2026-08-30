@@ -31,13 +31,14 @@ export async function persistRoutedCall(
 ): Promise<string> {
   const existing = await client
     .from("calls")
-    .select("id,operation_id")
+    .select("id,operation_id,direction")
     .eq("realtime_call_id", decision.callId)
     .maybeSingle();
   if (existing.error) throw existing.error;
 
   let callId = existing.data?.id as string | undefined;
   let operationId = existing.data?.operation_id as string | null | undefined;
+  let direction = existing.data?.direction as "inbound" | "outbound" | undefined;
   if (!callId) {
     const callInsert = await client
       .from("calls")
@@ -59,6 +60,7 @@ export async function persistRoutedCall(
     if (!callInsert.data) throw new Error("Supabase did not return the routed call");
     callId = callInsert.data.id as string;
     operationId = null;
+    direction = "inbound";
   }
 
   const routedEvent = await client
@@ -78,7 +80,7 @@ export async function persistRoutedCall(
       type: "call.routed",
       schema_version: 1,
       payload: {
-        direction: "inbound",
+        direction: direction ?? "inbound",
         persona: decision.identity.persona,
         intent: "undecided",
         counterparty_type: decision.identity.persona === "client" ? "contact" : "provider",

@@ -32,7 +32,7 @@ Rango de fechas/horas del mandato dentro del cual el agente puede fijar o mover 
 _Avoid_: ventana de retiro
 
 **Pedido de cotización**:
-Trabajo idempotente que solicita a un proveedor una oferta para una operación.
+Trabajo idempotente que solicita a un proveedor una oferta para una operación. Un conjunto de Pedidos de cotización se cierra cuando todos alcanzan resultado terminal o vence su plazo de recolección.
 _Avoid_: solicitud, request
 
 **Cotización**:
@@ -40,16 +40,17 @@ Oferta estructurada e inmutable de un proveedor (precio, moneda, ventana de
 retiro, plazo de pago, vigencia y condiciones); nunca equivale a booking. Una
 negociación conserva cada versión enlazada con la anterior. Las propuestas
 fuera del mandato también se guardan, pero no generan un compromiso aceptado.
+Una Cotización completa confirmada por el Proveedor durante la Llamada autoriza
+su selección, pero no crea un Booking por sí sola.
 _Avoid_: quote, oferta, propuesta
 
 **Booking**:
-Compromiso de reserva sobre la cotización seleccionada, con confirmación explícita del proveedor; a lo sumo uno vigente por operación.
+Compromiso de reserva sobre la Cotización seleccionada, creado por el servidor al seleccionar la mejor Cotización válida; a lo sumo uno vigente por Operación.
 _Avoid_: reserva, cierre
 
 **Compromiso**:
-Hecho verificable acordado en una llamada (cotización aceptada, booking,
-reprogramación o cancelación) anclado a la llamada, al instante y a la versión
-del mandato que lo produjo. Es inmutable; un cambio crea otro compromiso que
+Hecho verificable (cotización aceptada, Booking, reprogramación o cancelación)
+anclado a una Llamada, un instante y una versión del Mandato. Es inmutable; un cambio crea otro compromiso que
 reemplaza al anterior sin borrarlo.
 _Avoid_: transcript, acuerdo, promesa
 
@@ -60,19 +61,19 @@ servidor la evalúa contra el mandato y la aplica o escala.
 _Avoid_: editar el booking sin registrar el pedido
 
 **Renegociación**:
-Llamada saliente del agente para mover un compromiso existente, siempre dentro del mandato; produce un compromiso nuevo que reemplaza al anterior sin borrar el rastro.
+Proceso de volver a solicitar cotizaciones cuando el Mandato vigente es incompatible con el Booking vigente. Llama en paralelo a los Proveedores elegibles, selecciona la mejor Cotización válida y crea un compromiso nuevo que reemplaza al anterior sin borrar el rastro.
 _Avoid_: recotización
 
 **Escalación**:
 Pase de una llamada viva al supervisor sin cortar, entregando compromisos, mandato y motivo — nunca el transcript crudo.
-_Avoid_: transferencia, derivación
+_Avoid_: transferencia, derivación, HITL
 
 **Supervisor**:
 Humano del lado de Tango, que opera sobre el ERP del cliente y recibe las escalaciones; en el demo, uno del equipo.
 _Avoid_: operador, admin, agente humano
 
 **Tango**:
-El agente de voz; un solo sistema con dos personas de conversación (agente de cliente y agente de proveedor).
+El agente de voz que opera en nombre del ERP del Cliente; un solo sistema con dos personas de conversación (agente de cliente y agente de proveedor). En llamadas salientes se identifica transparentemente como asistente de logística de la empresa del Cliente.
 _Avoid_: Jarvis, el bot
 
 **ERP del cliente**:
@@ -98,7 +99,7 @@ Cargo de la naviera por retener el contenedor fuera del puerto más allá de los
 _Avoid_: demurrage
 
 **Llamada**:
-Interacción telefónica correlacionada con una operación y una contraparte; las entrantes se rutean por caller ID y un número desconocido se rechaza.
+Interacción telefónica entrante o saliente, correlacionada con una Operación y una contraparte autorizada (Cliente o Proveedor). Las entrantes se rutean por caller ID y las salientes nunca se dirigen a un número arbitrario.
 
 **Evento**:
 Hecho inmutable de auditoría con timestamp; los relevantes marcan checkpoints temporales para reproducir esa porción de la grabación.
@@ -125,6 +126,7 @@ pendiente; ningún worker los consume todavía.
   **Compromisos**; cada **Compromiso** ancla a una **Llamada**, un instante y
   una versión del **Mandato**
 - Una **Renegociación** reemplaza un **Compromiso** anterior sin borrarlo
+- Durante una **Renegociación**, el **Booking** anterior sigue vigente y queda pendiente de reemplazo hasta que se confirme otro; si no hay Cotización válida, se conserva y se produce una **Escalación**
 - Una cancelación del proveedor cancela el **Booking**, crea un compromiso de
   cancelación y deja nuevos contactos a proveedores en el **Outbox**
 - Una **Escalación** entrega una **Llamada** viva al **Supervisor**, con los **Compromisos** y el **Mandato** como contexto

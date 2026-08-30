@@ -35,8 +35,8 @@ Ver [decisión, límites y despliegue](realtime-confirmation-review.md).
 - Cliente: entrada con listar, crear, actualizar o cancelar. Después de elegir,
   desaparecen los caminos incompatibles.
 - Provider outbound: el servidor conoce operación y objetivo, por lo que expone
-  únicamente cotizar, confirmar booking o renegociar, junto con su negativa y
-  `escalate`.
+  únicamente cotizar o rechazar el Pedido de cotización y `escalate`. La
+  selección posterior del servidor crea el Booking sin una llamada adicional.
 - Provider inbound: puede listar sus operaciones activas y elegir cotizar o
   rechazar el pedido, confirmar o rechazar un booking pendiente, reprogramar,
   cancelar booking o escalar. Después de elegir se bloquea el flujo.
@@ -123,8 +123,9 @@ Ver [decisión, límites y despliegue](realtime-confirmation-review.md).
 
 ## Booking, cambios y escalación
 
-- `confirm_booking` requiere aceptación verbal y un precio final exacto dentro
-  del rango elegido y del mandato. La referencia del provider es opcional.
+- `select_quote` crea el Booking al seleccionar la Cotización vigente válida
+  con menor `price_max`; la Cotización completa ya fue confirmada verbalmente
+  por el Proveedor. Los emails posteriores son notificaciones, no aprobación.
 - `reschedule_booking` sólo cambia la ventana y conserva precio y condiciones.
   Fuera de `action_windows` no aplica nada y requiere escalación.
 - Si el provider exige otro precio, presenta una nueva cotización; no se modela
