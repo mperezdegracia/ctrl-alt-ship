@@ -361,7 +361,8 @@ CREATE TABLE tool_command_receipts (
   tool_name text NOT NULL CHECK (tool_name IN (
     'create_operation', 'update_operation', 'confirm_mandate', 'cancel_operation',
     'create_quote', 'decline_quote_request', 'reschedule_booking', 'cancel_booking',
-    'record_provider_quote' -- Historical receipts; this legacy RPC is revoked.
+    'record_provider_quote', -- Historical receipts; this legacy RPC is revoked.
+    'escalate'
   )),
   arguments jsonb NOT NULL CHECK (jsonb_typeof(arguments) = 'object'),
   result jsonb NOT NULL CHECK (jsonb_typeof(result) = 'object'),
