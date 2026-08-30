@@ -50,7 +50,7 @@ export class MigrationAudit {
     const referenceEvents = new Set(labels(enumBody(this.schema)));
     for (const event of events) if (!referenceEvents.has(event)) errors.push(`Reference enum missing: ${event}`);
     for (const event of referenceEvents) if (!events.has(event)) errors.push(`Event not migrated: ${event}`);
-    for (const match of sql.matchAll(/'((?:call|operation|mandate|sourcing|quote|booking|escalation|email)\.[a-z_]+)'/g)) {
+    for (const match of sql.matchAll(/'((?:call|operation|mandate|sourcing|quote|booking|escalation|email|sms)\.[a-z_]+)'/g)) {
       if (!events.has(match[1])) errors.push(`Event used but not declared: ${match[1]}`);
     }
     const functions = new Set([...sql.matchAll(/CREATE (?:OR REPLACE )?FUNCTION (?:public\.)?(\w+)\s*\(/gi)].map((match) => match[1]));

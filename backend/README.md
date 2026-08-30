@@ -12,9 +12,10 @@ Supabase access token.
 
 Run it locally from this directory with `npm ci` and `npm run dev`.
 
-Booking confirmation mail is consumed by the in-process outbox worker. Its
-default `preview` mode persists rendered messages to the server-only
-`email_previews` table without sending them; production uses SMTP when
-`EMAIL_DELIVERY_MODE=smtp`, SMTP credentials, and `EMAIL_FROM` are present.
-Run `npm run harness:email` to verify rendering and delivery failure handling
-without Supabase or provider credentials.
+Booking confirmations are consumed by the in-process SMS outbox worker. Its
+default `preview` mode never contacts a recipient; production uses Twilio when
+`SMS_DELIVERY_MODE=twilio`, the existing Twilio credentials, and an SMS-capable
+`TWILIO_FROM_NUMBER` are configured. Every provider SMS contains the booking
+details needed for dispatch because providers do not use the dashboard. Run
+`npm run harness:sms` to verify rendering and delivery failure handling without
+Supabase or provider credentials.

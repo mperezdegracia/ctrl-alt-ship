@@ -34,6 +34,7 @@
     "harness:twilio-handoff": "node --require tsx/cjs scripts/harnesses/twilio-handoff-smoke.ts",
     "harness:realtime:diagnostics": "node --require tsx/cjs scripts/harnesses/realtime-diagnostics.ts",
     "harness:email": "tsx scripts/harnesses/email-outbox.ts",
+    "harness:sms": "tsx scripts/harnesses/sms-outbox.ts",
     "db:seed": "tsx scripts/db/seed.ts",
     "auth:smoke": "tsx scripts/harnesses/auth-smoke.ts",
     "typecheck": "tsc --project tsconfig.json"

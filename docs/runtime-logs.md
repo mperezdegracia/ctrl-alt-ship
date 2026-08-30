@@ -53,6 +53,7 @@ transcripts, cuerpos de respuesta, teléfonos completos ni credenciales.
 - `audio.*`, `transcript.*` y `realtime.response_*`: evento y conteos, nunca texto
   del transcript en logs nuevos.
 - `email.delivery_*`: modo, intento, IDs y duración; sin direcciones ni cuerpo.
+- `sms.delivery_*`: modo, intento, IDs y duración; sin teléfonos ni cuerpo.
 
 La escalación conserva su destinatario configurable en Directory
 (`handoff_recipients`); no hardcodear ni registrar el teléfono completo. Un REFER

@@ -152,6 +152,14 @@
     {
       "file": "20260830231000_allow_provider_booking_selection.sql",
       "sha256": "dcd62c173aad8cc240e30236ba1e8c5b2ec1bb56d097d3ca82d2949c2a607a0c"
+    },
+    {
+      "file": "20260830232000_sms_event_types.sql",
+      "sha256": "b474a16be8909c713410813cc876a2e38362c1874cdf5a5812fb01e13118316f"
+    },
+    {
+      "file": "20260830232100_booking_confirmation_sms_outbox.sql",
+      "sha256": "1613562fef9b58745c9a18bc1fac3800ab29a8d3418be0038fc4dd59ae771876"
     }
   ]
 }

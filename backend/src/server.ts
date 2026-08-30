@@ -40,6 +40,8 @@ import { createTwilioOutboundCall, verifyTwilioSignature } from "./tango/telepho
 import { extractOutboundCallRecordId, routeOutboundCall } from "./tango/telephony/outbound-routing";
 import { PreviewEmailGateway, SmtpEmailGateway } from "./tango/services/email-gateway";
 import { EmailOutboxWorker, SupabaseEmailOutboxRepository } from "./tango/workers/email-outbox-worker";
+import { PreviewSmsGateway, TwilioSmsGateway } from "./tango/services/sms-gateway";
+import { SmsOutboxWorker, SupabaseSmsOutboxRepository } from "./tango/workers/sms-outbox-worker";
 import { OutboundSourcingLoop } from "./tango/workers/outbound-sourcing-loop";
 import { CallEvidenceRetentionWorker } from "./tango/workers/call-evidence-retention-worker";
 import { AgentsSourcingJudge } from "./tango/agents/sourcing-judge";
@@ -130,6 +132,18 @@ const emailWorker = new EmailOutboxWorker(
   new SupabaseEmailOutboxRepository(supabaseAdmin),
   emailGateway,
   logger.child({ worker: "email_outbox" }),
+);
+const smsGateway = environment.SMS_DELIVERY_MODE === "twilio"
+  ? new TwilioSmsGateway({
+    accountSid: environment.TWILIO_ACCOUNT_SID!,
+    authToken: environment.TWILIO_AUTH_TOKEN!,
+    from: environment.TWILIO_FROM_NUMBER!,
+  })
+  : new PreviewSmsGateway();
+const smsWorker = new SmsOutboxWorker(
+  new SupabaseSmsOutboxRepository(supabaseAdmin),
+  smsGateway,
+  logger.child({ worker: "sms_outbox" }),
 );
 function providerPhoneType(capabilities: unknown): "mobile" | "landline" | undefined {
   if (!capabilities || typeof capabilities !== "object" || Array.isArray(capabilities)) return undefined;
@@ -746,6 +760,8 @@ app.listen(PORT, () => {
     client_operation_tools_enabled: environment.CLIENT_OPERATION_TOOLS_ENABLED,
     email_delivery_mode: environment.EMAIL_DELIVERY_MODE,
     email_worker_enabled: environment.EMAIL_WORKER_ENABLED,
+    sms_delivery_mode: environment.SMS_DELIVERY_MODE,
+    sms_worker_enabled: environment.SMS_WORKER_ENABLED,
     provider_quote_tools_enabled: true,
     deploy_commit: process.env.RENDER_GIT_COMMIT ?? "local",
     escalation_routing: "database-managed",
@@ -754,6 +770,9 @@ app.listen(PORT, () => {
   });
   if (environment.EMAIL_WORKER_ENABLED) {
     emailWorker.start(environment.EMAIL_WORKER_POLL_INTERVAL_MS);
+  }
+  if (environment.SMS_WORKER_ENABLED) {
+    smsWorker.start(environment.SMS_WORKER_POLL_INTERVAL_MS);
   }
   void outboundSourcingLoop.start();
   evidenceRetentionWorker.start();

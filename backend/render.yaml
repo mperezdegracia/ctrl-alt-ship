@@ -39,9 +39,9 @@ services:
       - key: DASHBOARD_ORIGINS
         sync: false
       - key: EMAIL_DELIVERY_MODE
-        value: smtp
+        value: preview
       - key: EMAIL_WORKER_ENABLED
-        value: "true"
+        value: "false"
       - key: SMTP_HOST
         value: smtp.gmail.com
       - key: SMTP_PORT
@@ -54,3 +54,9 @@ services:
         sync: false
       - key: EMAIL_FROM
         sync: false
+      - key: SMS_DELIVERY_MODE
+        value: twilio
+      - key: SMS_WORKER_ENABLED
+        value: "true"
+      - key: SMS_WORKER_POLL_INTERVAL_MS
+        value: "5000"

@@ -202,19 +202,19 @@ An out-of-mandate request is saved without a booking change event;
 `escalation.failed.failure_reason` is `supervisor_unavailable`,
 `conference_failed` or `notification_failed`.
 
-### Email events
+### SMS events
 
 | Event | When emitted | Payload v1 |
 | --- | --- | --- |
-| `email.queued` | An idempotent email job is inserted into the outbox. | `outbox_id`, `template`, `recipient_type`, `deduplication_key` |
-| `email.sent` | The email gateway accepts the rendered message. | `outbox_id`, `template`, `recipient_type`, `provider_message_id` |
-| `email.failed` | An email attempt fails. | `outbox_id`, `template`, `recipient_type`, `error_code`, `retryable`, `attempt` |
+| `sms.queued` | An idempotent SMS job is inserted into the outbox. | `outbox_id`, `template`, `recipient_type`, `deduplication_key` |
+| `sms.sent` | Twilio accepts the rendered message and returns a Message SID. | `outbox_id`, `template`, `recipient_type`, `provider_message_id` |
+| `sms.failed` | An SMS attempt fails. | `outbox_id`, `template`, `recipient_type`, `error_code`, `retryable`, `attempt` |
 
-`recipient_type` is `client` or `provider`. Payloads never contain email bodies,
-addresses or provider credentials. In development, the preview gateway renders
-the body into the server-only `email_previews` table and emits an `email.sent`
-event with a `provider_message_id` prefixed by `preview:`; it never contacts an
-email address. Templates are:
+`recipient_type` is `client` or `provider`. Payloads never contain phone numbers,
+SMS bodies or provider credentials. In development, the preview gateway emits an
+`sms.sent` event with a `provider_message_id` prefixed by `preview:`; it never
+contacts a phone. Provider messages contain the confirmed terms, route, pickup
+window and reference because providers do not access the dashboard. Templates are:
 
 ```text
 booking_confirmation_client
@@ -266,18 +266,17 @@ or `email.sent` event is emitted by `cancel_operation`.
 ## Booking-confirmation dispatch
 
 When a booking transitions to `confirmed`, a database trigger inserts exactly
-two `send_email` outbox records: `booking_confirmation_client` and
+two `send_sms` outbox records: `booking_confirmation_client` and
 `booking_confirmation_provider`. Their deterministic keys are
-`booking-confirmation:<booking_id>:client` and
-`booking-confirmation:<booking_id>:provider`, so retries of the booking tool or
+`booking-confirmation-sms:<booking_id>:client` and
+`booking-confirmation-sms:<booking_id>:provider`, so retries of the booking tool or
 the trigger cannot create a second notification. The transition and both
-`email.queued` events commit atomically.
+`sms.queued` events commit atomically.
 
 The worker claims jobs with a short lease, records every delivery outcome as an
-event, and retries technical errors with capped exponential backoff. An email
-job with an absent or malformed recipient is terminally failed without calling
-the external provider. SMTP has no standard provider-side idempotency mechanism;
-the worker retains the deterministic key as an `X-Tango-Idempotency-Key` header
-and the outbox remains the delivery authority. Once both confirmation jobs are processed,
+event, and retries technical errors with capped exponential backoff. A known
+landline is terminally failed before calling Twilio. Twilio has no standard
+provider-side idempotency mechanism; the outbox remains the delivery authority.
+Once both confirmation jobs are processed,
 the worker moves an operation still in `booking_confirmed` to
 `notifications_sent`.

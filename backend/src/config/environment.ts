@@ -33,6 +33,9 @@ const environmentSchema = z.object({
   SMTP_USERNAME: z.string().min(1).optional(),
   SMTP_PASSWORD: z.string().min(1).optional(),
   EMAIL_FROM: z.string().min(3).max(320).regex(/^[^\r\n]+$/).optional(),
+  SMS_DELIVERY_MODE: z.enum(["preview", "twilio"]).default("preview"),
+  SMS_WORKER_ENABLED: z.enum(["true", "false"]).default("true").transform((value) => value === "true"),
+  SMS_WORKER_POLL_INTERVAL_MS: z.coerce.number().int().min(1_000).max(300_000).default(5_000),
 });
 
 const parsedEnvironment = environmentSchema.safeParse(process.env);

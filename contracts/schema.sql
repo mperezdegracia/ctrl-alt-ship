@@ -50,7 +50,8 @@ CREATE TYPE domain_event_type AS ENUM (
   'booking.rescheduled', 'booking.reschedule_declined', 'booking.cancelled',
   'escalation.started', 'escalation.supervisor_joined',
   'escalation.resolved', 'escalation.failed', 'escalation.handoff_requested', 'escalation.handoff_failed',
-  'email.queued', 'email.sent', 'email.failed'
+  'email.queued', 'email.sent', 'email.failed',
+  'sms.queued', 'sms.sent', 'sms.failed'
 );
 
 CREATE FUNCTION is_window(value jsonb)
@@ -1118,6 +1119,8 @@ BEFORE UPDATE ON outbox FOR EACH ROW EXECUTE FUNCTION touch_updated_at();
 CREATE INDEX outbox_pending_idx ON outbox(status, available_at) WHERE status = 'pending';
 CREATE INDEX outbox_email_claim_idx ON outbox(available_at, created_at)
 WHERE job_type = 'send_email' AND status IN ('pending', 'processing');
+CREATE INDEX outbox_sms_claim_idx ON outbox(available_at, created_at)
+WHERE job_type = 'send_sms' AND status IN ('pending', 'processing');
 
 CREATE TABLE email_previews (
   outbox_id uuid PRIMARY KEY REFERENCES outbox(id),
