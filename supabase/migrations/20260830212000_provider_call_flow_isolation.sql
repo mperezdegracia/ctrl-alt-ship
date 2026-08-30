@@ -39,23 +39,25 @@ BEGIN
   IF NOT FOUND THEN RAISE EXCEPTION 'not_authorized' USING ERRCODE='P0001'; END IF;
   IF c.direction='inbound' AND c.purpose='booking_management' AND c.selected_booking_id IS NOT NULL THEN
     SELECT o.* INTO op FROM public.operations o WHERE o.id=c.operation_id;
-    SELECT b.* INTO b FROM public.bookings b JOIN public.quotes q ON q.id=b.quote_id
+    SELECT bk.* INTO b FROM public.bookings bk JOIN public.quotes q ON q.id=bk.quote_id
       JOIN public.quote_requests qr ON qr.id=q.quote_request_id
-      WHERE b.id=c.selected_booking_id AND b.id=op.current_booking_id AND qr.provider_id=p_provider_id;
+      WHERE bk.id=c.selected_booking_id AND bk.id=op.current_booking_id AND qr.provider_id=p_provider_id;
     IF FOUND THEN
       selected:=jsonb_build_object('operation',public.provider_quote_operation(op),
         'pickup_window',jsonb_build_object('start_at',b.pickup_window_start,'end_at',b.pickup_window_end),'confirmed_price',b.confirmed_price,
         'currency',(SELECT q.currency FROM public.quotes q WHERE q.id=b.quote_id),'payment_term_days',b.payment_term_days,
-        'requires_reconfirmation',op.mandate_confirmation_required);
+        'requires_reconfirmation',op.mandate_confirmation_required OR EXISTS (
+          SELECT 1 FROM public.quotes q WHERE q.id=b.quote_id
+            AND q.evaluated_mandate_id IS DISTINCT FROM op.current_mandate_id));
       target:=jsonb_build_object('booking_id',b.id,'operation_revision',op.updated_at::text,'mandate_id',op.current_mandate_id);
     END IF;
   ELSIF c.direction='inbound' AND c.purpose='booking_management' AND c.operation_id IS NULL THEN
     SELECT jsonb_agg(jsonb_build_object('operation_reference',o.reference,'pickup_location',o.pickup_location,'delivery_location',o.delivery_location,
-      'pickup_window',jsonb_build_object('start_at',b.pickup_window_start,'end_at',b.pickup_window_end))
+      'pickup_window',jsonb_build_object('start_at',bk.pickup_window_start,'end_at',bk.pickup_window_end))
       ORDER BY o.reference) INTO bookings
-    FROM public.operations o JOIN public.bookings b ON b.id=o.current_booking_id
-    JOIN public.quotes q ON q.id=b.quote_id JOIN public.quote_requests qr ON qr.id=q.quote_request_id
-    WHERE qr.provider_id=p_provider_id AND b.status='confirmed'
+    FROM public.operations o JOIN public.bookings bk ON bk.id=o.current_booking_id
+    JOIN public.quotes q ON q.id=bk.quote_id JOIN public.quote_requests qr ON qr.id=q.quote_request_id
+    WHERE qr.provider_id=p_provider_id AND bk.status='confirmed'
       AND o.status NOT IN ('draft','collecting_details','cancelled','failed');
   END IF;
   SELECT receipt.result INTO last_result
@@ -94,7 +96,7 @@ CREATE OR REPLACE FUNCTION public.select_provider_booking(
 DECLARE c public.calls%ROWTYPE; op public.operations%ROWTYPE; b public.bookings%ROWTYPE; r public.tool_command_receipts%ROWTYPE;
   intent public.provider_operation_intent; result jsonb;
 BEGIN
-  IF p_tool_name NOT IN ('select_booking_for_reschedule','select_booking_for_cancellation') OR p_tool_call_id IS NULL OR btrim(p_tool_call_id) = '' OR p_arguments IS NULL
+  IF p_tool_name IS NULL OR p_tool_name NOT IN ('select_booking_for_reschedule','select_booking_for_cancellation') OR p_tool_call_id IS NULL OR btrim(p_tool_call_id) = '' OR p_arguments IS NULL
      OR jsonb_typeof(p_arguments)<>'object' OR (SELECT count(*) FROM jsonb_object_keys(p_arguments))<>1
      OR p_arguments->>'operation_reference' IS NULL OR p_arguments->>'operation_reference' !~ '^OP-[0-9]{6,}$' THEN RAISE EXCEPTION 'invalid_arguments' USING ERRCODE='P0001'; END IF;
   SELECT * INTO c FROM public.calls WHERE id=p_call_id AND realtime_call_id=p_realtime_call_id AND provider_id=p_provider_id
@@ -113,8 +115,8 @@ BEGIN
   IF FOUND THEN IF r.tool_name<>p_tool_name OR r.arguments<>p_arguments THEN RAISE EXCEPTION 'idempotency_conflict' USING ERRCODE='P0001'; END IF; RETURN r.result; END IF;
   IF c.provider_tools_completed_at IS NOT NULL THEN RAISE EXCEPTION 'invalid_transition' USING ERRCODE='P0001'; END IF;
   IF c.provider_intent NOT IN ('undecided',intent) THEN RAISE EXCEPTION 'intent_locked' USING ERRCODE='P0001'; END IF;
-  SELECT b.* INTO b FROM public.bookings b JOIN public.quotes q ON q.id=b.quote_id JOIN public.quote_requests qr ON qr.id=q.quote_request_id
-    WHERE b.id=op.current_booking_id AND b.status='confirmed' AND qr.provider_id=p_provider_id FOR UPDATE OF b;
+  SELECT bk.* INTO b FROM public.bookings bk JOIN public.quotes q ON q.id=bk.quote_id JOIN public.quote_requests qr ON qr.id=q.quote_request_id
+    WHERE bk.id=op.current_booking_id AND bk.status='confirmed' AND qr.provider_id=p_provider_id FOR UPDATE OF bk;
   IF NOT FOUND THEN RAISE EXCEPTION 'operation_not_available' USING ERRCODE='P0001'; END IF;
   IF c.selected_booking_id IS NOT NULL THEN
     IF c.selected_booking_id = b.id AND c.provider_intent = intent THEN
