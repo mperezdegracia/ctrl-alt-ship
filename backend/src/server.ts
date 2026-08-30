@@ -544,18 +544,27 @@ app.post("/openai/webhook", express.raw({ type: "*/*" }), async (req, res) => {
            * --------------------------------------------------------
            */
 
-          case "conversation.item.input_audio_transcription.completed":
+          case "conversation.item.input_audio_transcription.completed": {
+            const transcript = message.transcript.trim();
+            const itemId = message.item_id?.trim();
+            if (!transcript || !itemId) {
+              callLogger.debug("transcript.skipped", {
+                speaker: "caller", reason: transcript ? "missing_item_id" : "empty", item_id: message.item_id,
+              });
+              break;
+            }
             callLogger.info("transcript.caller_completed", {
-              item_id: message.item_id, character_count: message.transcript.length,
+              item_id: itemId, character_count: transcript.length,
             });
             await transcriptRepository.record({
               callId: persistedCallId,
               realtimeCallId: callId,
               speaker: "caller",
-              content: message.transcript,
-              realtimeItemId: message.item_id,
+              content: transcript,
+              realtimeItemId: itemId,
             });
             break;
+          }
 
           /*
            * --------------------------------------------------------
@@ -639,18 +648,27 @@ app.post("/openai/webhook", express.raw({ type: "*/*" }), async (req, res) => {
             break;
           }
 
-          case "response.output_audio_transcript.done":
+          case "response.output_audio_transcript.done": {
+            const transcript = message.transcript.trim();
+            const responseId = message.response_id?.trim();
+            if (!transcript || !responseId) {
+              callLogger.debug("transcript.skipped", {
+                speaker: "tango", reason: transcript ? "missing_response_id" : "empty", response_id: message.response_id,
+              });
+              break;
+            }
             callLogger.info("transcript.tango_completed", {
-              response_id: message.response_id, character_count: message.transcript.length,
+              response_id: responseId, character_count: transcript.length,
             });
             await transcriptRepository.record({
               callId: persistedCallId,
               realtimeCallId: callId,
               speaker: "tango",
-              content: message.transcript,
-              realtimeResponseId: message.response_id,
+              content: transcript,
+              realtimeResponseId: responseId,
             });
             break;
+          }
 
           /*
            * --------------------------------------------------------
@@ -668,7 +686,7 @@ app.post("/openai/webhook", express.raw({ type: "*/*" }), async (req, res) => {
 
         }
       } catch (error) {
-        callLogger.error("realtime.event_handler_failed", { error });
+        callLogger.error("realtime.event_handler_failed", { event_type: message.type, error });
       }
     });
 

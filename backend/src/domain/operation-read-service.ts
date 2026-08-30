@@ -21,9 +21,9 @@ export type ProviderOperationSummary = {
   operation_reference: string;
   operation_name: string;
   relationship: "quote_requested" | "booking_pending" | "booking_confirmed";
-  pickup_location: string;
-  delivery_location: string;
-  container_type: string;
+  pickup_location: string | null;
+  delivery_location: string | null;
+  container_type: string | null;
 };
 
 export interface OperationReadRepository {

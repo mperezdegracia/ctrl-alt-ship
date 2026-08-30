@@ -49,20 +49,16 @@ export class SupabaseOperationReadRepository implements OperationReadRepository 
 
   async listForProvider(providerId: string): Promise<ProviderOperationSummary[]> {
     const operations = await listActiveOperationsForProvider(providerId, this.client);
-    return operations.map((operation) => {
-      // A provider assignment requires complete operational details. Do not
-      // fabricate strings when the stored row violates that contract.
-      if (!operation.pickupLocation || !operation.deliveryLocation || !operation.containerType) {
-        throw new Error("Provider operation is missing required operational details");
-      }
-      return {
-        operation_reference: operation.reference,
-        operation_name: operation.name,
-        relationship: operation.relationship,
-        pickup_location: operation.pickupLocation,
-        delivery_location: operation.deliveryLocation,
-        container_type: operation.containerType,
-      };
-    });
+    // Minimal intake deliberately permits some shipment details to be absent.
+    // Return those nulls as stored; one incomplete legacy operation must not
+    // make every other authorized provider operation unavailable.
+    return operations.map((operation) => ({
+      operation_reference: operation.reference,
+      operation_name: operation.name,
+      relationship: operation.relationship,
+      pickup_location: operation.pickupLocation,
+      delivery_location: operation.deliveryLocation,
+      container_type: operation.containerType,
+    }));
   }
 }
