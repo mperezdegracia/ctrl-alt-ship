@@ -1,0 +1,22 @@
+import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import { resolve } from "node:path";
+import { MigrationAudit, auditRepository, type Migration } from "../db/migration-audit";
+
+const initial: Migration = { file: "20260830000000_initial.sql", sql: "CREATE TABLE calls (id uuid);\nCREATE TYPE domain_event_type AS ENUM ('call.routed');\nCREATE FUNCTION get_state() RETURNS void;" };
+const lock = { baseline: "fixture", migrations: [{ file: initial.file, sha256: createHash("sha256").update(initial.sql).digest("hex") }] };
+const check = (migrations: Migration[], schema = initial.sql, rpcs = ["get_state"]) => new MigrationAudit(migrations, lock, schema, rpcs).check();
+assert.deepEqual(check([initial]), []);
+assert.match(check([{ ...initial, sql: `${initial.sql}\n-- silently modified` }]).join("\n"), /Applied migration modified/);
+assert.match(check([{ ...initial, file: "20260830000000_renamed.sql" }]).join("\n"), /Applied migration missing or renamed/);
+assert.match(check([initial, { ...initial, file: "20260830000000_duplicate.sql" }]).join("\n"), /Duplicate version/);
+assert.match(check([initial, { file: "20260829235959_backdated.sql", sql: "SELECT 1;" }]).join("\n"), /New migration must follow/);
+assert.match(check([initial], initial.sql, ["get_provider_tool_state"]).join("\n"), /Runtime RPC has no migration/);
+assert.match(check([initial], initial.sql.replace("CREATE TABLE calls (id uuid);", "")).join("\n"), /Reference schema missing table/);
+const undeclared = { file: "20260830010000_event.sql", sql: "INSERT INTO events(type) VALUES ('sourcing.dispatch_queued');" };
+assert.match(check([initial, undeclared]).join("\n"), /Event used but not declared/);
+const declared = { file: "20260830010000_event.sql", sql: "ALTER TYPE public.domain_event_type ADD VALUE IF NOT EXISTS 'sourcing.dispatch_queued';" };
+assert.match(check([initial, declared]).join("\n"), /Reference enum missing/);
+assert.deepEqual(check([initial, declared], initial.sql.replace("'call.routed'", "'call.routed', 'sourcing.dispatch_queued'")), []);
+assert.deepEqual(auditRepository(resolve(__dirname, "../../..")), []);
+console.log("Migration audit harness passed: immutable history, duplicate/backdated versions, missing tables/RPCs/events and valid forward additions. No PostgreSQL or network.");

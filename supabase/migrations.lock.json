@@ -1,0 +1,73 @@
+{
+  "baseline": "f32482f",
+  "migrations": [
+    {
+      "file": "20260829210000_frozen_midfield_schema.sql",
+      "sha256": "b81d8431079d5ac485f38a5cfc1ebff51f68cfc664b3b9adc6bf371be3abd95f"
+    },
+    {
+      "file": "20260829210100_lock_down_data_api.sql",
+      "sha256": "e23aa077e8fe0c065512599eee5d84c81cd111bf6dd8e56b98da7e42dcb2fb28"
+    },
+    {
+      "file": "20260829220000_tool_contract_schema_evolution.sql",
+      "sha256": "11f5fb377f35de41ea3bb97e99861ef6b8df24c13f7a559f9d876a0d740a1bac"
+    },
+    {
+      "file": "20260829230000_event_contracts.sql",
+      "sha256": "aed0b841d2e14d2a22295c61496a96eb0750d7f5e75b02856b85fbb44b17c69e"
+    },
+    {
+      "file": "20260830000000_inbound_routing_events.sql",
+      "sha256": "ad9efe8de7aa043ff28faa199544255caafa1802f794cfe7037328313b4e3da1"
+    },
+    {
+      "file": "20260830010000_client_operation_tools.sql",
+      "sha256": "2437b72fc3a970fc150315ace46ebb98565b37d6dcb3a22732a8a26a0ec963ae"
+    },
+    {
+      "file": "20260830020000_conversational_mandate_confirmation.sql",
+      "sha256": "ec222ae8e808af82daf773cfe6221b6084969a8ce5bf83d7599d13c8aa3428d6"
+    },
+    {
+      "file": "20260830025000_outbound_call_correlation.sql",
+      "sha256": "95ed1d555fb7b910c9b2ef0aa1a6f63ccb58be29f98da9f8678cd71d47dae4e5"
+    },
+    {
+      "file": "20260830030000_incremental_mandate_confirmation.sql",
+      "sha256": "da9533ddbe4b8d68bd04a1aa8d9be99225766ce711fe84fdbc9c0547208e43a3"
+    },
+    {
+      "file": "20260830040000_client_cancellation.sql",
+      "sha256": "4729e459365c924f1f1a650313d67948bba332528c0d808abec68092f5f1b60d"
+    },
+    {
+      "file": "20260830050000_outbound_quote_sourcing.sql",
+      "sha256": "ec4c3dc8037c383975609fe333f2374cf1f78df5ac86936cef068d844e86240d"
+    },
+    {
+      "file": "20260830050001_booking_confirmation_email_outbox.sql",
+      "sha256": "f01809a4ddf5fea53234f83eab3eaab33a411ab7ef965862564e254fb5b76510"
+    },
+    {
+      "file": "20260830060000_limit_sourcing_to_two_providers.sql",
+      "sha256": "c572664d7be4dd1023d0a518dbf707899690c6c3b5cb6a771cb8799a70e72c10"
+    },
+    {
+      "file": "20260830070000_provider_quote_tools.sql",
+      "sha256": "c19edf9c4a7a53fca5925a4aa2d58c2238b2266c17c5d350e83eaf4bb330881f"
+    },
+    {
+      "file": "20260830080000_provider_booking_changes.sql",
+      "sha256": "7eaf5506be6ac9700d86dd7da23718b281a45c6bc7e7397101de0e60cb8fe2d5"
+    },
+    {
+      "file": "20260830090000_integrate_provider_sourcing.sql",
+      "sha256": "61e859cbd5ab4b178111e6f4e1e9f1dc6053bb47a24b7d831d7dc0fc23b72f04"
+    },
+    {
+      "file": "20260830100000_sourcing_dispatch_event.sql",
+      "sha256": "1c22e8f833552274fc0973e0af6fd331f028a409ebf931793cd9eae085abb9d7"
+    }
+  ]
+}

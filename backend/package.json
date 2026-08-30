@@ -8,6 +8,8 @@
     "start": "tsx src/server.ts",
     "db:smoke": "tsx scripts/harnesses/supabase-smoke.ts",
     "db:inspect": "tsx scripts/harnesses/supabase-inspect.ts",
+    "db:check": "node --require tsx/cjs scripts/db/migration-audit.ts",
+    "harness:migrations": "node --require tsx/cjs scripts/harnesses/migrations.ts",
     "inbound:routing": "tsx scripts/harnesses/inbound-routing.ts",
     "harness:outbound": "tsx scripts/harnesses/outbound-call.ts",
     "harness:tools:read": "node --require tsx/cjs scripts/harnesses/tools-read.ts",

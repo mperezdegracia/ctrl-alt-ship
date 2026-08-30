@@ -25,6 +25,11 @@ Schema changes are new files in `supabase/migrations/`. The GitHub integration
 deploys them from `main`; do not make shared-schema changes through the
 Supabase Table Editor or SQL Editor.
 
+Applied migrations are immutable. See [the migration guide](supabase/README.md)
+for the dependency map, current function owners and forward-only changes.
+Run `npm --prefix backend run db:check` before pushing schema changes; this is a
+static check without database access, not a substitute for the Supabase deploy check.
+
 ## Demo data
 
 Configure four distinct E.164 caller IDs in `backend/.env`, then seed Lucas

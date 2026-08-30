@@ -1,3 +1,6 @@
+-- Reference for the resulting domain tables and invariants, not a deployment
+-- entry point. Runtime RPCs, workers and grants live in supabase/migrations/.
+-- Never execute this alongside migrations or against an existing database.
 BEGIN;
 
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
@@ -240,8 +243,9 @@ CREATE TABLE calls (
   provider_id uuid REFERENCES providers(id),
   operation_intent client_operation_intent,
   provider_intent provider_operation_intent,
-  twilio_call_sid text NOT NULL UNIQUE,
-  realtime_call_id text NOT NULL UNIQUE,
+  -- Outbound calls are persisted before Twilio/OpenAI attach their identifiers.
+  twilio_call_sid text UNIQUE,
+  realtime_call_id text UNIQUE,
   persona call_persona NOT NULL,
   direction call_direction NOT NULL,
   outcome call_outcome NOT NULL DEFAULT 'active',
@@ -308,6 +312,22 @@ END;
 $$;
 CREATE TRIGGER calls_validate_context
 BEFORE INSERT OR UPDATE ON calls FOR EACH ROW EXECUTE FUNCTION validate_call_context();
+
+CREATE TABLE tool_command_receipts (
+  call_id uuid NOT NULL REFERENCES calls(id),
+  tool_call_id text NOT NULL CHECK (btrim(tool_call_id) <> ''),
+  tool_name text NOT NULL CHECK (tool_name IN (
+    'create_operation', 'update_operation', 'confirm_mandate', 'cancel_operation',
+    'create_quote', 'decline_quote_request', 'reschedule_booking', 'cancel_booking',
+    'record_provider_quote' -- Historical receipts; this legacy RPC is revoked.
+  )),
+  arguments jsonb NOT NULL CHECK (jsonb_typeof(arguments) = 'object'),
+  result jsonb NOT NULL CHECK (jsonb_typeof(result) = 'object'),
+  created_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (call_id, tool_call_id)
+);
+CREATE TRIGGER tool_command_receipts_append_only
+BEFORE UPDATE OR DELETE ON tool_command_receipts FOR EACH ROW EXECUTE FUNCTION reject_mutation();
 
 CREATE TABLE mandates (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -833,6 +853,10 @@ CREATE TABLE outbox (
   idempotency_key text NOT NULL UNIQUE CHECK (btrim(idempotency_key) <> ''),
   available_at timestamptz NOT NULL DEFAULT now(),
   processed_at timestamptz,
+  locked_until timestamptz,
+  lock_token uuid,
+  last_error_code text,
+  provider_message_id text,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now(),
   CHECK (job_type <> 'contact_provider' OR quote_request_id IS NOT NULL),
@@ -857,5 +881,17 @@ BEFORE INSERT OR UPDATE ON outbox FOR EACH ROW EXECUTE FUNCTION validate_outbox_
 CREATE TRIGGER outbox_touch_updated_at
 BEFORE UPDATE ON outbox FOR EACH ROW EXECUTE FUNCTION touch_updated_at();
 CREATE INDEX outbox_pending_idx ON outbox(status, available_at) WHERE status = 'pending';
+CREATE INDEX outbox_email_claim_idx ON outbox(available_at, created_at)
+WHERE job_type = 'send_email' AND status IN ('pending', 'processing');
+
+CREATE TABLE email_previews (
+  outbox_id uuid PRIMARY KEY REFERENCES outbox(id),
+  subject text NOT NULL CHECK (btrim(subject) <> ''),
+  text_body text NOT NULL CHECK (btrim(text_body) <> ''),
+  html_body text NOT NULL CHECK (btrim(html_body) <> ''),
+  rendered_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TRIGGER email_previews_append_only
+BEFORE UPDATE OR DELETE ON email_previews FOR EACH ROW EXECUTE FUNCTION reject_mutation();
 
 COMMIT;
