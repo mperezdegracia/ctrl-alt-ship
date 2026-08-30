@@ -7,6 +7,7 @@ import type {
   ToolCallScope,
 } from "../../domain/operation-read-service";
 import { listOpenOperationsForContact } from "./erp";
+import { SupabaseProviderBookingRepository } from "./provider-booking-repository";
 
 export class SupabaseOperationReadRepository implements OperationReadRepository {
   constructor(private readonly client: SupabaseClient) {}
@@ -17,6 +18,8 @@ export class SupabaseOperationReadRepository implements OperationReadRepository 
       .eq("id", scope.callId)
       .eq("realtime_call_id", scope.realtimeCallId)
       .eq("persona", scope.persona)
+      .eq("direction", scope.direction)
+      .eq("purpose", scope.purpose)
       .eq(scope.persona === "client" ? "contact_id" : "provider_id", scope.counterpartyId)
       .eq("outcome", "active")
       .maybeSingle();
@@ -51,16 +54,7 @@ export class SupabaseOperationReadRepository implements OperationReadRepository 
     if (scope.persona !== "provider" || scope.direction !== "inbound" || scope.purpose !== "booking_management") {
       throw new Error("Provider booking listing requires an inbound booking-management scope");
     }
-    const { data, error } = await this.client.rpc("get_provider_tool_state", {
-      p_call_id: scope.callId,
-      p_realtime_call_id: scope.realtimeCallId,
-      p_provider_id: scope.counterpartyId,
-    });
-    if (error) throw error;
-    if (!data || data.flow !== "provider_inbound" || !Array.isArray(data.bookings)
-      || !["provider_inbound_entry", "provider_reschedule", "provider_cancel_booking", "provider_booking_escalation", "provider_unavailable", "terminal"].includes(data.profile)) {
-      throw new Error("Invalid provider inbound booking state");
-    }
-    return data.bookings as ProviderOperationSummary[];
+    const state = await new SupabaseProviderBookingRepository(this.client).getState(scope);
+    return state.bookings;
   }
 }

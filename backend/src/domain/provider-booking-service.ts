@@ -36,7 +36,9 @@ export class ProviderBookingService {
   }
 
   async listBookings(): Promise<{ operations: ProviderInboundState["bookings"] }> {
-    const state = this.state ?? await this.getState();
+    // A new read must reauthorize the active call/provider and current pointers;
+    // a cached conversational snapshot is not authority to expose bookings.
+    const state = await this.getState();
     return { operations: state.bookings };
   }
 
