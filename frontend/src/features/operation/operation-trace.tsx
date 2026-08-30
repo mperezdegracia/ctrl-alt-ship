@@ -2,8 +2,8 @@
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
-import { formatDateTime } from "@/lib/dashboard-api";
 import type { DashboardOperationDossier } from "@/lib/dashboard-api";
+import { LocalDateTime } from "@/components/local-time";
 
 type OperationTraceProps = { trace: DashboardOperationDossier["trace"] };
 type TraceNode = NonNullable<DashboardOperationDossier["trace"]>["nodes"][number];
@@ -102,7 +102,7 @@ function DecisionLedger({ nodes, arrivedId }: { nodes: TraceNode[]; arrivedId: s
       <ol ref={ledgerRef} className="decision-ledger" aria-label="Decision ledger, latest events first" onScroll={handleScroll} tabIndex={0}>
         {recentNodes.map((node) => (
           <li key={node.id} className={node.id === arrivedId ? "is-new-evidence" : undefined}>
-            <time dateTime={node.occurredAt}>{formatDateTime(node.occurredAt)}</time>
+            <LocalDateTime value={node.occurredAt} />
             <span className={`decision-mark is-${node.kind}`} aria-hidden="true" />
             <div className="decision-entry">
               <span>{eventKind(node)}</span>

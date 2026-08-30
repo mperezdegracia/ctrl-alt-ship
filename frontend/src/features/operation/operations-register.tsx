@@ -3,8 +3,9 @@
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 
-import { formatDateTime, formatStatus } from "@/lib/dashboard-api";
+import { formatStatus } from "@/lib/dashboard-api";
 import type { DashboardOperation } from "@/lib/dashboard-api";
+import { LocalDateTime } from "@/components/local-time";
 
 export function OperationsRegister({ operations }: { operations: DashboardOperation[] }) {
   const knownReferences = useRef(new Set(operations.map((operation) => operation.reference)));
@@ -35,7 +36,7 @@ export function OperationsRegister({ operations }: { operations: DashboardOperat
               <td><span>{operation.pickupLocation ?? "Not recorded"}</span><strong>{operation.deliveryLocation ?? "Not recorded"}</strong></td>
               <td><span className={`status-mark status-${operation.status.replaceAll("_", "-")}`}>{formatStatus(operation.status)}</span></td>
               <td>{operation.nextStep}</td>
-              <td className="updated-time">{formatDateTime(operation.updatedAt)}</td>
+              <td className="updated-time"><LocalDateTime value={operation.updatedAt} /></td>
             </tr>
           ))}
         </tbody>

@@ -3,8 +3,8 @@
 import Link from "next/link";
 import { useState, useSyncExternalStore } from "react";
 
-import { formatDateTime } from "@/lib/dashboard-api";
 import type { DashboardHandoff } from "@/lib/dashboard-api";
+import { LocalDateTime } from "@/components/local-time";
 
 const minimizedHandoffStorageKey = "tango:minimized-handoff";
 const minimizedHandoffChangedEvent = "tango:minimized-handoff-changed";
@@ -97,7 +97,7 @@ export function HandoffOverlay({ handoffs }: { handoffs: DashboardHandoff[] }) {
         </div>
         <dl>
           <div><dt>Counterparty</dt><dd>{active.counterpartyName ?? "Not recorded"}</dd></div>
-          <div><dt>Opened</dt><dd>{formatDateTime(active.startedAt)}</dd></div>
+          <div><dt>Opened</dt><dd><LocalDateTime value={active.startedAt} /></dd></div>
           <div><dt>Decision</dt><dd>{active.reason}</dd></div>
         </dl>
       </div>

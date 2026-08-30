@@ -3,8 +3,8 @@
 import { useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 
-import { formatDateTime } from "@/lib/dashboard-api";
 import { createClient } from "@/lib/supabase/client";
+import { LocalDateTime } from "@/components/local-time";
 
 type ConnectionState = "connecting" | "live" | "reconnecting" | "unavailable";
 
@@ -133,7 +133,7 @@ function LiveUpdates({ endpoint, scope, updatedAt }: LiveUpdatesProps) {
         <span className="operation-live-label"><i aria-hidden="true" />{label}</span>
         <p>{copy}</p>
       </div>
-      {updatedAt ? <time dateTime={updatedAt}>Verified {formatDateTime(updatedAt)}</time> : <time>Awaiting first verified record</time>}
+      {updatedAt ? <span className="operation-live-timestamp">Verified <LocalDateTime value={updatedAt} /></span> : <span className="operation-live-timestamp">Awaiting first verified record</span>}
     </section>
   );
 }

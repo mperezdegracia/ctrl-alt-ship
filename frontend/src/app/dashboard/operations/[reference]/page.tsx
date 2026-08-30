@@ -3,14 +3,13 @@ import { notFound } from "next/navigation";
 
 import {
   DashboardApiError,
-  formatDateTime,
   formatMoney,
   formatStatus,
-  formatWindow,
   getDashboardOperation,
   getDashboardHandoffs,
 } from "@/lib/dashboard-api";
 import { requireDashboardSession } from "@/lib/dashboard-session";
+import { LocalDateTime, LocalTimeRange, LocalTimeRanges } from "@/components/local-time";
 import { EscalationResolutionForm } from "@/features/operation/escalation-resolution-form";
 import { HandoffOverlay } from "@/features/operation/handoff-overlay";
 import { OperationCorrectionForm } from "@/features/operation/operation-correction-form";
@@ -46,8 +45,8 @@ export default async function OperationPage({ params }: { params: Promise<{ refe
           </div>
           <div className="operation-status-block">
             <span className={`status-mark status-${operation.status.replaceAll("_", "-")}`}>{formatStatus(operation.status)}</span>
-            <p>Updated {formatDateTime(operation.updatedAt)}</p>
-            <Link className="call-evidence-button" prefetch={false} href={`/dashboard/operations/${operation.reference}/evidence`}>Evidencia ↗</Link>
+            <p>Updated <LocalDateTime value={operation.updatedAt} /></p>
+            <Link className="call-evidence-button" prefetch={false} href={`/dashboard/operations/${operation.reference}/evidence`}>Evidence ↗</Link>
           </div>
         </header>
 
@@ -72,9 +71,9 @@ export default async function OperationPage({ params }: { params: Promise<{ refe
                 <div><dt>Counterparty</dt><dd>{operation.activeEscalation.counterpartyName ?? "Not recorded"}</dd></div>
                 <div><dt>Reason</dt><dd>{operation.activeEscalation.reason}</dd></div>
                 <div><dt>Recipient</dt><dd>{operation.activeEscalation.recipient ? `${operation.activeEscalation.recipient.name} · ${formatStatus(operation.activeEscalation.recipient.role)}` : "Not configured"}</dd></div>
-                <div><dt>Requested pickup</dt><dd>{formatWindow(operation.activeEscalation.requestedPickupWindow)}</dd></div>
-                <div><dt>Action Window</dt><dd>{formatWindow(operation.activeEscalation.actionWindow)}</dd></div>
-                <div><dt>Escalated</dt><dd>{formatDateTime(operation.activeEscalation.startedAt)}</dd></div>
+                <div><dt>Requested pickup</dt><dd><LocalTimeRange window={operation.activeEscalation.requestedPickupWindow} /></dd></div>
+                <div><dt>Action window</dt><dd><LocalTimeRange window={operation.activeEscalation.actionWindow} /></dd></div>
+                <div><dt>Escalated</dt><dd><LocalDateTime value={operation.activeEscalation.startedAt} /></dd></div>
               </dl>
             </div>
             {operation.activeEscalation.handoffStatusDetail && <p className="detail-escalation-status">{operation.activeEscalation.handoffStatusDetail}</p>}
@@ -82,7 +81,7 @@ export default async function OperationPage({ params }: { params: Promise<{ refe
               <summary>Conversation evidence <span>{operation.activeEscalation.transcript.length} recorded segment{operation.activeEscalation.transcript.length === 1 ? "" : "s"}</span></summary>
               {operation.activeEscalation.transcript.length > 0 ? <ol>
                 {operation.activeEscalation.transcript.map((segment) => <li key={segment.id}>
-                  <time dateTime={segment.recordedAt}>{formatDateTime(segment.recordedAt)}</time>
+                  <LocalDateTime value={segment.recordedAt} />
                   <strong>{segment.speaker === "caller" ? "Caller" : "Tango"}</strong>
                   <p>{segment.content}</p>
                 </li>)}
@@ -111,7 +110,7 @@ export default async function OperationPage({ params }: { params: Promise<{ refe
               <dl className="facts-list">
                 <div><dt>Maximum price</dt><dd>{formatMoney(operation.mandate.priceCap, operation.mandate.currency)}</dd></div>
                 <div><dt>Payment term</dt><dd>{operation.mandate.paymentTermDays} days from invoice date</dd></div>
-                <div><dt>Action Window</dt><dd>{formatWindow(operation.mandate.actionWindows[0] ?? null)}</dd></div>
+                <div><dt>Action {operation.mandate.actionWindows.length === 1 ? "window" : "windows"}</dt><dd><LocalTimeRanges windows={operation.mandate.actionWindows} /></dd></div>
                 <div><dt>Constraints</dt><dd>{operation.mandate.constraints.length > 0 ? operation.mandate.constraints.join(" · ") : "None recorded"}</dd></div>
               </dl>
             ) : (
@@ -126,7 +125,7 @@ export default async function OperationPage({ params }: { params: Promise<{ refe
             <div className="booking-summary">
               <div><span>Provider</span><strong>{operation.booking.providerName ?? "Not recorded"}</strong></div>
               <div><span>Confirmed price</span><strong>{operation.booking.confirmedPrice === null || !operation.booking.currency ? "Not recorded" : formatMoney(operation.booking.confirmedPrice, operation.booking.currency)}</strong></div>
-              <div><span>Pickup window</span><strong>{formatWindow(operation.booking.pickupWindow)}</strong></div>
+              <div><span>Pickup window</span><strong><LocalTimeRange window={operation.booking.pickupWindow} /></strong></div>
             </div>
           ) : (
             <p className="section-empty-copy">No active booking has been recorded.</p>

@@ -304,21 +304,54 @@ export function formatMoney(value: number, currency: string): string {
   return new Intl.NumberFormat("en-US", { style: "currency", currency, maximumFractionDigits: 0 }).format(value);
 }
 
-export function formatDateTime(value: string): string {
+function parseTimestamp(value: string): Date | null {
+  const date = new Date(value);
+  return Number.isNaN(date.valueOf()) ? null : date;
+}
+
+function formatDate(value: Date, timeZone: string): string {
   return new Intl.DateTimeFormat("en-GB", {
-    day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", timeZoneName: "short",
-  }).format(new Date(value));
+    day: "2-digit", month: "short", year: "numeric", timeZone,
+  }).format(value);
 }
 
-export function formatTime(value: string): string {
-  return new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit" }).format(new Date(value));
+function formatTimeZone(value: Date, timeZone: string): string {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    hour: "2-digit", minute: "2-digit", timeZone, timeZoneName: "short",
+  }).formatToParts(value);
+  return parts.find((part) => part.type === "timeZoneName")?.value ?? timeZone;
 }
 
-export function formatWindow(window: DashboardWindow | null): string {
+export function formatDateTime(value: string, timeZone = "UTC"): string {
+  const date = parseTimestamp(value);
+  if (!date) return "Not recorded";
+  return new Intl.DateTimeFormat("en-GB", {
+    day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", timeZone, timeZoneName: "short",
+  }).format(date);
+}
+
+export function formatTime(value: string, timeZone = "UTC"): string {
+  const date = parseTimestamp(value);
+  if (!date) return "Not recorded";
+  return new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit", timeZone }).format(date);
+}
+
+export function formatWindow(window: DashboardWindow | null, timeZone = "UTC"): string {
   if (!window) return "Not recorded";
-  const start = new Date(window.startAt);
-  const end = new Date(window.endAt);
-  const date = new Intl.DateTimeFormat("en-GB", { day: "2-digit", month: "short" }).format(start);
-  const time = new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit" });
-  return `${date} · ${time.format(start)}–${time.format(end)}`;
+  const start = parseTimestamp(window.startAt);
+  const end = parseTimestamp(window.endAt);
+  if (!start || !end) return "Not recorded";
+
+  const startDate = formatDate(start, timeZone);
+  const endDate = formatDate(end, timeZone);
+  const startTime = formatTime(window.startAt, timeZone);
+  const endTime = formatTime(window.endAt, timeZone);
+  const startTimeZone = formatTimeZone(start, timeZone);
+  const endTimeZone = formatTimeZone(end, timeZone);
+
+  if (startDate === endDate) {
+    const timeZoneRange = startTimeZone === endTimeZone ? startTimeZone : `${startTimeZone}–${endTimeZone}`;
+    return `${startDate} · ${startTime}–${endTime} ${timeZoneRange}`;
+  }
+  return `${startDate}, ${startTime} ${startTimeZone} – ${endDate}, ${endTime} ${endTimeZone}`;
 }
