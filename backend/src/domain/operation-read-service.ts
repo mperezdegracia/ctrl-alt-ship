@@ -1,5 +1,6 @@
 import { ToolError } from "./tool-error";
 import type { ToolCallScope } from "./call-flow";
+import type { ProviderBookingSummary } from "./provider-call-state";
 
 export type { ToolCallScope } from "./call-flow";
 
@@ -14,19 +15,12 @@ export type ClientOperationSummary = {
   updated_at: string;
 };
 
-export type ProviderOperationSummary = {
-  operation_reference: string;
-  operation_name: string;
-  relationship: "quote_requested" | "booking_pending" | "booking_confirmed";
-  pickup_location: string;
-  delivery_location: string;
-  container_type: string;
-};
+export type ProviderOperationSummary = ProviderBookingSummary;
 
 export interface OperationReadRepository {
   isAuthorized(scope: ToolCallScope): Promise<boolean>;
   listForClient(contactId: string): Promise<ClientOperationSummary[]>;
-  listForProvider(providerId: string): Promise<ProviderOperationSummary[]>;
+  listForProvider(scope: ToolCallScope): Promise<ProviderOperationSummary[]>;
 }
 
 export class OperationReadService {
@@ -43,7 +37,7 @@ export class OperationReadService {
 
   async listProviderOperations(): Promise<{ operations: ProviderOperationSummary[] }> {
     await this.authorize("provider");
-    return { operations: await this.repository.listForProvider(this.scope.counterpartyId) };
+    return { operations: await this.repository.listForProvider(this.scope) };
   }
 
   private async authorize(persona: ToolCallScope["persona"]): Promise<void> {

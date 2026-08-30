@@ -26,9 +26,9 @@ select_provider_booking(p_call_id uuid,p_realtime_call_id text,p_provider_id uui
 record_provider_offer(p_call_id uuid,p_realtime_call_id text,p_provider_id uuid,
   p_tool_call_id text,p_arguments jsonb) -> jsonb
 execute_provider_booking_tool(p_call_id uuid,p_realtime_call_id text,p_provider_id uuid,
-  p_tool_name text,p_tool_call_id text,p_arguments jsonb,p_context jsonb) -> jsonb
+  p_tool_call_id text,p_tool_name text,p_arguments jsonb,p_context jsonb) -> jsonb
 execute_provider_quote_tool(p_call_id uuid,p_realtime_call_id text,p_provider_id uuid,
-  p_tool_name text,p_tool_call_id text,p_arguments jsonb,p_context jsonb) -> jsonb
+  p_tool_call_id text,p_tool_name text,p_arguments jsonb,p_context jsonb) -> jsonb
 ```
 
 Selección solo recibe operation_reference. Mutaciones mantienen argumentos existentes;

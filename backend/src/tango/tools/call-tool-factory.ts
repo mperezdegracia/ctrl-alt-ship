@@ -20,6 +20,12 @@ export class CallToolFactory {
   ) {}
 
   create(scope: ToolCallScope, escalationTool?: RealtimeTool): CallToolSession {
+    if (scope.persona === "provider" && scope.direction === "inbound" && !this.providerBookings) {
+      throw new Error("Provider inbound booking repository is not configured");
+    }
+    if (scope.persona === "provider" && scope.direction === "outbound" && !this.providerMutations) {
+      throw new Error("Provider outbound quote repository is not configured");
+    }
     const service = new OperationReadService(scope, this.repository);
     const clientService = scope.persona === "client" && this.mutations
       ? new ClientOperationService(scope, this.mutations) : undefined;

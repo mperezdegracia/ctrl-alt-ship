@@ -6,7 +6,7 @@ import type {
   ProviderOperationSummary,
   ToolCallScope,
 } from "../../domain/operation-read-service";
-import { listActiveOperationsForProvider, listOpenOperationsForContact } from "./erp";
+import { listOpenOperationsForContact } from "./erp";
 
 export class SupabaseOperationReadRepository implements OperationReadRepository {
   constructor(private readonly client: SupabaseClient) {}
@@ -47,22 +47,20 @@ export class SupabaseOperationReadRepository implements OperationReadRepository 
     }));
   }
 
-  async listForProvider(providerId: string): Promise<ProviderOperationSummary[]> {
-    const operations = await listActiveOperationsForProvider(providerId, this.client);
-    return operations.map((operation) => {
-      // A provider assignment requires complete operational details. Do not
-      // fabricate strings when the stored row violates that contract.
-      if (!operation.pickupLocation || !operation.deliveryLocation || !operation.containerType) {
-        throw new Error("Provider operation is missing required operational details");
-      }
-      return {
-        operation_reference: operation.reference,
-        operation_name: operation.name,
-        relationship: operation.relationship,
-        pickup_location: operation.pickupLocation,
-        delivery_location: operation.deliveryLocation,
-        container_type: operation.containerType,
-      };
+  async listForProvider(scope: ToolCallScope): Promise<ProviderOperationSummary[]> {
+    if (scope.persona !== "provider" || scope.direction !== "inbound" || scope.purpose !== "booking_management") {
+      throw new Error("Provider booking listing requires an inbound booking-management scope");
+    }
+    const { data, error } = await this.client.rpc("get_provider_tool_state", {
+      p_call_id: scope.callId,
+      p_realtime_call_id: scope.realtimeCallId,
+      p_provider_id: scope.counterpartyId,
     });
+    if (error) throw error;
+    if (!data || data.flow !== "provider_inbound" || !Array.isArray(data.bookings)
+      || !["provider_inbound_entry", "provider_reschedule", "provider_cancel_booking", "provider_booking_escalation", "provider_unavailable", "terminal"].includes(data.profile)) {
+      throw new Error("Invalid provider inbound booking state");
+    }
+    return data.bookings as ProviderOperationSummary[];
   }
 }
