@@ -22,7 +22,7 @@
 
 ## Public, no-login link
 
-The preferred browser view is the static **Architecture Atlas**. With GitHub Pages configured to publish `docs/`, it will be available without a login at:
+The preferred browser view is the static **Architecture Atlas**. The repository deploys `docs/pitch/` to GitHub Pages with [the Pages workflow](../../.github/workflows/deploy-pitch-atlas.yml), so it will be available without a login at:
 
 <https://mperezdegracia.github.io/ctrl-alt-ship/pitch/>
 
