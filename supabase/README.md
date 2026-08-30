@@ -30,6 +30,7 @@ y existentes; no se hace como una limpieza de nombres.
 | `20260830080000` | Reprogramación/cancelación y `get_provider_tool_state` | Tools de reservas actuales |
 | `20260830090000` | Comparación por cinco minutos, espera abierta y adjudicación | Sourcing actual; revoca RPC legado |
 | `20260830100000` | Enum `sourcing.dispatch_queued` y recarga de caché | Corrección del fallo de mandato |
+| `20260830110000` | Dos proveedores activos al azar, sin filtro por equipo al contactar | Reemplaza `enqueue_mandate_sourcing` de `90000`; no reencola mandatos existentes |
 
 Los sufijos cortos de la última columna comparten el prefijo `202608300`.
 Los comentarios dentro de migraciones viejas describen su momento histórico,

@@ -99,6 +99,7 @@ async function main(): Promise<void> {
   const initial = await call.initialConfiguration();
   assert.equal(initial.model, "gpt-realtime-2.1");
   assert.equal(initial.audio?.output?.voice, "cedar");
+  assert.deepEqual(initial.audio?.input?.noise_reduction, { type: "far_field" });
   assert.equal(initial.parallel_tool_calls, false);
   assert.deepEqual(initial.reasoning, { effort: "low" });
   assert.deepEqual(initial.tools?.map((tool) => "name" in tool ? tool.name : "mcp"), ["list_open_operations", "create_operation", "update_operation", "cancel_operation"]);
@@ -117,6 +118,7 @@ async function main(): Promise<void> {
   assert.equal(commands[0].id, "original-create");
   let update = socket.sent.filter((event) => event.type === "session.update" && "tools" in event.session).at(-1)!;
   assert.deepEqual(update.session.tools.map((tool: { name: string }) => tool.name), ["update_operation", "confirm_mandate"]);
+  assert.deepEqual(update.session.audio.input.noise_reduction, { type: "far_field" }, "Keep noise reduction after changing tools");
   assert.match(update.session.instructions, /First complete every missing operational field/);
   const outputIndex = socket.sent.findIndex((event) => event.item?.call_id === "original-create");
   assert.ok(socket.sent.indexOf(update) < outputIndex, "Update tools before sending result and continuing");
@@ -136,6 +138,7 @@ async function main(): Promise<void> {
   assert.equal(approvals, 0, "No needsApproval or audio tracking required");
   update = socket.sent.filter((event) => event.type === "session.update" && "tools" in event.session).at(-1)!;
   assert.deepEqual(update.session.tools, []);
+  assert.deepEqual(update.session.audio.input.noise_reduction, { type: "far_field" });
   assert.ok(call.session.history.length > 0, "SDK maintains history");
   assert.ok(logs.some((entry) => entry.event === "tool.completed"));
   assert.equal(logs.filter((entry) => entry.event === "realtime.error").length, 0, JSON.stringify(logs));
@@ -154,6 +157,7 @@ async function main(): Promise<void> {
     provider.transport.requestResponse({ instructions: "Supervisor farewell" });
   } }, { skipOpenEventListeners: true, createWebSocket: async () => providerSocket as unknown as WebSocket });
   assert.deepEqual((await provider.initialConfiguration()).tools?.map((tool) => tool.type === "function" ? tool.name : "mcp"), ["list_provider_operations", "escalate"]);
+  assert.deepEqual((await provider.initialConfiguration()).audio?.input?.noise_reduction, { type: "far_field" });
   await provider.connect("rtc-provider", "fixture-key");
   invoke(providerSocket, "escalate", { reason: "Please contact supervisor", trigger: "explicit_human_request" }, "escalation");
   await until(() => providerSocket.output("escalation"));

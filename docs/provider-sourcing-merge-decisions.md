@@ -4,7 +4,13 @@ Decididas con Lucas, pregunta por pregunta, al integrar `7441019` con las tools
 locales. Esta sección reemplaza las restricciones anteriores de sourcing y emails
 para **adjudicación**; no habilita emails de cancelación/reprogramación.
 
-- Contactar hasta **dos** transportistas activos compatibles con el equipo.
+- Contactar hasta **dos** transportistas activos distintos elegidos al azar,
+  sin filtrar por equipo ni ordenar por nombre (decisión actualizada el 2026-08-30).
+  La selección se persiste al crear el mandato; los reintentos llaman a los mismos.
+  Si solo hay uno activo se contacta a uno; si no hay ninguno, no se encolan llamadas.
+  Aplica a mandatos nuevos: no reenvía solicitudes de mandatos existentes.
+  Este cambio es solo para elegir a quién llamar; no altera las validaciones de
+  cotización/adjudicación, incluida la compatibilidad de equipo al adjudicar.
 - Conservar la propuesta inicial y **tres contraofertas** locales por pedido,
   persistidas entre llamadas. No volver a una única contraoferta remota.
 - Confirmar verbalmente la cotización completa autoriza la reserva si resulta

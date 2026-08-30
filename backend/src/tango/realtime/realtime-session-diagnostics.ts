@@ -6,8 +6,8 @@ type LogSink = {
   info(event: string, fields: Record<string, unknown>): void;
   warn(event: string, fields: Record<string, unknown>): void;
 };
-type Configuration = { tools?: unknown; instructions?: unknown };
-type Snapshot = { tools: string[] | null; instructions_sha256: string | null };
+type Configuration = { tools?: unknown; instructions?: unknown; audio?: { input?: { noise_reduction?: { type?: unknown } | null } } };
+type Snapshot = { tools: string[] | null; instructions_sha256: string | null; noise_reduction_type: "far_field" | "near_field" | null };
 
 /** Diagnostic only: never delays responses, changes tools or grants consent. */
 export class RealtimeSessionDiagnostics {
@@ -58,6 +58,7 @@ export class RealtimeSessionDiagnostics {
       tools_match: toolsMatch,
       instructions_match: instructionsMatch,
       received_instructions_sha256: this.received.instructions_sha256,
+      received_noise_reduction_type: this.received.noise_reduction_type,
     };
     this.logger.info(event.type === "session.created" ? "realtime.session_created" : "realtime.session_updated", fields);
     if (toolsMatch === false || instructionsMatch === false) {
@@ -67,7 +68,9 @@ export class RealtimeSessionDiagnostics {
 
   private snapshot(value: unknown): Snapshot {
     const config: Configuration = value && typeof value === "object" ? value : {};
+    const noiseReduction = config.audio?.input?.noise_reduction?.type;
     return {
+      noise_reduction_type: noiseReduction === "far_field" || noiseReduction === "near_field" ? noiseReduction : null,
       // Whitelist names only. Never log schemas, MCP headers, arguments, or the
       // full session/instructions, which can contain personal/commercial data.
       tools: Array.isArray(config.tools) ? config.tools.map((tool: unknown) => {

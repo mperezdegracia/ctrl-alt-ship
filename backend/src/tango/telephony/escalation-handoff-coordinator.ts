@@ -1,4 +1,5 @@
 import type { OpenAIRealtimeGateway } from "../realtime/openai-realtime-gateway";
+import type { DiagnosticLogger } from "../../observability/state-transition-log";
 
 export type EscalationHandoff = Readonly<{
   realtimeCallId: string;
@@ -20,9 +21,10 @@ export class EscalationHandoffCoordinator {
   private awaitingFarewellResponse = false;
   private referred = false;
 
-  constructor(private readonly realtime: SipReferPort) {}
+  constructor(private readonly realtime: SipReferPort, private readonly logger?: DiagnosticLogger) {}
 
   get prepared(): boolean { return this.handoff !== undefined; }
+  get referAccepted(): boolean { return this.referred; }
 
   async prepare(handoff: EscalationHandoff): Promise<void> {
     if (this.handoff) throw new Error("Escalation handoff is already prepared");
@@ -48,9 +50,24 @@ export class EscalationHandoffCoordinator {
   }
 
   async onAudioStopped(responseId: string): Promise<EscalationReferResult | undefined> {
-    if (!this.handoff || this.referred || responseId !== this.farewellResponseId) return undefined;
-    const result = await this.realtime.refer(this.handoff.realtimeCallId, this.handoff.supervisorTargetUri);
-    this.referred = true;
-    return { ...result, targetUri: this.handoff.supervisorTargetUri };
+    if (!this.handoff) return undefined;
+    if (this.referred || responseId !== this.farewellResponseId) {
+      this.logger?.info("escalation.audio_stop_ignored", { response_id: responseId,
+        farewell_response_id: this.farewellResponseId, refer_accepted: this.referred });
+      return undefined;
+    }
+    const started = Date.now();
+    this.logger?.info("escalation.refer_requested", { response_id: responseId,
+      target_phone_suffix: this.handoff.supervisorTargetUri.slice(-4) });
+    try {
+      const result = await this.realtime.refer(this.handoff.realtimeCallId, this.handoff.supervisorTargetUri);
+      this.referred = true;
+      this.logger?.info("escalation.refer_accepted", { response_id: responseId,
+        status: result.status, duration_ms: Date.now() - started, human_answer_confirmed: false });
+      return { ...result, targetUri: this.handoff.supervisorTargetUri };
+    } catch (error) {
+      this.logger?.error("escalation.refer_request_failed", { response_id: responseId, duration_ms: Date.now() - started, error });
+      throw error;
+    }
   }
 }

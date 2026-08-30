@@ -9,6 +9,7 @@ import {
 } from "./http/middleware/require-dashboard-auth";
 import { registerDashboardRoutes } from "./http/routes/dashboard";
 import { StructuredLogger } from "./observability/logger";
+import { StateTransitionLog } from "./observability/state-transition-log";
 import { AgentsCallSession } from "./tango/realtime/agents-call-session";
 import type { RealtimeServerEvent } from "openai/resources/realtime/realtime";
 import {
@@ -82,12 +83,14 @@ app.use((req, res, next) => {
 
 const OPENAI_API_KEY = environment.OPENAI_API_KEY;
 const logger = new StructuredLogger("tango-backend");
+const sourcingDiagnostics = new StateTransitionLog(logger);
 const callToolFactory = new CallToolFactory(
   new SupabaseOperationReadRepository(supabaseAdmin),
   environment.CLIENT_OPERATION_TOOLS_ENABLED
     ? new SupabaseClientOperationRepository(supabaseAdmin) : undefined,
   new SupabaseProviderQuoteRepository(supabaseAdmin),
   new SupabaseProviderBookingRepository(supabaseAdmin),
+  logger,
 );
 
 const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
@@ -100,9 +103,9 @@ const emailWorker = new EmailOutboxWorker(
   emailGateway,
   logger.child({ worker: "email_outbox" }),
 );
-// Temporary trial-by-fire destination. Replace with SUPERVISOR_PHONE when the
-// durable escalation service is enabled.
-const MOCK_SUPERVISOR_PHONE = "+5491163723502";
+// Demo human escalation goes to Theo. Keep this destination in code, not env.
+// This is an outbound destination; the inbound caller ID may omit the mobile 9.
+const MOCK_SUPERVISOR_PHONE = "+5491132555829";
 
 let outboundWorkerRunning = false;
 
@@ -134,18 +137,27 @@ async function runOutboundSourcingWorker(): Promise<void> {
     if (error) throw error;
     const job = (data?.[0] ?? null) as ClaimedProviderContact | null;
     if (job) {
+      const jobStarted = Date.now();
+      const jobLogger = logger.child({ outbox_id: job.outbox_id, operation_id: job.operation_id,
+        quote_request_id: job.quote_request_id, provider_id: job.provider_id });
+      jobLogger.info("sourcing.contact_claimed", { purpose: job.purpose, destination_phone_suffix: job.provider_phone.slice(-4) });
       const inserted = await supabaseAdmin.from("calls").insert({
         operation_id: job.operation_id, provider_id: job.provider_id,
         provider_intent: "quote", persona: "provider", direction: "outbound", outcome: "active",
       }).select("id").single();
       if (inserted.error || !inserted.data) throw inserted.error ?? new Error("Could not persist provider call");
+      jobLogger.info("sourcing.call_record_created", { call_record_id: inserted.data.id });
       try {
         const provider = await supabaseAdmin.from("providers").select("capabilities").eq("id", job.provider_id).single();
         if (provider.error || !provider.data) throw provider.error ?? new Error("Provider phone type unavailable");
+        jobLogger.info("sourcing.dial_requested", { call_record_id: inserted.data.id,
+          phone_type: providerPhoneType(provider.data.capabilities) ?? "unspecified" });
         const twilio = await createTwilioOutboundCall({
           to: job.provider_phone, phoneType: providerPhoneType(provider.data.capabilities),
           callRecordId: inserted.data.id, purpose: job.purpose,
         });
+        jobLogger.info("sourcing.dial_accepted", { call_record_id: inserted.data.id, twilio_call_sid: twilio.sid,
+          duration_ms: Date.now() - jobStarted, human_answer_confirmed: false });
         const { error: updateError } = await supabaseAdmin.from("calls")
           .update({ twilio_call_sid: twilio.sid }).eq("id", inserted.data.id);
         if (updateError) throw updateError;
@@ -155,20 +167,27 @@ async function runOutboundSourcingWorker(): Promise<void> {
         if (finishedError) throw finishedError;
         logger.info("sourcing.provider_call_started", { operation_id: job.operation_id, quote_request_id: job.quote_request_id, call_id: inserted.data.id });
       } catch (error) {
-        await supabaseAdmin.from("calls").update({ outcome: "failed", ended_at: new Date().toISOString() }).eq("id", inserted.data.id);
+        const { error: persistError } = await supabaseAdmin.from("calls").update({ outcome: "failed", ended_at: new Date().toISOString() }).eq("id", inserted.data.id);
+        if (persistError) jobLogger.error("sourcing.call_failure_persist_failed", { error: persistError, call_record_id: inserted.data.id });
         const { error: finishError } = await supabaseAdmin.rpc("finish_provider_contact", {
           p_outbox_id: job.outbox_id, p_call_id: inserted.data.id, p_twilio_call_sid: null,
           p_error: error instanceof Error ? error.message.slice(0, 500) : "outbound_call_failed",
         });
         if (finishError) logger.error("sourcing.provider_call_retry_failed", { error: finishError, outbox_id: job.outbox_id });
+        else jobLogger.info("sourcing.contact_failure_recorded", { call_record_id: inserted.data.id, duration_ms: Date.now() - jobStarted });
         logger.error("sourcing.provider_call_failed", { error, operation_id: job.operation_id, quote_request_id: job.quote_request_id });
       }
     }
     const { data: sourcing, error: sourcingError } = await supabaseAdmin.from("operations").select("id").in("status", ["sourcing", "quotes_received"]);
     if (sourcingError) throw sourcingError;
+    sourcingDiagnostics.retain(["worker", ...(sourcing ?? []).map(({ id }) => id)]);
+    sourcingDiagnostics.observe("worker", "sourcing.worker_heartbeat", { active_operations: sourcing?.length ?? 0 });
     await Promise.all((sourcing ?? []).map(async ({ id }) => {
-      const { error: finalizeError } = await supabaseAdmin.rpc("finalize_operation_sourcing", { p_operation_id: id });
+      const { data: decision, error: finalizeError } = await supabaseAdmin.rpc("finalize_operation_sourcing", { p_operation_id: id });
       if (finalizeError) logger.error("sourcing.finalize_failed", { error: finalizeError, operation_id: id });
+      else sourcingDiagnostics.observe(id, "sourcing.decision", { operation_id: id,
+        finalized: decision?.finalized ?? false, reason: decision?.reason ?? null,
+        booking_id: decision?.booking_id ?? null });
     }));
   } catch (error) {
     logger.error("sourcing.worker_failed", { error });
@@ -178,7 +197,9 @@ async function runOutboundSourcingWorker(): Promise<void> {
 }
 
 async function rejectRealtimeCall(callId: string): Promise<void> {
+  logger.info("call.reject_requested", { call_id: callId, sip_status: 603 });
   await realtimeGateway.reject(callId);
+  logger.info("call.reject_completed", { call_id: callId });
 }
 
 app.get("/", (_req, res) => {
@@ -201,9 +222,13 @@ app.get("/health", async (_req, res) => {
 });
 
 app.post("/calls/outbound", async (req, res) => {
-  if (!environment.OUTBOUND_CALLS_TOKEN || req.header("authorization") !== `Bearer ${environment.OUTBOUND_CALLS_TOKEN}`) return res.sendStatus(401);
+  if (!environment.OUTBOUND_CALLS_TOKEN || req.header("authorization") !== `Bearer ${environment.OUTBOUND_CALLS_TOKEN}`) {
+    logger.warn("outbound_call.unauthorized");
+    return res.sendStatus(401);
+  }
   const body = req.body as { operation_id?: string; provider_id?: string; purpose?: "quote_request" | "renegotiation" };
   if (!body.operation_id || !body.provider_id || !body.purpose) return res.status(400).json({ error: "invalid_outbound_call" });
+  logger.info("outbound_call.requested", { operation_id: body.operation_id, provider_id: body.provider_id, purpose: body.purpose });
   const provider = await supabaseAdmin.from("providers").select("phone,active,capabilities").eq("id", body.provider_id).single();
   if (provider.error || !provider.data?.active) return res.status(404).json({ error: "active_provider_not_found" });
   const call = await supabaseAdmin.from("calls").insert({ operation_id: body.operation_id, provider_id: body.provider_id, provider_intent: "quote", persona: "provider", direction: "outbound", outcome: "active" }).select("id").single();
@@ -227,16 +252,24 @@ app.post("/calls/outbound", async (req, res) => {
 
 app.post("/twilio/recording-status", (req, res) => {
   const baseUrl = environment.PUBLIC_BASE_URL?.replace(/\/$/, "");
-  if (!baseUrl || !verifyTwilioSignature(`${baseUrl}${req.originalUrl}`, req.body as Record<string, string>, req.header("x-twilio-signature") ?? undefined)) return res.sendStatus(403);
+  if (!baseUrl || !verifyTwilioSignature(`${baseUrl}${req.originalUrl}`, req.body as Record<string, string>, req.header("x-twilio-signature") ?? undefined)) {
+    logger.warn("twilio.callback_rejected", { route: "recording-status", base_url_configured: Boolean(baseUrl) });
+    return res.sendStatus(403);
+  }
   const body = req.body as { CallSid?: string; RecordingUrl?: string };
+  logger.info("twilio.recording_status_received", { twilio_call_sid: body.CallSid, recording_available: Boolean(body.RecordingUrl) });
   if (body.CallSid && body.RecordingUrl) void supabaseAdmin.from("calls").update({ recording_url: body.RecordingUrl }).eq("twilio_call_sid", body.CallSid);
   return res.sendStatus(204);
 });
 
 app.post("/twilio/call-status", (req, res) => {
   const baseUrl = environment.PUBLIC_BASE_URL?.replace(/\/$/, "");
-  if (!baseUrl || !verifyTwilioSignature(`${baseUrl}${req.originalUrl}`, req.body as Record<string, string>, req.header("x-twilio-signature") ?? undefined)) return res.sendStatus(403);
+  if (!baseUrl || !verifyTwilioSignature(`${baseUrl}${req.originalUrl}`, req.body as Record<string, string>, req.header("x-twilio-signature") ?? undefined)) {
+    logger.warn("twilio.callback_rejected", { route: "call-status", base_url_configured: Boolean(baseUrl) });
+    return res.sendStatus(403);
+  }
   const body = req.body as { CallSid?: string; CallStatus?: string };
+  logger.info("twilio.call_status_received", { twilio_call_sid: body.CallSid, status: body.CallStatus });
   if (body.CallSid && body.CallStatus) {
     const outcome = body.CallStatus === "completed" ? "completed" : "failed";
     void supabaseAdmin.from("calls").update({ outcome, ended_at: new Date().toISOString() }).eq("twilio_call_sid", body.CallSid);
@@ -295,6 +328,8 @@ app.post("/openai/webhook", express.raw({ type: "*/*" }), async (req, res) => {
   try {
     let routingDecision;
     const outboundId = extractOutboundCallRecordId((event as IncomingCallEvent).data.sip_headers);
+    const routingStarted = Date.now();
+    callLogger.info("call.routing_started", { direction: outboundId ? "outbound" : "inbound", call_record_id: outboundId });
     try {
       routingDecision = outboundId
         ? await routeOutboundCall(outboundId, callId, (event as IncomingCallEvent).data.sip_headers?.find((header) => header.name.toLowerCase() === "x-twilio-callsid")?.value ?? "unknown")
@@ -328,6 +363,8 @@ app.post("/openai/webhook", express.raw({ type: "*/*" }), async (req, res) => {
     }
 
     callLogger.info("call.routed", {
+      duration_ms: Date.now() - routingStarted,
+      direction: outboundId ? "outbound" : "inbound",
       persona: routingDecision.identity.persona,
       counterparty_name: routingDecision.identity.name,
       caller_phone_suffix: routingDecision.callerPhone.slice(-4),
@@ -337,7 +374,7 @@ app.post("/openai/webhook", express.raw({ type: "*/*" }), async (req, res) => {
     let persistedCallId: string;
     try {
       persistedCallId = await persistRoutedCall(routingDecision);
-      callLogger.info("call.routing_persisted");
+      callLogger.info("call.routing_persisted", { call_record_id: persistedCallId });
     } catch (error) {
       callLogger.error("call.routing_persist_failed", { error });
       await rejectRealtimeCall(callId);
@@ -347,14 +384,18 @@ app.post("/openai/webhook", express.raw({ type: "*/*" }), async (req, res) => {
     }
 
     const handoffCoordinator = routingDecision.identity.persona === "provider"
-      ? new EscalationHandoffCoordinator(realtimeGateway) : undefined;
+      ? new EscalationHandoffCoordinator(realtimeGateway, callLogger) : undefined;
     // Negotiation uses the persisted quote-round budget, not raw turn count.
     const prepareMockHandoff = async (_request: { operationReference?: string; trigger: string; reason: string }) => {
       if (!handoffCoordinator || handoffCoordinator.prepared) return;
+      callLogger.info("escalation.prepare_started", { operation_reference: _request.operationReference,
+        trigger: _request.trigger, target_phone_suffix: MOCK_SUPERVISOR_PHONE.slice(-4),
+        context_delivered: false });
       await handoffCoordinator.prepare({
         realtimeCallId: callId,
         supervisorTargetUri: `tel:${MOCK_SUPERVISOR_PHONE}`,
       });
+      callLogger.info("escalation.prepared", { awaiting: "farewell_audio", target_phone_suffix: MOCK_SUPERVISOR_PHONE.slice(-4) });
     };
     const escalationTool = handoffCoordinator
       ? new MockEscalationTool(prepareMockHandoff) : undefined;
@@ -397,6 +438,7 @@ app.post("/openai/webhook", express.raw({ type: "*/*" }), async (req, res) => {
     const initialConfiguration = await agentsCall.initialConfiguration();
 
     try {
+      callLogger.info("call.accept_requested", { profile: realtimeTools.profile });
       const accepted = await realtimeGateway.accept(callId,
         initialConfiguration,
       );
@@ -449,11 +491,12 @@ app.post("/openai/webhook", express.raw({ type: "*/*" }), async (req, res) => {
            */
 
           case "input_audio_buffer.speech_started":
-            callLogger.debug("audio.speech_started");
+            callLogger.info("audio.speech_started", { escalation_prepared: handoffCoordinator?.prepared ?? false,
+              refer_accepted: handoffCoordinator?.referAccepted ?? false });
             break;
 
           case "input_audio_buffer.speech_stopped":
-            callLogger.debug("audio.speech_stopped");
+            callLogger.info("audio.speech_stopped");
             break;
 
           /*
@@ -463,8 +506,8 @@ app.post("/openai/webhook", express.raw({ type: "*/*" }), async (req, res) => {
            */
 
           case "conversation.item.input_audio_transcription.completed":
-            callLogger.debug("transcript.caller", {
-              transcript: message.transcript,
+            callLogger.info("transcript.caller_completed", {
+              item_id: message.item_id, character_count: message.transcript.length,
             });
             break;
 
@@ -486,6 +529,10 @@ app.post("/openai/webhook", express.raw({ type: "*/*" }), async (req, res) => {
             break;
 
           case "response.created":
+            callLogger.info("realtime.response_started", { response_id: message.response.id,
+              refer_accepted: handoffCoordinator?.referAccepted ?? false });
+            if (handoffCoordinator?.referAccepted) callLogger.warn("escalation.response_after_refer", {
+              response_id: message.response.id, human_answer_confirmed: false });
             if (message.response.id && handoffCoordinator?.observeResponseCreated(message.response.id)) {
               callLogger.info("escalation.farewell_started", { response_id: message.response.id });
             }
@@ -502,6 +549,7 @@ app.post("/openai/webhook", express.raw({ type: "*/*" }), async (req, res) => {
                   target_phone_suffix: MOCK_SUPERVISOR_PHONE.slice(-4),
                   status: escalationRefer.status,
                   request_id: escalationRefer.requestId,
+                  human_answer_confirmed: false,
                 });
               }
             } catch (error) {
@@ -517,8 +565,8 @@ app.post("/openai/webhook", express.raw({ type: "*/*" }), async (req, res) => {
             break;
 
           case "response.output_audio_transcript.done":
-            callLogger.debug("transcript.tango", {
-              transcript: message.transcript,
+            callLogger.info("transcript.tango_completed", {
+              response_id: message.response_id, character_count: message.transcript.length,
             });
             break;
 
@@ -532,6 +580,7 @@ app.post("/openai/webhook", express.raw({ type: "*/*" }), async (req, res) => {
             callLogger.info("realtime.response_completed", {
               response_id: message.response?.id,
               status: message.response?.status,
+              refer_accepted: handoffCoordinator?.referAccepted ?? false,
             });
             break;
 
@@ -541,6 +590,7 @@ app.post("/openai/webhook", express.raw({ type: "*/*" }), async (req, res) => {
       }
     });
 
+    callLogger.info("realtime.sideband_connect_requested");
     await agentsCall.connect(callId, OPENAI_API_KEY);
     callLogger.info("realtime.greeting_requested", {
       language: "en", subsequent_language: "caller", persona: routingDecision.identity.persona, runtime: "agents_sdk",
@@ -563,10 +613,14 @@ app.listen(PORT, () => {
     email_worker_enabled: environment.EMAIL_WORKER_ENABLED,
     provider_quote_tools_enabled: true,
     deploy_commit: process.env.RENDER_GIT_COMMIT ?? "local",
+    escalation_target_phone_suffix: MOCK_SUPERVISOR_PHONE.slice(-4),
+    outbound_configuration_complete: Boolean(environment.TWILIO_ACCOUNT_SID && environment.TWILIO_AUTH_TOKEN
+      && environment.TWILIO_FROM_NUMBER && environment.PUBLIC_BASE_URL && environment.OPENAI_PROJECT_ID),
   });
   if (environment.EMAIL_WORKER_ENABLED) {
     emailWorker.start(environment.EMAIL_WORKER_POLL_INTERVAL_MS);
   }
   void runOutboundSourcingWorker();
+  logger.info("sourcing.worker_started", { interval_ms: 1_000 });
   setInterval(() => void runOutboundSourcingWorker(), 1_000).unref();
 });

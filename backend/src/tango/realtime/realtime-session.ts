@@ -14,6 +14,7 @@ export type RealtimeSessionConfiguration = {
   reasoning: { effort: "low" };
   audio: {
     input: {
+      noise_reduction: { type: "far_field" };
       transcription: { model: "gpt-transcribe" };
       turn_detection: { type: "server_vad"; create_response: true; interrupt_response: true };
     };
@@ -42,6 +43,7 @@ export class RealtimeSessionFactory {
       reasoning: { effort: "low" },
       audio: {
         input: {
+          noise_reduction: { type: "far_field" },
           transcription: { model: "gpt-transcribe" },
           turn_detection: { type: "server_vad", create_response: true, interrupt_response: true },
         },

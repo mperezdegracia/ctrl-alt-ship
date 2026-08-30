@@ -87,6 +87,7 @@ export class EmailOutboxWorker {
 
   start(intervalMs: number): void {
     if (this.timer) return;
+    this.logger.info("email.worker_started", { interval_ms: intervalMs, mode: this.gateway.mode, batch_size: this.batchSize });
     void this.runSafely();
     this.timer = setInterval(() => void this.runSafely(), intervalMs);
   }
@@ -101,6 +102,7 @@ export class EmailOutboxWorker {
     this.running = true;
     try {
       const jobs = await this.repository.claim(this.batchSize);
+      if (jobs.length) this.logger.info("email.jobs_claimed", { count: jobs.length, mode: this.gateway.mode });
       for (const job of jobs) await this.deliver(job);
       return jobs.length;
     } finally {
@@ -118,6 +120,9 @@ export class EmailOutboxWorker {
   }
 
   private async deliver(job: EmailOutboxJob): Promise<void> {
+    const started = Date.now();
+    this.logger.info("email.delivery_started", { outbox_id: job.id, operation_id: job.operation_id,
+      attempts: job.attempts, mode: this.gateway.mode });
     try {
       const payload = parseBookingEmailPayload(job.payload);
       if (!payload.recipient_email || !EMAIL_ADDRESS.test(payload.recipient_email)) {
@@ -135,6 +140,7 @@ export class EmailOutboxWorker {
       if (result.preview) await this.repository.savePreview(job, rendered);
       await this.repository.complete(job, result.providerMessageId);
       this.logger.info("email.delivered", {
+        duration_ms: Date.now() - started,
         outbox_id: job.id,
         operation_id: job.operation_id,
         template: payload.template,
@@ -155,6 +161,7 @@ export class EmailOutboxWorker {
         return;
       }
       this.logger.warn("email.delivery_failed", {
+        duration_ms: Date.now() - started,
         outbox_id: job.id,
         operation_id: job.operation_id,
         error_code: failure.code,

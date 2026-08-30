@@ -51,6 +51,10 @@ assert.equal(records.at(-1)!.fields.tools_match, null, "Missing is unknown, not 
 assert.equal(records.at(-1)!.fields.instructions_match, null);
 const isolated = new RealtimeSessionDiagnostics(logger, { tools: [], instructions: "Initial" }, "client_entry");
 assert.equal(isolated.serverTools, null);
+isolated.observe({ ...ack, session: { type: "realtime", audio: { input: { noise_reduction: { type: "far_field" } } } } });
+assert.equal(records.at(-1)!.fields.received_noise_reduction_type, "far_field");
+isolated.observe({ ...ack, session: { type: "realtime", audio: { input: {} } } });
+assert.equal(records.at(-1)!.fields.received_noise_reduction_type, null);
 
 const serialized = JSON.stringify(records);
 assert.doesNotMatch(serialized, /Private caller|950000|Old prompt|Initial/);

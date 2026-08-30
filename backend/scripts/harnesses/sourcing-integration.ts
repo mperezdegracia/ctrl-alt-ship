@@ -12,8 +12,11 @@ assert.match(eventFix, /ALTER TYPE public.domain_event_type ADD VALUE IF NOT EXI
 assert.match(read("contracts/schema.sql"), /'mandate.confirmed', 'sourcing.started', 'sourcing.dispatch_queued'/);
 const sql = read("supabase/migrations/20260830090000_integrate_provider_sourcing.sql");
 const finalizer = sql.slice(sql.indexOf("CREATE OR REPLACE FUNCTION public.finalize_operation_sourcing"));
-assert.match(sql, /ORDER BY name, id LIMIT 2/);
-assert.match(sql, /VALUES \(op.id, candidate.id, NEW.id, 1, 'queued', 'infinity'::timestamptz/);
+const dispatch = read("supabase/migrations/20260830110000_random_provider_sourcing.sql");
+assert.match(dispatch, /FROM public.providers WHERE active\s+ORDER BY random\(\) LIMIT 2/);
+assert.doesNotMatch(dispatch, /capabilities->|ORDER BY name/);
+assert.match(dispatch, /VALUES \(op.id, candidate.id, NEW.id, 1, 'queued', 'infinity'::timestamptz/);
+assert.match(dispatch, /ON CONFLICT \(idempotency_key\) DO NOTHING/);
 assert.match(sql, /dispatched_at = coalesce\(dispatched_at, clock_timestamp\(\)\)/);
 assert.match(finalizer, /WHERE id = p_operation_id FOR UPDATE/);
 assert.match(finalizer, /op.status NOT IN \('sourcing', 'quotes_received'\) OR op.mandate_confirmation_required/);

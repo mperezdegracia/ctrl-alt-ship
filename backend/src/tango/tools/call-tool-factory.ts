@@ -8,6 +8,7 @@ import { ProviderQuoteService, type ProviderQuoteRepository } from "../../domain
 import { CreateQuoteTool, DeclineQuoteRequestTool } from "./provider-quote-tool";
 import { ProviderBookingService, type ProviderBookingRepository } from "../../domain/provider-booking-service";
 import { CancelBookingTool, RescheduleBookingTool } from "./provider-booking-tool";
+import type { StructuredLogger } from "../../observability/logger";
 
 export class CallToolFactory {
   constructor(
@@ -15,6 +16,7 @@ export class CallToolFactory {
     private readonly mutations?: ClientOperationRepository,
     private readonly providerMutations?: ProviderQuoteRepository,
     private readonly providerBookings?: ProviderBookingRepository,
+    private readonly logger?: StructuredLogger,
   ) {}
 
   create(scope: ToolCallScope, providerExtension?: RealtimeTool): CallToolSession {
@@ -33,6 +35,9 @@ export class CallToolFactory {
       ...(scope.persona === "provider" && providerExtension ? [providerExtension] : []),
       ...(providerService ? [new CreateQuoteTool(providerService), new DeclineQuoteRequestTool(providerService)] : []),
       ...(bookingService ? [new RescheduleBookingTool(bookingService), new CancelBookingTool(bookingService)] : []),
-    ], clientService, providerService);
+    ], clientService, providerService, this.logger?.child({
+      call_record_id: scope.callId, call_id: scope.realtimeCallId,
+      persona: scope.persona, counterparty_id: scope.counterpartyId,
+    }));
   }
 }

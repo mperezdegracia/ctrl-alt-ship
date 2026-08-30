@@ -74,7 +74,11 @@ export class AgentsCallSession {
       config: {
         outputModalities: initial.output_modalities, reasoning: initial.reasoning,
         audio: {
-          input: { transcription: initial.audio.input.transcription, turnDetection: initial.audio.input.turn_detection },
+          input: {
+            noiseReduction: initial.audio.input.noise_reduction,
+            transcription: initial.audio.input.transcription,
+            turnDetection: initial.audio.input.turn_detection,
+          },
           output: initial.audio.output,
         },
         toolChoice: "auto", parallelToolCalls: false,
