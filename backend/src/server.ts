@@ -102,7 +102,7 @@ const emailWorker = new EmailOutboxWorker(
 );
 // Temporary trial-by-fire destination. Replace with SUPERVISOR_PHONE when the
 // durable escalation service is enabled.
-const MOCK_SUPERVISOR_PHONE = "+5491132555829";
+const MOCK_SUPERVISOR_PHONE = "+5491163723502";
 
 let outboundWorkerRunning = false;
 
