@@ -571,10 +571,7 @@ BEGIN
   IF c.provider_tools_completed_at IS NOT NULL THEN RAISE EXCEPTION 'invalid_transition' USING ERRCODE = 'P0001'; END IF;
   IF c.provider_intent NOT IN ('undecided', 'quote') THEN RAISE EXCEPTION 'intent_locked' USING ERRCODE = 'P0001'; END IF;
   IF p_arguments ? 'operation_reference' AND (jsonb_typeof(p_arguments->'operation_reference') <> 'string'
-    OR p_arguments->>'operation_reference' !~ '^OP-[0-9]{6,}
-NOTIFY pgrst,'reload schema';
-COMMIT;
-) THEN
+    OR p_arguments->>'operation_reference' !~ '^OP-[0-9]{6,}$') THEN
     RAISE EXCEPTION 'invalid_arguments' USING ERRCODE = 'P0001';
   END IF;
   IF c.operation_id IS NULL AND NOT p_arguments ? 'operation_reference' THEN
