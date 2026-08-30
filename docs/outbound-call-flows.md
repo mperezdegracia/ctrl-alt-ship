@@ -14,7 +14,7 @@ que queda reservado para una desviación a Media Streams.
   telefonía; `POST /calls/outbound` es su adaptador interno y de harness,
   protegido con un secreto de servicio. El dashboard no puede invocarlo.
 - El worker inicia como máximo una llamada por segundo (CPS de Twilio) y como
-  máximo tres llamadas activas por Operación. `queued`, `ringing` e
+  máximo dos llamadas activas por Operación. `queued`, `ringing` e
   `in-progress` ocupan un cupo.
 - Cada intento se persiste al recibir el `twilio_call_sid`, antes de que el
   destinatario atienda. Outbox, llamadas y eventos hacen recuperable un
@@ -47,11 +47,11 @@ que queda reservado para una desviación a Media Streams.
 ## Flujo: Pedido de cotización nuevo
 
 1. Al confirmarse el Mandato, el servidor crea Pedidos de cotización
-   idempotentes para hasta tres Proveedores activos compatibles. En este MVP,
+   idempotentes para hasta dos Proveedores activos compatibles. En este MVP,
    compatibilidad significa que `capabilities.equipment` contiene el tipo de
    contenedor de la Operación; no hay fallback a Proveedores sin capacidad
    declarada.
-2. El worker contacta hasta tres en paralelo y cada conversación pide una
+2. El worker contacta hasta dos en paralelo y cada conversación pide una
    Cotización para la misma Operación.
 3. La recolección cierra cuando todos alcanzan un resultado terminal o al
    cumplirse cinco minutos. Una conversación ya conectada obtiene hasta dos

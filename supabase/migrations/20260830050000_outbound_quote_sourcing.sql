@@ -1,4 +1,4 @@
--- Durable sourcing: a mandate starts at most three compatible carrier contacts.
+-- Durable sourcing: a mandate starts at most two compatible carrier contacts.
 -- Calls are dispatched by the backend worker from the outbox; this migration
 -- contains the commercial decisions so a model never chooses a winner.
 BEGIN;
@@ -21,7 +21,7 @@ BEGIN
     WHERE active
       AND coalesce(capabilities->'equipment', '[]'::jsonb) ? coalesce(op.container_type, '')
     ORDER BY name, id
-    LIMIT 3
+    LIMIT 2
   LOOP
     INSERT INTO public.quote_requests (
       operation_id, provider_id, contact_attempt, status, expires_at, idempotency_key

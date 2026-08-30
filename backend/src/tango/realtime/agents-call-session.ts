@@ -164,7 +164,9 @@ export class AgentsCallSession {
     const responseId = this.responseByToolCall.get(toolCallId) ?? "";
     this.logger.info("tool.requested", {
       tool_name: name, tool_call_id: toolCallId, response_id: responseId,
+      arguments: args,
       profile: this.tools.flowState?.profile ?? "read_only",
+      flow_state: this.tools.flowState ?? null,
       advertised_tools: this.tools.definitions.map((definition) => definition.name),
       server_tools: this.diagnostics.serverTools,
     });
@@ -174,15 +176,23 @@ export class AgentsCallSession {
       result = await this.tools.execute(name, args, { toolCallId });
       succeeded = true;
       if (name !== "escalate") this.hooks.onProgress?.();
-      this.logger.info("tool.completed", { tool_name: name, tool_call_id: toolCallId });
+      this.logger.info("tool.completed", {
+        tool_name: name, tool_call_id: toolCallId, result,
+        flow_state_before: this.tools.flowState ?? null,
+      });
     } catch (error) {
-      this.logger.error("tool.failed", { tool_name: name, tool_call_id: toolCallId, error });
       result = publicToolError(error);
+      this.logger.error("tool.failed", {
+        tool_name: name, tool_call_id: toolCallId, arguments: args,
+        flow_state: this.tools.flowState ?? null, error, public_result: result,
+      });
     }
 
     try { await this.tools.refresh(); } catch (error) {
       // A mutation might already be committed. Keep its result, remove tools.
-      this.logger.error("tool.profile_refresh_failed", { error });
+      this.logger.error("tool.profile_refresh_failed", {
+        tool_name: name, tool_call_id: toolCallId, result, error,
+      });
     }
     const escalation = succeeded && name === "escalate" && Boolean(this.hooks.onEscalationReady);
     // The SDK may emit agent_tool_end while updateAgent is flushing the tool

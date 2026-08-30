@@ -129,7 +129,7 @@ type ClaimedProviderContact = {
 /**
  * The outbox makes provider fan-out durable. This process deliberately claims
  * one job per second: Twilio's account limit is 1 CPS, while the database
- * limits every sourcing cycle to three concurrently active provider calls.
+ * limits every sourcing cycle to two concurrently active provider calls.
  */
 async function runOutboundSourcingWorker(): Promise<void> {
   if (outboundWorkerRunning) return;
