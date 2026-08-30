@@ -2,6 +2,7 @@ import type {
   CounterpartyIdentity,
   OperationContext,
 } from "../supabase/erp";
+import type { ProviderOutboundPurpose } from "../../domain/call-flow";
 
 export type SipHeader = { name: string; value: string };
 
@@ -26,16 +27,18 @@ export type RoutingDecision =
       callerPhone: string;
       reason: RejectionReason;
     }
-  | {
+  | ({
       action: "accept";
-      /** True only when Tango originated the Twilio call to this provider. */
-      outbound?: boolean;
       callId: string;
       twilioCallSid: string;
       callerPhone: string;
       identity: CounterpartyIdentity;
       operations: OperationContext[];
-    };
+    } & (
+      | { outbound: false; direction: "inbound"; purpose: "operation_management" | "booking_management" }
+      | { outbound: true; direction: "outbound"; purpose: ProviderOutboundPurpose;
+          callRecordId: string; quoteRequestId: string; roundId: string; attempt: number }
+    ));
 
 export type RoutingDependencies = {
   findIdentity(callerPhone: string): Promise<CounterpartyIdentity | null>;
@@ -103,10 +106,13 @@ export async function routeIncomingCall(
 
   const operations = identity.persona === "client"
     ? await dependencies.listClientOperations(identity.contactId)
-    : await dependencies.listProviderOperations(identity.providerId);
+    : []; // Provider context is loaded exactly once by its authorized state reader.
 
   return {
     action: "accept",
+    outbound: false,
+    direction: "inbound",
+    purpose: identity.persona === "client" ? "operation_management" : "booking_management",
     callId: event.data.call_id,
     twilioCallSid,
     callerPhone,

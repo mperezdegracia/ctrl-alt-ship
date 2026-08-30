@@ -43,6 +43,7 @@ import { EmailOutboxWorker, SupabaseEmailOutboxRepository } from "./tango/worker
 import { OutboundSourcingLoop } from "./tango/workers/outbound-sourcing-loop";
 import { AgentsSourcingJudge } from "./tango/agents/sourcing-judge";
 import { SourcingReviewService } from "./tango/services/sourcing-review-service";
+import type { ToolCallScope } from "./domain/call-flow";
 
 const app = express();
 
@@ -342,10 +343,11 @@ app.post("/openai/webhook", express.raw({ type: "*/*" }), async (req, res) => {
 
   try {
     let routingDecision;
-    const outboundId = extractOutboundCallRecordId((event as IncomingCallEvent).data.sip_headers);
+    let outboundId: string | null = null;
     const routingStarted = Date.now();
-    callLogger.info("call.routing_started", { direction: outboundId ? "outbound" : "inbound", call_record_id: outboundId });
     try {
+      outboundId = extractOutboundCallRecordId((event as IncomingCallEvent).data.sip_headers);
+      callLogger.info("call.routing_started", { direction: outboundId ? "outbound" : "inbound", call_record_id: outboundId });
       routingDecision = outboundId
         ? await routeOutboundCall(outboundId, callId, (event as IncomingCallEvent).data.sip_headers?.find((header) => header.name.toLowerCase() === "x-twilio-callsid")?.value ?? "unknown")
         : await routeIncomingCall(event as IncomingCallEvent, {
@@ -380,6 +382,9 @@ app.post("/openai/webhook", express.raw({ type: "*/*" }), async (req, res) => {
     callLogger.info("call.routed", {
       duration_ms: Date.now() - routingStarted,
       direction: outboundId ? "outbound" : "inbound",
+      purpose: routingDecision.purpose,
+      round_id: routingDecision.outbound ? routingDecision.roundId : undefined,
+      attempt: routingDecision.outbound ? routingDecision.attempt : undefined,
       persona: routingDecision.identity.persona,
       counterparty_name: routingDecision.identity.name,
       caller_phone_suffix: routingDecision.callerPhone.slice(-4),
@@ -398,14 +403,16 @@ app.post("/openai/webhook", express.raw({ type: "*/*" }), async (req, res) => {
       return;
     }
 
-    const toolScope = {
-      callId: persistedCallId,
-      realtimeCallId: callId,
-      persona: routingDecision.identity.persona,
-      counterpartyId: routingDecision.identity.persona === "client"
-        ? routingDecision.identity.contactId
-        : routingDecision.identity.providerId,
-    } as const;
+    const identity = routingDecision.identity;
+    const scopeIdentity = { callId: persistedCallId, realtimeCallId: callId };
+    const toolScope: ToolCallScope = identity.persona === "client"
+      ? { ...scopeIdentity, persona: "client", counterpartyId: identity.contactId,
+          direction: "inbound", purpose: "operation_management" }
+      : routingDecision.outbound
+        ? { ...scopeIdentity, persona: "provider", counterpartyId: identity.providerId,
+            direction: "outbound", purpose: routingDecision.purpose }
+        : { ...scopeIdentity, persona: "provider", counterpartyId: identity.providerId,
+            direction: "inbound", purpose: "booking_management" };
     const handoffCoordinator = new EscalationHandoffCoordinator(realtimeGateway, callLogger);
     let activeEscalation: CreatedEscalation | undefined;
     const prepareHandoff = async (escalation: CreatedEscalation): Promise<boolean> => {

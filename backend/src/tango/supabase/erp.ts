@@ -205,11 +205,17 @@ export async function listActiveOperationsForProvider(
     if (quoteIds.length > 0) {
       const bookingResult = await client
         .from("bookings")
-        .select("operation_id,status")
-        .in("quote_id", quoteIds)
-        .in("status", ["pending", "confirmed"]);
+        .select("id,operation_id,status")
+        .in("quote_id", quoteIds);
       if (bookingResult.error) throw bookingResult.error;
+      const operationIds = [...new Set((bookingResult.data ?? []).map((booking) => booking.operation_id as string))];
+      const current = operationIds.length
+        ? await client.from("operations").select("id,current_booking_id").in("id", operationIds)
+        : { data: [], error: null };
+      if (current.error) throw current.error;
+      const pointers = new Map((current.data ?? []).map((operation) => [operation.id, operation.current_booking_id]));
       for (const booking of bookingResult.data ?? []) {
+        if (pointers.get(booking.operation_id) !== booking.id) continue;
         relationships.set(booking.operation_id as string,
           booking.status === "confirmed" ? "booking_confirmed" : "booking_pending");
       }
