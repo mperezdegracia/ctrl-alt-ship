@@ -18,8 +18,6 @@ services:
       - key: CLIENT_OPERATION_TOOLS_ENABLED
         # Requires migration 20260830010000_client_operation_tools.sql.
         value: "true"
-      - key: ESCALATION_SPIKE_ENABLED
-        value: "false"
       - key: TWILIO_ACCOUNT_SID
         sync: false
       - key: TWILIO_AUTH_TOKEN

@@ -11,7 +11,6 @@ const environmentSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("info"),
   CLIENT_OPERATION_TOOLS_ENABLED: z.enum(["true", "false"]).default("false").transform((value) => value === "true"),
-  ESCALATION_SPIKE_ENABLED: z.enum(["true", "false"]).default("false").transform((value) => value === "true"),
   ESCALATION_STALLED_TURNS: z.coerce.number().int().min(1).max(10).default(3),
   TWILIO_ACCOUNT_SID: z.string().min(1).optional(),
   TWILIO_AUTH_TOKEN: z.string().min(1).optional(),
@@ -36,10 +35,10 @@ if (!parsedEnvironment.success) {
   throw new Error(`Invalid backend environment:\n${problems}`);
 }
 
-if (parsedEnvironment.data.ESCALATION_SPIKE_ENABLED) {
-  const missing = ["TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN", "TWILIO_FROM_NUMBER", "PUBLIC_BASE_URL"]
-    .filter((key) => !parsedEnvironment.data[key as keyof typeof parsedEnvironment.data]);
-  if (missing.length > 0) throw new Error(`Escalation spike requires: ${missing.join(", ")}`);
+const missingTwilioConfiguration = ["TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN", "TWILIO_FROM_NUMBER", "PUBLIC_BASE_URL"]
+  .filter((key) => !parsedEnvironment.data[key as keyof typeof parsedEnvironment.data]);
+if (missingTwilioConfiguration.length > 0) {
+  throw new Error(`Escalation proof of concept requires: ${missingTwilioConfiguration.join(", ")}`);
 }
 
 /**

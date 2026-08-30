@@ -92,14 +92,12 @@ const realtimeGateway = new OpenAIRealtimeGateway(openai);
 // Temporary trial-by-fire destination. Replace with SUPERVISOR_PHONE when the
 // durable escalation service is enabled.
 const MOCK_SUPERVISOR_PHONE = "+5491132555829";
-const twilioGateway = environment.ESCALATION_SPIKE_ENABLED
-  ? new TwilioGateway({
-    accountSid: environment.TWILIO_ACCOUNT_SID!,
-    authToken: environment.TWILIO_AUTH_TOKEN!,
-    fromNumber: environment.TWILIO_FROM_NUMBER!,
-    publicBaseUrl: environment.PUBLIC_BASE_URL!,
-  })
-  : undefined;
+const twilioGateway = new TwilioGateway({
+  accountSid: environment.TWILIO_ACCOUNT_SID!,
+  authToken: environment.TWILIO_AUTH_TOKEN!,
+  fromNumber: environment.TWILIO_FROM_NUMBER!,
+  publicBaseUrl: environment.PUBLIC_BASE_URL!,
+});
 
 async function rejectRealtimeCall(callId: string): Promise<void> {
   await realtimeGateway.reject(callId);
