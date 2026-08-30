@@ -4,11 +4,14 @@ import { ClientOperationService, type ClientOperationRepository } from "../../do
 import { CancelOperationTool, ConfirmMandateTool, CreateOperationTool, UpdateOperationTool } from "./client-operation-tool";
 import { CallToolSession } from "./call-tool-session";
 import type { RealtimeTool } from "./realtime-tool";
+import { ProviderQuoteService, type ProviderQuoteRepository } from "../../domain/provider-quote-service";
+import { RecordProviderQuoteTool } from "./provider-quote-tool";
 
 export class CallToolFactory {
   constructor(
     private readonly repository: OperationReadRepository,
     private readonly mutations?: ClientOperationRepository,
+    private readonly providerQuotes?: ProviderQuoteRepository,
   ) {}
 
   create(scope: ToolCallScope, providerExtension?: RealtimeTool): CallToolSession {
@@ -20,6 +23,7 @@ export class CallToolFactory {
         ? new ListOpenOperationsTool(service)
         : new ListProviderOperationsTool(service),
       ...(clientService ? [new CreateOperationTool(clientService), new UpdateOperationTool(clientService), new CancelOperationTool(clientService), new ConfirmMandateTool(clientService)] : []),
+      ...(scope.persona === "provider" && this.providerQuotes ? [new RecordProviderQuoteTool(new ProviderQuoteService(scope, this.providerQuotes))] : []),
       ...(scope.persona === "provider" && providerExtension ? [providerExtension] : []),
     ], clientService);
   }

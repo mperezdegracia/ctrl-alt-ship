@@ -46,18 +46,21 @@ que queda reservado para una desviación a Media Streams.
 
 ## Flujo: Pedido de cotización nuevo
 
-1. La tool del agente de Cliente crea Pedidos de cotización idempotentes para
-   los Proveedores activos compatibles. Si aún no hay capacidades modeladas,
-   el fallback es todos los Proveedores activos.
+1. Al confirmarse el Mandato, el servidor crea Pedidos de cotización
+   idempotentes para hasta tres Proveedores activos compatibles. En este MVP,
+   compatibilidad significa que `capabilities.equipment` contiene el tipo de
+   contenedor de la Operación; no hay fallback a Proveedores sin capacidad
+   declarada.
 2. El worker contacta hasta tres en paralelo y cada conversación pide una
    Cotización para la misma Operación.
 3. La recolección cierra cuando todos alcanzan un resultado terminal o al
    cumplirse cinco minutos. Una conversación ya conectada obtiene hasta dos
    minutos de gracia para concluir; el ciclo completo no supera siete minutos.
 4. El servidor selecciona la Cotización vigente y dentro del Mandato con menor
-   `price_max`. Si no hay ninguna, produce una Escalación.
-5. La selección crea el Booking inmediatamente. Se encolan emails idempotentes
-   al Cliente y al Proveedor elegido como notificación, no como aprobación.
+   `price_max`. Si no hay ninguna, la Operación queda en `needs_follow_up`;
+   la Escalación explícita queda para el siguiente flujo.
+5. La selección crea el Booking inmediatamente. El mail al Cliente y al
+   Proveedor elegido es una notificación posterior, fuera de este alcance.
 
 `busy` y `no-answer` no se reintentan automáticamente en el MVP: el Pedido
 queda pendiente hasta el deadline. Sólo las fallas técnicas anteriores a la

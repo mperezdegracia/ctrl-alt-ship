@@ -27,6 +27,7 @@ import {
 import { SupabaseOperationReadRepository } from "./tango/supabase/operation-read-repository";
 import { CallToolFactory } from "./tango/tools/call-tool-factory";
 import { SupabaseClientOperationRepository } from "./tango/supabase/client-operation-repository";
+import { SupabaseProviderQuoteRepository } from "./tango/supabase/provider-quote-repository";
 import { OpenAIRealtimeGateway } from "./tango/realtime/openai-realtime-gateway";
 import { TwilioGateway } from "./tango/telephony/twilio-gateway";
 import { EscalationHandoffCoordinator } from "./tango/telephony/escalation-handoff-coordinator";
@@ -86,6 +87,7 @@ const callToolFactory = new CallToolFactory(
   new SupabaseOperationReadRepository(supabaseAdmin),
   environment.CLIENT_OPERATION_TOOLS_ENABLED
     ? new SupabaseClientOperationRepository(supabaseAdmin) : undefined,
+  new SupabaseProviderQuoteRepository(supabaseAdmin),
 );
 
 const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
@@ -101,7 +103,6 @@ const emailWorker = new EmailOutboxWorker(
 // Temporary trial-by-fire destination. Replace with SUPERVISOR_PHONE when the
 // durable escalation service is enabled.
 const MOCK_SUPERVISOR_PHONE = "+5491132555829";
-
 function createTwilioGateway(callLogger: StructuredLogger): TwilioGateway {
   return new TwilioGateway({
     accountSid: environment.TWILIO_ACCOUNT_SID!,
@@ -112,6 +113,70 @@ function createTwilioGateway(callLogger: StructuredLogger): TwilioGateway {
       error: (event, fields) => callLogger.error(event, fields),
     },
   });
+}
+
+let outboundWorkerRunning = false;
+
+type ClaimedProviderContact = {
+  outbox_id: string;
+  operation_id: string;
+  quote_request_id: string;
+  provider_id: string;
+  provider_phone: string;
+  purpose: "quote_request" | "renegotiation";
+};
+
+/**
+ * The outbox makes provider fan-out durable. This process deliberately claims
+ * one job per second: Twilio's account limit is 1 CPS, while the database
+ * limits every sourcing cycle to three concurrently active provider calls.
+ */
+async function runOutboundSourcingWorker(): Promise<void> {
+  if (outboundWorkerRunning) return;
+  outboundWorkerRunning = true;
+  try {
+    const { data, error } = await supabaseAdmin.rpc("claim_next_provider_contact");
+    if (error) throw error;
+    const job = (data?.[0] ?? null) as ClaimedProviderContact | null;
+    if (job) {
+      const inserted = await supabaseAdmin.from("calls").insert({
+        operation_id: job.operation_id, provider_id: job.provider_id,
+        provider_intent: "quote", persona: "provider", direction: "outbound", outcome: "active",
+      }).select("id").single();
+      if (inserted.error || !inserted.data) throw inserted.error ?? new Error("Could not persist provider call");
+      try {
+        const twilio = await createTwilioOutboundCall({
+          to: job.provider_phone, callRecordId: inserted.data.id, purpose: job.purpose,
+        });
+        const { error: updateError } = await supabaseAdmin.from("calls")
+          .update({ twilio_call_sid: twilio.sid }).eq("id", inserted.data.id);
+        if (updateError) throw updateError;
+        const { error: finishedError } = await supabaseAdmin.rpc("finish_provider_contact", {
+          p_outbox_id: job.outbox_id, p_call_id: inserted.data.id, p_twilio_call_sid: twilio.sid,
+        });
+        if (finishedError) throw finishedError;
+        logger.info("sourcing.provider_call_started", { operation_id: job.operation_id, quote_request_id: job.quote_request_id, call_id: inserted.data.id });
+      } catch (error) {
+        await supabaseAdmin.from("calls").update({ outcome: "failed", ended_at: new Date().toISOString() }).eq("id", inserted.data.id);
+        const { error: finishError } = await supabaseAdmin.rpc("finish_provider_contact", {
+          p_outbox_id: job.outbox_id, p_call_id: inserted.data.id, p_twilio_call_sid: null,
+          p_error: error instanceof Error ? error.message.slice(0, 500) : "outbound_call_failed",
+        });
+        if (finishError) logger.error("sourcing.provider_call_retry_failed", { error: finishError, outbox_id: job.outbox_id });
+        logger.error("sourcing.provider_call_failed", { error, operation_id: job.operation_id, quote_request_id: job.quote_request_id });
+      }
+    }
+    const { data: sourcing, error: sourcingError } = await supabaseAdmin.from("operations").select("id").eq("status", "sourcing");
+    if (sourcingError) throw sourcingError;
+    await Promise.all((sourcing ?? []).map(async ({ id }) => {
+      const { error: finalizeError } = await supabaseAdmin.rpc("finalize_operation_sourcing", { p_operation_id: id });
+      if (finalizeError) logger.error("sourcing.finalize_failed", { error: finalizeError, operation_id: id });
+    }));
+  } catch (error) {
+    logger.error("sourcing.worker_failed", { error });
+  } finally {
+    outboundWorkerRunning = false;
+  }
 }
 
 async function rejectRealtimeCall(callId: string): Promise<void> {
@@ -164,6 +229,17 @@ app.post("/twilio/recording-status", (req, res) => {
   if (!baseUrl || !verifyTwilioSignature(`${baseUrl}${req.originalUrl}`, req.body as Record<string, string>, req.header("x-twilio-signature") ?? undefined)) return res.sendStatus(403);
   const body = req.body as { CallSid?: string; RecordingUrl?: string };
   if (body.CallSid && body.RecordingUrl) void supabaseAdmin.from("calls").update({ recording_url: body.RecordingUrl }).eq("twilio_call_sid", body.CallSid);
+  return res.sendStatus(204);
+});
+
+app.post("/twilio/call-status", (req, res) => {
+  const baseUrl = environment.PUBLIC_BASE_URL?.replace(/\/$/, "");
+  if (!baseUrl || !verifyTwilioSignature(`${baseUrl}${req.originalUrl}`, req.body as Record<string, string>, req.header("x-twilio-signature") ?? undefined)) return res.sendStatus(403);
+  const body = req.body as { CallSid?: string; CallStatus?: string };
+  if (body.CallSid && body.CallStatus) {
+    const outcome = body.CallStatus === "completed" ? "completed" : "failed";
+    void supabaseAdmin.from("calls").update({ outcome, ended_at: new Date().toISOString() }).eq("twilio_call_sid", body.CallSid);
+  }
   return res.sendStatus(204);
 });
 
@@ -485,4 +561,6 @@ app.listen(PORT, () => {
   if (environment.EMAIL_WORKER_ENABLED) {
     emailWorker.start(environment.EMAIL_WORKER_POLL_INTERVAL_MS);
   }
+  void runOutboundSourcingWorker();
+  setInterval(() => void runOutboundSourcingWorker(), 1_000).unref();
 });

@@ -30,7 +30,10 @@ export function buildOutboundTwiml(callRecordId: string): string {
 
 export async function createTwilioOutboundCall(request: OutboundCallRequest): Promise<{ sid: string }> {
   const config = requiredTwilioConfig();
-  const body = new URLSearchParams({ To: request.to, From: config.from, Twiml: buildOutboundTwiml(request.callRecordId) });
+  const body = new URLSearchParams({
+    To: request.to, From: config.from, Twiml: buildOutboundTwiml(request.callRecordId),
+    StatusCallback: `${config.baseUrl}/twilio/call-status`, StatusCallbackEvent: "completed",
+  });
   const response = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${encodeURIComponent(config.accountSid)}/Calls.json`, {
     method: "POST",
     headers: { Authorization: `Basic ${Buffer.from(`${config.accountSid}:${config.authToken}`).toString("base64")}`, "Content-Type": "application/x-www-form-urlencoded" },
