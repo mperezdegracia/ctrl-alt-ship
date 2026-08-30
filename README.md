@@ -91,11 +91,14 @@ key; server-only routes verify its Bearer JWT before accessing domain data.
 
 ## Render
 
-`backend/render.yaml` defines the single Node web service. In the Render
-Dashboard, create a Blueprint from this file and enter the values marked as
-secrets.
-The initial service uses the Free plan for development and health-checks
-`/health` against Supabase. Use a paid always-on instance before a voice demo.
+`backend/render.yaml` defines the voice/API Node web service and
+`frontend/render.yaml` defines a separate Next.js dashboard web service. In
+the Render Dashboard, create one Blueprint from each file and enter the values
+marked as secrets. Both services auto-deploy from `main`, independently.
+
+The backend uses the Free plan for development and health-checks `/health`
+against Supabase. The frontend health-checks `/login`. Use a paid always-on
+backend instance before a voice demo.
 
 ## Realtime SIP test
 
@@ -123,28 +126,22 @@ Supabase remains hosted and shared; neither app starts a local database or Auth
 stack.
 
 ```bash
-cd backend
+cd frontend
+cp .env.local.example .env.local
 npm install
 npm run dev
 ```
 
-The backend listens on `http://localhost:3000` and allows requests from
-`http://localhost:3001` by default. Once the Next.js app is present, run it
-separately:
+The frontend runs at `http://localhost:3000` and uses the hosted Supabase
+project and Render API. `frontend/.env.local` contains only browser-safe
+values. Before the browser calls the API directly, include
+`http://localhost:3000` and the frontend's Render URL in the backend
+service's `DASHBOARD_ORIGINS` environment variable.
+
+To run the backend locally as well, start it in another terminal. It defaults
+to port 3000, so run the frontend on a different port in that case:
 
 ```bash
-cd frontend
-cp .env.local.example .env.local
-npm install
-npm run dev -- --port 3001
+npm --prefix backend run dev
+npm --prefix frontend run dev -- --port 3001
 ```
-
-`frontend/.env.local` contains only browser-safe Supabase settings and the
-local Render API URL. Production Vercel settings use the same two
-`NEXT_PUBLIC_SUPABASE_*` values, with `NEXT_PUBLIC_API_URL` pointing to the
-Render service. Add the Vercel URL to `DASHBOARD_ORIGINS` in Render before
-the browser calls the API directly.
-
-The frontend package is intentionally dependency-free until the Next.js
-dashboard branch lands. Its package owns the forthcoming Next.js dependencies
-and `dev` command.

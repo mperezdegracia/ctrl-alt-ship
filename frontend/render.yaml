@@ -1,0 +1,25 @@
+services:
+  - type: web
+    name: ctrl-alt-ship-frontend
+    runtime: node
+    region: oregon
+    plan: free
+    rootDir: frontend
+    buildFilter:
+      paths:
+        - frontend/**
+    buildCommand: npm ci --include=dev && npm run build
+    startCommand: npm start
+    healthCheckPath: /login
+    autoDeployTrigger: commit
+    envVars:
+      - key: NODE_ENV
+        value: production
+      # Browser-safe values, injected during the Next.js build. Configure their
+      # actual values in Render; never add a Supabase secret key here.
+      - key: NEXT_PUBLIC_SUPABASE_URL
+        sync: false
+      - key: NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
+        sync: false
+      - key: NEXT_PUBLIC_API_URL
+        sync: false
