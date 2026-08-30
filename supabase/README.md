@@ -31,6 +31,13 @@ y existentes; no se hace como una limpieza de nombres.
 | `20260830090000` | Comparación por cinco minutos, espera abierta y adjudicación | Sourcing actual; revoca RPC legado |
 | `20260830100000` | Enum `sourcing.dispatch_queued` y recarga de caché | Corrección del fallo de mandato |
 | `20260830110000` | Dos proveedores activos al azar, sin filtro por equipo al contactar | Reemplaza `enqueue_mandate_sourcing` de `90000`; no reencola mandatos existentes |
+| `20260830120000` | Consola operativa del dashboard | Auditoría de acciones humanas y vistas guardadas |
+| `20260830120001` | Alta mínima: ruta obligatoria, logística adicional opcional y pago mínimo omitible | Reemplaza validaciones de operación/snapshot, ejecución cliente y selección; conserva filtros comerciales y equipo cuando fue especificado |
+| `20260830130000` | Revisión LLM persistida antes de adjudicar | SQL conserva elegibilidad, reloj y selección; revisiones obsoletas o ambiguas no confirman |
+| `20260830140000` | Contraofertas solo de precio | Trigger bloquea cambios de moneda, ventana, pago, vigencia y condiciones en revisiones |
+| `20260830150000` | Tool de cotización mínima | Solo min/max; moneda y primera ventana autorizada resueltas en servidor; extras ausentes en null, sin borrar historial |
+| `20260830160000` | Tope de precio visible solo en contexto interno del agente proveedor | Mismo mandato/pedido autorizado; no se agrega a tools ni listados públicos |
+| `20260830170000` | Adjudicación sin veto por ambigüedad del juez | Reemplaza el finalizador de `130000`; conserva revisión vigente y filtros SQL, sin bloqueo por assessment histórico |
 
 Los sufijos cortos de la última columna comparten el prefijo `202608300`.
 Los comentarios dentro de migraciones viejas describen su momento histórico,

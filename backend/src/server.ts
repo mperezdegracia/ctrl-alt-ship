@@ -37,6 +37,9 @@ import { createTwilioOutboundCall, verifyTwilioSignature } from "./tango/telepho
 import { extractOutboundCallRecordId, routeOutboundCall } from "./tango/telephony/outbound-routing";
 import { PreviewEmailGateway, SmtpEmailGateway } from "./tango/services/email-gateway";
 import { EmailOutboxWorker, SupabaseEmailOutboxRepository } from "./tango/workers/email-outbox-worker";
+import { OutboundSourcingLoop } from "./tango/workers/outbound-sourcing-loop";
+import { AgentsSourcingJudge } from "./tango/agents/sourcing-judge";
+import { SourcingReviewService } from "./tango/services/sourcing-review-service";
 
 const app = express();
 
@@ -94,6 +97,7 @@ const callToolFactory = new CallToolFactory(
 );
 
 const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
+const sourcingReview = new SourcingReviewService(supabaseAdmin, new AgentsSourcingJudge(OPENAI_API_KEY), logger);
 const realtimeGateway = new OpenAIRealtimeGateway(openai);
 const emailGateway = environment.EMAIL_DELIVERY_MODE === "smtp"
   ? new SmtpEmailGateway({
@@ -131,9 +135,9 @@ function providerPhoneType(capabilities: unknown): "mobile" | "landline" | undef
 }
 
 /**
- * The outbox makes provider fan-out durable. This process deliberately claims
- * one job per second: Twilio's account limit is 1 CPS, while the database
- * limits every sourcing cycle to two concurrently active provider calls.
+ * Claim at most one persisted contact per iteration. The loop waits five
+ * seconds between iterations, but never waits for a conversation to finish.
+ * Each sourcing cycle selects two providers; this is not a global call limit.
  */
 async function runOutboundSourcingWorker(): Promise<void> {
   if (outboundWorkerRunning) return;
@@ -189,11 +193,14 @@ async function runOutboundSourcingWorker(): Promise<void> {
     sourcingDiagnostics.retain(["worker", ...(sourcing ?? []).map(({ id }) => id)]);
     sourcingDiagnostics.observe("worker", "sourcing.worker_heartbeat", { active_operations: sourcing?.length ?? 0 });
     await Promise.all((sourcing ?? []).map(async ({ id }) => {
-      const { data: decision, error: finalizeError } = await supabaseAdmin.rpc("finalize_operation_sourcing", { p_operation_id: id });
-      if (finalizeError) logger.error("sourcing.finalize_failed", { error: finalizeError, operation_id: id });
-      else sourcingDiagnostics.observe(id, "sourcing.decision", { operation_id: id,
-        finalized: decision?.finalized ?? false, reason: decision?.reason ?? null,
-        booking_id: decision?.booking_id ?? null });
+      try {
+        const decision = await sourcingReview.finalize(id);
+        sourcingDiagnostics.observe(id, "sourcing.decision", { operation_id: id,
+          finalized: decision?.finalized ?? false, reason: decision?.reason ?? null,
+          booking_id: decision?.booking_id ?? null, review_id: decision?.review_id ?? null });
+      } catch (error) {
+        logger.error("sourcing.finalize_failed", { error, operation_id: id });
+      }
     }));
   } catch (error) {
     logger.error("sourcing.worker_failed", { error });
@@ -608,6 +615,7 @@ app.post("/openai/webhook", express.raw({ type: "*/*" }), async (req, res) => {
 });
 
 const PORT = environment.PORT;
+const outboundSourcingLoop = new OutboundSourcingLoop(runOutboundSourcingWorker, logger);
 
 app.listen(PORT, () => {
   logger.info("server.started", {
@@ -626,7 +634,5 @@ app.listen(PORT, () => {
   if (environment.EMAIL_WORKER_ENABLED) {
     emailWorker.start(environment.EMAIL_WORKER_POLL_INTERVAL_MS);
   }
-  void runOutboundSourcingWorker();
-  logger.info("sourcing.worker_started", { interval_ms: 1_000 });
-  setInterval(() => void runOutboundSourcingWorker(), 1_000).unref();
+  void outboundSourcingLoop.start();
 });

@@ -6,7 +6,7 @@ export type ProviderBookingToolName = "reschedule_booking" | "cancel_booking";
 export type ProviderBookingTarget = { booking_id: string; booking_revision: string; operation_revision: string; mandate_id: string };
 export type ProviderBooking = {
   operation: ProviderOperation; pickup_window: { start_at: string; end_at: string };
-  confirmed_price: number; currency: string; payment_term_days: number;
+  confirmed_price: number; currency: string; payment_term_days: number | null;
   requires_reconfirmation: boolean;
 };
 export type ProviderBookingResult =

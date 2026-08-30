@@ -189,3 +189,44 @@ del transportista bajo las condiciones cambiadas.
   Guía consultada: [OpenAI, prompting Realtime](https://developers.openai.com/api/docs/guides/realtime-models-prompting).
 - Sin ejecución de tests por indicación del usuario; mejora conversacional todavía
   pendiente de validar en una llamada real. No se promete reducción de latencia de red.
+
+## Cotización mínima y contraofertas solo de precio (vigente)
+
+- Actualización cliente: crear/editar exponen solo origen y destino; en edición
+  se manda únicamente el cambio y la referencia OP cuando hace falta seleccionar.
+  El mandato expone máximo, moneda y ventanas. Sin equipo, peso, devolución, notas,
+  restricciones ni pago en los argumentos de voz. Se conservan columnas y términos
+  históricos; no se prometen cambios fuera del schema. El borrador sigue admitiendo
+  datos parciales y el mandato de actualización hereda los términos omitidos.
+- El juez `gpt-5.4-mini` responde únicamente con el ID del candidato validado por
+  SQL. Sin explicación del modelo ni revisión humana. Fallos técnicos se reintentan,
+  no se reemplazan por una selección presentada como si viniera del LLM. La
+  migración `170000` elimina el bloqueo por ambigüedad sin quitar filtros de mandato.
+
+- El agente proveedor ve el tope real por OP en contexto interno para comparar
+  precios rápidamente. Tiene prohibido decirlo o usarlo como contraoferta. No
+  aparece en las tools/listados; Postgres sigue validando. Esto reemplaza la
+  decisión anterior de ocultarlo también del modelo, no permite divulgarlo al
+  transportista y no promete confidencialidad garantizada solo por el prompt.
+
+- El prompt de negociación se redujo: ante `contraoferta`, pedir una mejora de
+  precio conservando el resto, no volver a recopilar toda la cotización.
+- Confirmar una vez solo el precio («900 mil, para este viaje, ¿confirmás?»).
+  El sí autoriza la propuesta para adjudicar si resulta elegida; no otra aprobación.
+- `create_quote` recibe solamente `price_range: { min, max }` y, para elegir
+  operación, `operation_reference`. Moneda, ventana, pago, vigencia y condiciones
+  ya no están en los argumentos. El backend usa la moneda y primera ventana
+  cronológica autorizada del mandato; las revisiones preservan la ventana anterior.
+- Pago, vigencia y condiciones adicionales se guardan en null si no estaban
+  acordados. Si el mandato contiene un mínimo de pago positivo, se conserva.
+  No se borran términos históricos. Nunca interpretar null como pago inmediato.
+- No preguntar campos opcionales ni solicitar nuevamente fechas. Una condición
+  no soportada que el proveedor mencione no se ignora: se ofrece ayuda humana.
+- Se conservan tres revisiones, validación del servidor, privacidad del mandato,
+  tratamiento de negativas y escalación. Un trigger rechaza cualquier revisión
+  que cambie algo distinto del precio o repita el mismo precio.
+- Migraciones `130000`–`150000`: revisión del juez, términos fijos y nullable extras.
+  Detalles de selección y límites: [bidding mínimo](bidding-minimal.md).
+- Prompt de ambas personas: rapidez, frases cortas y sin repetir aprobaciones.
+  Voz cedar a 1.2x (antes 1.05x); no cambia el modelo ni el VAD.
+- Sin ejecución de tests, llamadas o migraciones remotas.

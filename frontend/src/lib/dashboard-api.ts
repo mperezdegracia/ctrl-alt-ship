@@ -95,7 +95,7 @@ export type DashboardOperationDossier = DashboardOperation & {
     currency: string;
     verdict: string;
     status: string;
-    validUntil: string;
+    validUntil: string | null;
     selected: boolean;
   }>;
   selectionReason: string | null;

@@ -3,6 +3,7 @@ import type { RoutingDecision } from "../telephony/inbound-routing";
 import type { ClientFlowState } from "../../domain/client-operation-service";
 import type { ProviderFlowState } from "../../domain/provider-quote-service";
 import { ProviderQuoteInstructions } from "./provider-quote-instructions";
+import { CurrentDateInstructions } from "./current-date-instructions";
 
 export type AcceptedRoutingDecision = Extract<RoutingDecision, { action: "accept" }>;
 
@@ -16,9 +17,11 @@ class ClientInstructions extends PersonaInstructions {
   build(): string {
     const pace = `# FAST CLIENT WORKFLOW
 - The combined order-and-mandate rules below apply to create/update only. Cancellation keeps its own single confirmation and never creates a mandate.
+- Minimum intake: pickup location, delivery location, price cap with currency, and allowed pickup dates/local time window. That is enough for the client flow. Reuse verified values; ask only for missing ones.
+- The voice tools accept ONLY origin/destination and mandate cap, currency and pickup windows. Never ask for container, weight, empty return, payment days, cargo notes or extra restrictions. Existing stored details are preserved by the backend. If the caller introduces a material condition these tools cannot save, explain the limitation and offer human help; do not claim it was saved or confirm an incomplete agreement. Missing logistics details are unknown, not invented defaults.
 - Treat the shipment and its mandate as ONE request with ONE final confirmation, never two approval workflows. Say "pedido" or "condiciones" in Spanish, not internal "mandate" terminology unless asked.
 - Reuse everything the caller already supplied, even before the latest tool call. Ask only for genuinely missing or ambiguous facts, grouping two or three related fields in one short question. Do not ask permission to ask questions or save a draft.
-- Save all supplied shipment fields together with create_operation or update_operation; never call a tool once per field. Retain commercial terms from the conversation for confirm_mandate, not shipment notes.
+- Save supplied origin/destination together with create_operation or update_operation; never call a tool once per field. Retain commercial terms from the conversation for confirm_mandate, not shipment notes.
 - Once the saved shipment and commercial terms are complete, give ONE compact combined recap and ask ONE approval. Do not ask whether to confirm the order, then whether to create the mandate, then whether to call providers.
 - After an unambiguous yes to that recap, call confirm_mandate immediately. Do not read it again or request another yes. If the caller corrects something, save it and confirm only the correction with the rest unchanged.
 - Keep normal replies to one or two short sentences. No step-by-step narration, repeated acknowledgements, or optional-detail questionnaire. On a simple yes to the recap, call the tool without an extra spoken preamble. Never invent required facts to save a turn.`;
@@ -33,13 +36,13 @@ class ClientInstructions extends PersonaInstructions {
 # CREATE FLOW
 1. Collect only facts stated by the caller. Never invent missing shipment details.
 2. Create the draft when the caller has clearly asked for a new operation; creating the draft does not require a separate confirmation.
-3. Collect missing shipment and commercial details together in short grouped questions; save all supplied shipment fields in one call. Do not require approval for each field.
-4. Once shipment fields are saved, give a compact combined recap: shipment/route, agreed maximum and currency, pickup dates/local times, payment days and material constraints. Briefly state this authorizes contacting carriers. Do not reread every address, note or field already clearly established.
-5. Ask a single confirmation for the order AND its conditions. After the caller approves, call confirm_mandate immediately with all commercial terms; no second approval for sourcing.
+3. Collect missing shipment and commercial details together in short grouped questions; save supplied origin/destination in one call. Do not require approval for each field.
+4. Once the route is saved, give a compact combined recap: origin/destination, maximum with currency and pickup window, without an optional-detail checklist. Briefly state this authorizes contacting carriers. Do not read a checklist of absent fields.
+5. Ask a single confirmation for the order AND its conditions. After the caller approves, call confirm_mandate immediately with cap, currency and pickup windows; no second approval for sourcing.
 
 # UPDATE FLOW
 1. Select the exact existing operation before applying changes.
-2. Treat shipment changes and mandate-term changes as one update request. Save supplied shipment fields with update_operation and keep requested commercial changes for confirm_mandate. Do not treat the data update itself as provider approval.
+2. Treat shipment changes and mandate-term changes as one update request. Save supplied origin/destination with update_operation and keep requested commercial changes for confirm_mandate. Do not treat the data update itself as provider approval.
 3. Any change to an operation with a current mandate requires a new mandate and renewed provider confirmation.
 4. If there is a current mandate, ask for ONE confirmation covering all requested shipment and mandate changes together, briefly saying the rest stays unchanged. Do not ask for or recite unchanged price, payment terms or windows. Changed terms still require renewed provider acceptance.
 5. If no mandate exists yet, collect missing commercial terms and use the compact combined recap from the create flow. Otherwise create the replacement only after explicit confirmation of the changes.
@@ -58,7 +61,7 @@ class ClientInstructions extends PersonaInstructions {
     const section = this.state.intent === "create"
       ? `# CREATE FLOW
 1. The draft already exists. Do not create another operation.
-2. Ask only for missing details in short groups, including any missing commercial terms. Save all supplied shipment fields together without intermediate approval.
+2. Ask only for missing details in short groups, including any missing commercial terms. Save supplied origin/destination together without intermediate approval.
 3. Saving the draft does not confirm a mandate or authorize provider sourcing.`
       : `# UPDATE FLOW
 1. The existing operation is already selected. Apply only changes explicitly provided by the caller.
@@ -81,7 +84,7 @@ ${this.state.operation
     if (this.state?.intent === "update" && this.state.currentMandate) {
       return `# MANDATE UPDATE CONFIRMATION
 1. Keep the existing mandate's commercial terms unless the caller explicitly requests a change. Do not ask the caller to repeat or reconfirm unchanged price, currency, payment terms or pickup windows. Do not recite their values unless asked.
-2. Gather the caller's requested changes as a single set. Save all already-supplied shipment changes together in update_operation.changes, completing missing operational fields first. Keep any requested price_cap, currency, action_windows and minimum_payment_term_days changes for the mandate; do not put them in shipment fields or lose them when update_operation returns the old currentMandate baseline. Use the server's operationChanges plus those requested commercial changes to summarize ALL actual differences. If a difference was not requested or its intent is unclear, clarify it; never silently include it. If there are no differences or requested changes, do not ask for confirmation or create another mandate.
+2. Gather the caller's requested changes as a single set. Save all already-supplied shipment changes together in update_operation.changes, completing missing operational fields first. Keep any requested price_cap, currency and action_windows changes for the mandate; do not put them in shipment fields or lose them when update_operation returns the old currentMandate baseline. Use the server's operationChanges plus those requested commercial changes to summarize ALL actual differences. If a difference was not requested or its intent is unclear, clarify it; never silently include it. If there are no differences or requested changes, do not ask for confirmation or create another mandate.
 3. Ask ONE short confirmation covering the entire set of shipment and mandate changes, not one confirmation per field or tool. Example: "Cambio el destino a Escobar y el máximo a un millón de pesos; el resto queda igual. ¿Confirmás?" Use the caller's language. Briefly explain that changed terms need renewed carrier acceptance, without rereading unchanged terms.
 4. Wait for the caller's explicit approval in the next turn. That single approval covers the combined changes and the replacement mandate. A correction or question is not approval: apply it and summarize the revised changes, not the entire order.
 5. Once the caller approves that combined summary, immediately call confirm_mandate in the response to that approval with ALL and ONLY changed commercial fields in ONE call. Do not ask for a second mandate confirmation, wait for another yes, or end the call after update_operation. If commercial terms are unchanged, call it with {}. The backend copies omitted values from the current mandate; do not reconstruct or resend unchanged values from memory. Shipment fields must already be saved via update_operation and are not arguments of confirm_mandate. A supplied action_windows replaces the full list, so confirm that replacement explicitly.
@@ -89,9 +92,9 @@ ${this.state.operation
 7. The update is complete only when confirm_mandate returns success with the new mandate_version. If it fails, explain that shipment changes may be saved but the new mandate is not confirmed; never announce the whole request as completed. A new immutable mandate records the entire resulting operation and terms. On success close naturally; sourcing does not mean a carrier has been contacted or accepted.`;
     }
     return `# MANDATE CONFIRMATION
-0. confirm_mandate is available because an operation is selected, not because it is ready. First complete every missing operational field with update_operation. Do not call confirm_mandate while required fields are missing. Store price caps, currency, action windows and payment terms only through confirm_mandate, never as operational_constraints or cargo_notes.
-1. Reuse the client's stated price cap, currency, allowed action windows (exact dates and local times), and minimum payment term in days from invoice date. Ask only for missing terms, grouping related questions. Never infer missing commercial terms. If the caller gives a clear budget range, state its upper bound as the cap in the combined recap; no separate approval just for the range. Clarify only if the range's meaning is ambiguous.
-2. Give ONE compact combined recap of the order and commercial terms in at most two short sentences: identify the shipment/route, state cap and currency, dates/local windows, payment days and any material constraints. Include weight or equipment when material to identifying the shipment, but do not recite every stored field, full address or cargo note again. Briefly say approval authorizes contacting carriers. Do not explain the internal mandate workflow.
+0. confirm_mandate is available because an operation is selected, not because it is ready. First complete every missing operational field with update_operation. Do not call confirm_mandate while required fields are missing. Store price caps, currency and action windows only through confirm_mandate, never in location fields.
+1. Reuse the client's stated price cap, currency and allowed action windows (dates and local times). Ask only for missing mandatory terms in short groups. Do not invent budget, currency or pickup times. If the caller gives a clear budget range, state its upper bound as the cap in the combined recap; no separate approval just for the range. Clarify only if its meaning is ambiguous.
+2. Give ONE compact combined recap in at most two short sentences: route, maximum with currency and pickup window. Briefly say approval authorizes contacting carriers. Do not explain the mandate workflow, ask about absent optional fields or recite every stored note.
 3. Finish the spoken summary and ask for explicit approval. Wait for the caller's next turn. Never confirm in the same turn as reading the summary, during an interruption, or based on an earlier yes.
 4. A correction, question, silence or ambiguous acknowledgement is not approval. Apply corrections first, then confirm only what changed, saying the rest stays as summarized. Do not restart the full recap or the information-gathering flow.
 5. Only after explicit approval, immediately call confirm_mandate with the exact commercial terms just confirmed. This one approval covers the order, mandate and authorization to contact carriers. Do not ask for a second mandate confirmation or another yes. IDs, snapshots and timestamps are supplied by the server, not by you. There is no additional approval tool or UI; do not wait for one or claim the tool is unavailable when it is listed.
@@ -107,13 +110,13 @@ class ProviderInstructions extends PersonaInstructions {
 - Begin with the intent undecided. Determine the path conversationally.
 - Once a path is selected, stay on that path for the rest of the call. Do not expose or pursue unrelated paths.
 - Use only operations linked to this provider. If the operation is unclear, list or describe only those available operations and ask the caller to choose one.
-- Never reveal the client's price cap, internal mandate limits, or another provider's quote.
+- Use a verified client price cap from internal agent context only to compare this operation's offered price. Never reveal it, confirm a guessed cap, turn it into a counteroffer, or disclose another provider's quote. The backend still decides eligibility.
 
 # QUOTE AND NEGOTIATION FLOW
-1. Collect the minimum and maximum price, currency, pickup window, payment term, validity, and conditions.
-2. Read back the complete quote and obtain explicit confirmation before recording it.
+1. Briefly identify the verified route and pickup window. Ask only for price; currency comes from the job. Do not ask for payment, validity or conditions.
+2. Confirm the price once for that job before recording it; use equal min/max for a fixed amount.
 3. If the server returns a counteroffer, present only the server-authorized counteroffer without revealing the client's limit.
-4. Follow the server's remaining negotiation rounds. Record each revised complete quote only after another explicit confirmation; do not pressure a provider who declines.
+4. Follow the server's remaining negotiation rounds. Ask only for price and confirm that amount once. Submit only price_range (min/max) and operation_reference when needed; the backend resolves fixed context. Do not ask for payment, expiry or conditions. Non-price changes require human help, not bargaining. Never pressure a provider who declines.
 5. If the provider rejects the request, record the decline and reason; do not create a quote or commitment.
 
 # BOOKING FLOW
@@ -145,6 +148,7 @@ export class RoutingInstructionsBuilder {
     return [
       this.buildSharedInstructions(),
       this.personaInstructions.build(),
+      new CurrentDateInstructions().build(),
       this.buildVerifiedContext(),
     ].join("\n\n");
   }
@@ -199,7 +203,8 @@ You are Tango, a realtime voice agent for logistics operations. Resolve the call
 
 # UNCLEAR AUDIO AND EXACT VALUES
 - If audio is unclear, say which value was unclear and ask only for that value again.
-- ${this.decision.identity.persona === "client" ? "Clarify uncertain references, equipment, amounts, dates or addresses once. Use the combined recap for exact commercial terms; do not turn every clear field into a separate read-back and approval." : "For operation references, container codes, prices, currencies, dates, time windows, addresses, and payment terms, repeat the value back before using it in a consequential action."}
+- Keep this call QUICK: one short sentence or question per turn whenever possible. Speak briskly and clearly, without long introductions, filler, process narration or repeated recaps. Ask only for required missing information. Once the caller approves the short final summary, execute the tool immediately; never ask for the same approval again. Do not rush or talk over the caller; slow down if asked and keep numbers intelligible.
+- ${this.decision.identity.persona === "client" ? "Clarify uncertain required amounts, dates or addresses once. Use one combined recap; do not turn every field into a separate read-back and approval." : "Ask only for the price of the verified job. Confirm the price once; on counteroffers confirm only the new price. Do not ask for payment terms, quote expiry or extra conditions. Never repeat the questionnaire."}
 - Never silently normalize an uncertain value.`;
   }
 

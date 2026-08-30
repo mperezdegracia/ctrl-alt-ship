@@ -100,7 +100,7 @@ export class ClientOperationService {
     this.assertObject(args);
     const keys = ["price_cap", "currency", "action_windows", "minimum_payment_term_days"];
     const canInherit = this.state?.intent === "update" && Boolean(this.state.currentMandate);
-    if ((!canInherit && Object.keys(args).length !== keys.length)
+    if ((!canInherit && ["price_cap", "currency", "action_windows"].some((key) => !(key in args)))
       || Object.keys(args).some((key) => !keys.includes(key))) this.invalidMandate();
     const price = args.price_cap;
     if ("price_cap" in args && (typeof price !== "number" || !Number.isFinite(price) || price <= 0 || price > 999999999999.99
@@ -128,7 +128,7 @@ export class ClientOperationService {
   }
 
   private invalidMandate(): never {
-    throw new ToolError("invalid_arguments", "For a first mandate provide all commercial terms. For an update with an existing mandate, omit unchanged terms. Supplied terms must have a positive price cap (two decimals), currency, explicit time-zone windows and nonnegative payment days. Do not provide IDs or evidence.");
+    throw new ToolError("invalid_arguments", "For a first mandate provide price cap, currency and pickup windows. Payment days are optional; omission sets no minimum payment delay. For an update with an existing mandate, omit unchanged terms. Supplied terms must have a positive price cap (two decimals), currency, explicit time-zone windows and nonnegative payment days. Do not provide IDs or evidence.");
   }
 
   private validateFields(value: unknown, allowNullNotes: boolean): asserts value is Record<string, unknown> {

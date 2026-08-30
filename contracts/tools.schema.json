@@ -106,17 +106,8 @@
       "parameters": {
         "type": "object",
         "properties": {
-          "container_type": { "type": "string", "minLength": 1 },
-          "gross_weight_kg": { "type": "number", "exclusiveMinimum": 0, "maximum": 999999999.999, "multipleOf": 0.001 },
           "pickup_location": { "type": "string", "minLength": 1 },
-          "delivery_location": { "type": "string", "minLength": 1 },
-          "empty_return_depot": { "type": "string", "minLength": 1 },
-          "operational_constraints": {
-            "type": "array",
-            "items": { "type": "string", "minLength": 1 },
-            "uniqueItems": true
-          },
-          "cargo_notes": { "type": "string", "minLength": 1 }
+          "delivery_location": { "type": "string", "minLength": 1 }
         },
         "required": [],
         "additionalProperties": false
@@ -147,17 +138,8 @@
           "changes": {
             "type": "object",
             "properties": {
-              "container_type": { "type": "string", "minLength": 1 },
-              "gross_weight_kg": { "type": "number", "exclusiveMinimum": 0, "maximum": 999999999.999, "multipleOf": 0.001 },
               "pickup_location": { "type": "string", "minLength": 1 },
-              "delivery_location": { "type": "string", "minLength": 1 },
-              "empty_return_depot": { "type": "string", "minLength": 1 },
-              "operational_constraints": {
-                "type": "array",
-                "items": { "type": "string", "minLength": 1 },
-                "uniqueItems": true
-              },
-              "cargo_notes": { "type": ["string", "null"] }
+              "delivery_location": { "type": "string", "minLength": 1 }
             },
             "minProperties": 1,
             "additionalProperties": false
@@ -222,7 +204,7 @@
     {
       "type": "function",
       "name": "confirm_mandate",
-      "description": "Creates an immutable mandate immediately after ONE verbal approval of the combined order and terms; never request a separate mandate approval. First mandate: save shipment fields first, give a compact combined recap, then send all commercial terms. Updating an existing mandate: confirm only the combined changes and send changed commercial terms (or {}); the server inherits omitted terms and builds the full snapshot.",
+      "description": "Confirms the order and mandate after ONE combined verbal approval. First mandate: save origin/destination first, then provide price_cap, currency and action_windows. Updates inherit omitted terms; send only changes (or {}). Never ask for separate order, mandate and sourcing approvals.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -240,8 +222,7 @@
               "required": ["start_at", "end_at"],
               "additionalProperties": false
             }
-          },
-          "minimum_payment_term_days": { "type": "integer", "minimum": 0, "maximum": 2147483647 }
+          }
         },
         "required": [],
         "additionalProperties": false
@@ -309,7 +290,7 @@
     {
       "type": "function",
       "name": "create_quote",
-      "description": "Records a complete provider quote as an immutable version. The server evaluates it against the current mandate and never returns the client's price cap.",
+      "description": "Records only the provider's price for the verified job after one brief verbal approval. For a fixed amount use equal min/max. Currency and pickup come from verified context; do not ask for or send payment, expiry or conditions. Counteroffers change only price. The server evaluates against the private mandate.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -318,43 +299,13 @@
             "type": "object",
             "properties": {
               "min": { "type": "number", "exclusiveMinimum": 0 },
-              "max": { "type": "number", "exclusiveMinimum": 0 },
-              "currency": { "type": "string", "pattern": "^[A-Z]{3}$" }
+              "max": { "type": "number", "exclusiveMinimum": 0 }
             },
-            "required": ["min", "max", "currency"],
-            "additionalProperties": false
-          },
-          "proposed_pickup_window": {
-            "type": "object",
-            "properties": {
-              "start_at": { "type": "string", "format": "date-time" },
-              "end_at": { "type": "string", "format": "date-time" }
-            },
-            "required": ["start_at", "end_at"],
-            "additionalProperties": false
-          },
-          "payment_term_days": { "type": "integer", "minimum": 0 },
-          "valid_until": { "type": "string", "format": "date-time" },
-          "conditions": {
-            "type": "object",
-            "properties": {
-              "notes": {
-                "type": "array",
-                "items": { "type": "string", "minLength": 1 },
-                "uniqueItems": true
-              }
-            },
-            "required": ["notes"],
+            "required": ["min", "max"],
             "additionalProperties": false
           }
         },
-        "required": [
-          "price_range",
-          "proposed_pickup_window",
-          "payment_term_days",
-          "valid_until",
-          "conditions"
-        ],
+        "required": ["price_range"],
         "additionalProperties": false
       },
       "returns": {

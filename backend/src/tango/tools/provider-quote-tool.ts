@@ -4,23 +4,14 @@ import { RealtimeTool, type JsonSchema, type ToolInvocation } from "./realtime-t
 export class CreateQuoteTool extends RealtimeTool {
   readonly definition = {
     type: "function" as const, name: "create_quote",
-    description: "Records a complete provider quote as an immutable version. The server evaluates it against the current mandate and never returns the client's price cap.",
+    description: "Records only the provider's price for the verified job after one brief verbal approval. For a fixed amount use equal min/max. Currency and pickup come from verified context; do not ask for or send payment, expiry or conditions. Counteroffers change only price. The server evaluates against the private mandate.",
     parameters: {
       type: "object", properties: {
         operation_reference: { type: "string", pattern: "^OP-[0-9]{6,}$" },
         price_range: { type: "object", properties: {
           min: { type: "number", exclusiveMinimum: 0 }, max: { type: "number", exclusiveMinimum: 0 },
-          currency: { type: "string", pattern: "^[A-Z]{3}$" },
-        }, required: ["min", "max", "currency"], additionalProperties: false },
-        proposed_pickup_window: { type: "object", properties: {
-          start_at: { type: "string", format: "date-time" }, end_at: { type: "string", format: "date-time" },
-        }, required: ["start_at", "end_at"], additionalProperties: false },
-        payment_term_days: { type: "integer", minimum: 0 },
-        valid_until: { type: "string", format: "date-time" },
-        conditions: { type: "object", properties: {
-          notes: { type: "array", items: { type: "string", minLength: 1 }, uniqueItems: true },
-        }, required: ["notes"], additionalProperties: false },
-      }, required: ["price_range", "proposed_pickup_window", "payment_term_days", "valid_until", "conditions"], additionalProperties: false,
+        }, required: ["min", "max"], additionalProperties: false },
+      }, required: ["price_range"], additionalProperties: false,
     } as JsonSchema,
   };
   constructor(private readonly service: ProviderQuoteService) { super(); }

@@ -2,13 +2,8 @@ import { ClientOperationService } from "../../domain/client-operation-service";
 import { RealtimeTool, type JsonSchema, type ToolInvocation } from "./realtime-tool";
 
 const operationFields: Record<string, unknown> = {
-  container_type: { type: "string", minLength: 1 },
-  gross_weight_kg: { type: "number", exclusiveMinimum: 0, maximum: 999999999.999, multipleOf: 0.001 },
   pickup_location: { type: "string", minLength: 1 },
   delivery_location: { type: "string", minLength: 1 },
-  empty_return_depot: { type: "string", minLength: 1 },
-  operational_constraints: { type: "array", items: { type: "string", minLength: 1 }, uniqueItems: true },
-  cargo_notes: { type: "string", minLength: 1 },
 };
 
 export class CreateOperationTool extends RealtimeTool {
@@ -34,7 +29,7 @@ export class UpdateOperationTool extends RealtimeTool {
     parameters: {
       type: "object", properties: {
         operation_reference: { type: "string", pattern: "^OP-[0-9]{6,}$" },
-        changes: { type: "object", properties: { ...operationFields, cargo_notes: { type: ["string", "null"] } }, minProperties: 1, additionalProperties: false },
+        changes: { type: "object", properties: operationFields, minProperties: 1, additionalProperties: false },
       }, required: ["changes"], additionalProperties: false,
     } as JsonSchema,
   };
@@ -70,7 +65,7 @@ export class ConfirmMandateTool extends RealtimeTool {
   readonly definition = {
     type: "function" as const,
     name: "confirm_mandate",
-    description: "Creates an immutable mandate immediately after ONE verbal approval of the combined order and terms; never request a separate mandate approval. First mandate: save shipment fields first, give a compact combined recap, then send all commercial terms. Updating an existing mandate: confirm only the combined changes and send changed commercial terms (or {}); the server inherits omitted terms and builds the full snapshot.",
+    description: "Confirms the order and mandate after ONE combined verbal approval. First mandate: save origin/destination first, then provide price_cap, currency and action_windows. Updates inherit omitted terms; send only changes (or {}). Never ask for separate order, mandate and sourcing approvals.",
     parameters: {
       type: "object", properties: {
         price_cap: { type: "number", exclusiveMinimum: 0, maximum: 999999999999.99, multipleOf: 0.01 },
@@ -80,7 +75,6 @@ export class ConfirmMandateTool extends RealtimeTool {
             start_at: { type: "string", format: "date-time" }, end_at: { type: "string", format: "date-time" },
           }, required: ["start_at", "end_at"], additionalProperties: false,
         } },
-        minimum_payment_term_days: { type: "integer", minimum: 0, maximum: 2147483647 },
       }, required: [], additionalProperties: false,
     } as JsonSchema,
   };

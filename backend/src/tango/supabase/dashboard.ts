@@ -107,7 +107,7 @@ export type DashboardOperationDossier = DashboardOperation & {
     currency: string;
     verdict: string;
     status: string;
-    validUntil: string;
+    validUntil: string | null;
     selected: boolean;
   }>;
   selectionReason: string | null;
@@ -773,7 +773,7 @@ export async function getDashboardOperationDossier(
   const requestProvider = new Map(requests.map((request) => [request.id, request.provider_id]));
   const quotes = quoteResult.data as Array<{
     id: string; quote_request_id: string; price_min: number | string; price_max: number | string; currency: string;
-    verdict: string; status: string; valid_until: string;
+    verdict: string; status: string; valid_until: string | null;
   }>;
   const commitments = (commitmentsResult.data ?? []) as Array<{
     id: string; type: string; terms: unknown; call_id: string; transcript_excerpt: string; recording_checkpoint: number | string;

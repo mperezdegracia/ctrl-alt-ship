@@ -20,7 +20,7 @@ export type RealtimeSessionConfiguration = {
     };
     output: {
       voice: "cedar";
-      speed: 1.05;
+      speed: 1.2;
     };
   };
   instructions: string;
@@ -49,7 +49,7 @@ export class RealtimeSessionFactory {
         },
         output: {
           voice: "cedar",
-          speed: 1.05,
+          speed: 1.2,
         },
       },
       instructions: new RoutingInstructionsBuilder(decision, flowState, providerState).build(),

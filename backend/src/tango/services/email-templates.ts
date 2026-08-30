@@ -18,10 +18,10 @@ export type BookingEmailPayload = {
     currency: string;
     pickup_window_start: string;
     pickup_window_end: string;
-    payment_term_days: number;
+    payment_term_days: number | null;
     confirmation_reference: string | null;
-    container_type: string;
-    gross_weight_kg: number | string;
+    container_type: string | null;
+    gross_weight_kg: number | string | null;
     pickup_location: string;
     delivery_location: string;
     client_name: string;
@@ -91,10 +91,10 @@ export function parseBookingEmailPayload(value: unknown): BookingEmailPayload {
       currency: asText(booking.currency, "currency"),
       pickup_window_start: asText(booking.pickup_window_start, "pickup_window_start"),
       pickup_window_end: asText(booking.pickup_window_end, "pickup_window_end"),
-      payment_term_days: asNonnegativeInteger(booking.payment_term_days, "payment_term_days"),
+      payment_term_days: booking.payment_term_days === null ? null : asNonnegativeInteger(booking.payment_term_days, "payment_term_days"),
       confirmation_reference: asNullableText(booking.confirmation_reference, "confirmation_reference"),
-      container_type: asText(booking.container_type, "container_type"),
-      gross_weight_kg: asPositiveNumber(booking.gross_weight_kg, "gross_weight_kg"),
+      container_type: asNullableText(booking.container_type, "container_type"),
+      gross_weight_kg: booking.gross_weight_kg === null ? null : asPositiveNumber(booking.gross_weight_kg, "gross_weight_kg"),
       pickup_location: asText(booking.pickup_location, "pickup_location"),
       delivery_location: asText(booking.delivery_location, "delivery_location"),
       client_name: asText(booking.client_name, "client_name"),
@@ -130,11 +130,12 @@ function bookingDetails(payload: BookingEmailPayload): string[] {
   const booking = payload.booking;
   return [
     `Operation: ${payload.operation_reference}`,
-    `Cargo: ${booking.container_type}, ${booking.gross_weight_kg} kg`,
+    ...(booking.container_type !== null || booking.gross_weight_kg !== null
+      ? [`Cargo: ${[booking.container_type, booking.gross_weight_kg === null ? null : `${booking.gross_weight_kg} kg`].filter(Boolean).join(", ")}`] : []),
     `Route: ${booking.pickup_location} → ${booking.delivery_location}`,
     `Pickup window: ${booking.pickup_window_start} to ${booking.pickup_window_end}`,
     `Confirmed price: ${formatMoney(booking.confirmed_price, booking.currency)}`,
-    `Payment term: ${booking.payment_term_days} days from invoice date`,
+    ...(booking.payment_term_days === null ? [] : [`Payment term: ${booking.payment_term_days} days from invoice date`]),
     ...(booking.confirmation_reference ? [`Confirmation reference: ${booking.confirmation_reference}`] : []),
   ];
 }

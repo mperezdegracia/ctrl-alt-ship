@@ -5,14 +5,14 @@ import { ToolError, type ToolErrorCode } from "../../domain/tool-error";
 
 const errors: Record<string, [ToolErrorCode, string]> = {
   not_authorized: ["not_authorized", "This provider or call is no longer authorized."],
-  invalid_arguments: ["invalid_arguments", "Review the quote fields, precision and future expiry."],
+  invalid_arguments: ["invalid_arguments", "Send only the price min/max, positive and ordered with at most two decimals. A counteroffer must change the price. Do not request payment terms, expiry or conditions."],
   operation_reference_required: ["invalid_arguments", "Choose the exact operation_reference from this provider's available quote requests."],
   operation_not_available: ["operation_not_available", "No available quote request for this operation and provider."],
   intent_locked: ["intent_locked", "This call is locked to another operation or path."],
   invalid_transition: ["invalid_transition", "This quote request is no longer open for a proposal."],
   idempotency_conflict: ["idempotency_conflict", "This invocation ID already belongs to a different command."],
   stale_operation: ["stale_operation", "The operation or quote request changed. Review the refreshed shipment and obtain fresh confirmation. Do not reuse an earlier yes."],
-  fixed_terms_conflict: ["fixed_terms_conflict", "The proposal conflicts with fixed shipment, currency, time-window or payment terms. No quote was saved or negotiation round consumed. Clarify the proposal or escalate; do not infer or reveal client limits."],
+  fixed_terms_conflict: ["fixed_terms_conflict", "Only the numeric price is negotiable. Shipment, currency, pickup, payment, expiry and conditions stay fixed; do not exchange a lower price for changes to those terms. No quote was saved or round consumed. Offer human help for a requested non-price change; never infer or reveal client limits."],
 };
 
 export class SupabaseProviderQuoteRepository implements ProviderQuoteRepository {

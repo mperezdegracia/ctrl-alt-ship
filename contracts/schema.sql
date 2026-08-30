@@ -98,22 +98,31 @@ AS $$
 DECLARE
   constraint_item jsonb;
 BEGIN
-  IF jsonb_typeof(value) <> 'object'
+  IF value IS NULL OR jsonb_typeof(value) <> 'object'
      OR NOT value ?& ARRAY[
        'container_type', 'gross_weight_kg', 'pickup_location',
        'delivery_location', 'empty_return_depot',
        'operational_constraints', 'cargo_notes'
      ]
-     OR jsonb_typeof(value->'container_type') <> 'string'
-     OR btrim(value->>'container_type') = ''
-     OR jsonb_typeof(value->'gross_weight_kg') <> 'number'
-     OR (value->>'gross_weight_kg')::numeric <= 0
+     OR NOT (
+       value->'container_type' = 'null'::jsonb
+       OR (jsonb_typeof(value->'container_type') = 'string'
+         AND btrim(value->>'container_type') <> '')
+     )
+     OR NOT (
+       value->'gross_weight_kg' = 'null'::jsonb
+       OR (jsonb_typeof(value->'gross_weight_kg') = 'number'
+         AND (value->>'gross_weight_kg')::numeric > 0)
+     )
      OR jsonb_typeof(value->'pickup_location') <> 'string'
      OR btrim(value->>'pickup_location') = ''
      OR jsonb_typeof(value->'delivery_location') <> 'string'
      OR btrim(value->>'delivery_location') = ''
-     OR jsonb_typeof(value->'empty_return_depot') <> 'string'
-     OR btrim(value->>'empty_return_depot') = ''
+     OR NOT (
+       value->'empty_return_depot' = 'null'::jsonb
+       OR (jsonb_typeof(value->'empty_return_depot') = 'string'
+         AND btrim(value->>'empty_return_depot') <> '')
+     )
      OR jsonb_typeof(value->'operational_constraints') <> 'array'
      OR NOT (
        value->'cargo_notes' = 'null'::jsonb
@@ -338,6 +347,7 @@ CREATE TABLE mandates (
   price_cap numeric(14,2) NOT NULL CHECK (price_cap > 0),
   currency char(3) NOT NULL CHECK (currency = upper(currency)),
   action_windows jsonb NOT NULL CHECK (are_windows(action_windows)),
+  -- A zero floor means no minimum imposed by the client, not agreed immediate payment.
   minimum_payment_term_days integer NOT NULL CHECK (minimum_payment_term_days >= 0),
   payment_term_anchor text NOT NULL DEFAULT 'invoice_date' CHECK (payment_term_anchor = 'invoice_date'),
   confirmed_in_call_id uuid NOT NULL REFERENCES calls(id),
@@ -427,9 +437,8 @@ BEGIN
     END IF;
   END IF;
   IF NEW.status IN ('sourcing', 'quotes_received', 'quote_selected', 'booking_pending', 'booking_confirmed', 'notifications_sent', 'needs_follow_up')
-     AND (NEW.current_mandate_id IS NULL OR nullif(btrim(NEW.container_type), '') IS NULL
-       OR NEW.gross_weight_kg IS NULL OR nullif(btrim(NEW.pickup_location), '') IS NULL
-       OR nullif(btrim(NEW.delivery_location), '') IS NULL OR nullif(btrim(NEW.empty_return_depot), '') IS NULL) THEN
+     AND (NEW.current_mandate_id IS NULL OR nullif(btrim(NEW.pickup_location), '') IS NULL
+       OR nullif(btrim(NEW.delivery_location), '') IS NULL) THEN
     RAISE EXCEPTION 'operation is incomplete for status %', NEW.status USING ERRCODE = '23514';
   END IF;
   RETURN NEW;
@@ -496,9 +505,9 @@ CREATE TABLE quotes (
   price_max numeric(14,2) NOT NULL CHECK (price_max >= price_min),
   currency char(3) NOT NULL CHECK (currency = upper(currency)),
   proposed_pickup_window jsonb NOT NULL CHECK (is_window(proposed_pickup_window)),
-  payment_term_days integer NOT NULL CHECK (payment_term_days >= 0),
-  valid_until timestamptz NOT NULL,
-  conditions jsonb NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(conditions) = 'object'),
+  payment_term_days integer CHECK (payment_term_days >= 0),
+  valid_until timestamptz,
+  conditions jsonb CHECK (jsonb_typeof(conditions) = 'object'),
   verdict quote_verdict NOT NULL,
   status quote_status NOT NULL DEFAULT 'received',
   received_at timestamptz NOT NULL DEFAULT now(),
@@ -542,6 +551,53 @@ CREATE TRIGGER quotes_append_only
 BEFORE UPDATE OR DELETE ON quotes FOR EACH ROW EXECUTE FUNCTION reject_mutation();
 CREATE INDEX quotes_request_idx ON quotes(quote_request_id);
 
+CREATE FUNCTION validate_price_only_quote_revision()
+RETURNS trigger LANGUAGE plpgsql SET search_path = public, pg_temp AS $$
+DECLARE previous quotes%ROWTYPE;
+BEGIN
+  IF NEW.supersedes_quote_id IS NULL THEN RETURN NEW; END IF;
+  SELECT * INTO previous FROM quotes WHERE id = NEW.supersedes_quote_id;
+  IF NOT FOUND THEN RAISE EXCEPTION 'invalid_arguments' USING ERRCODE = 'P0001'; END IF;
+  IF NEW.currency IS DISTINCT FROM previous.currency
+    OR (NEW.proposed_pickup_window->>'start_at')::timestamptz IS DISTINCT FROM (previous.proposed_pickup_window->>'start_at')::timestamptz
+    OR (NEW.proposed_pickup_window->>'end_at')::timestamptz IS DISTINCT FROM (previous.proposed_pickup_window->>'end_at')::timestamptz
+    OR NEW.payment_term_days IS DISTINCT FROM previous.payment_term_days
+    OR NEW.valid_until IS DISTINCT FROM previous.valid_until
+    OR NEW.conditions IS DISTINCT FROM previous.conditions THEN
+    RAISE EXCEPTION 'fixed_terms_conflict' USING ERRCODE = 'P0001';
+  END IF;
+  IF NEW.price_min = previous.price_min AND NEW.price_max = previous.price_max THEN
+    RAISE EXCEPTION 'invalid_arguments' USING ERRCODE = 'P0001';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+CREATE TRIGGER quotes_price_only_revision
+BEFORE INSERT ON quotes FOR EACH ROW
+EXECUTE FUNCTION validate_price_only_quote_revision();
+
+CREATE TABLE sourcing_judge_reviews (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  operation_id uuid NOT NULL REFERENCES operations(id),
+  mandate_id uuid NOT NULL REFERENCES mandates(id),
+  quote_id uuid NOT NULL REFERENCES quotes(id),
+  input_hash text NOT NULL,
+  input_context jsonb NOT NULL CHECK (jsonb_typeof(input_context) = 'object'),
+  assessment text NOT NULL CHECK (assessment IN ('clear', 'review_required')),
+  summary text NOT NULL CHECK (length(btrim(summary)) BETWEEN 1 AND 2000),
+  issues jsonb NOT NULL CHECK (jsonb_typeof(issues) = 'array'),
+  model text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+  UNIQUE (operation_id, input_hash),
+  CHECK (assessment <> 'clear' OR issues = '[]'::jsonb)
+);
+ALTER TABLE sourcing_judge_reviews ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON sourcing_judge_reviews FROM PUBLIC, anon, authenticated, service_role;
+GRANT SELECT ON sourcing_judge_reviews TO service_role;
+CREATE TRIGGER sourcing_judge_reviews_append_only
+BEFORE UPDATE OR DELETE ON sourcing_judge_reviews
+FOR EACH ROW EXECUTE FUNCTION reject_mutation();
+
 CREATE TABLE bookings (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   operation_id uuid NOT NULL REFERENCES operations(id),
@@ -549,7 +605,7 @@ CREATE TABLE bookings (
   status booking_status NOT NULL DEFAULT 'pending',
   pickup_window_start timestamptz NOT NULL,
   pickup_window_end timestamptz NOT NULL,
-  payment_term_days integer NOT NULL CHECK (payment_term_days >= 0),
+  payment_term_days integer CHECK (payment_term_days >= 0),
   payment_term_anchor text NOT NULL DEFAULT 'invoice_date' CHECK (payment_term_anchor = 'invoice_date'),
   confirmed_price numeric(14,2) CHECK (confirmed_price > 0),
   confirmation_reference text,
@@ -602,7 +658,7 @@ BEGIN
           AND (cr.requested_pickup_window->>'end_at')::timestamptz = NEW.pickup_window_end)
       OR NOT EXISTS (SELECT 1 FROM public.mandates m, jsonb_array_elements(m.action_windows) w
         WHERE m.id = op.current_mandate_id AND NEW.confirmed_price <= m.price_cap
-          AND NEW.payment_term_days >= m.minimum_payment_term_days AND q.currency = m.currency
+          AND (NEW.payment_term_days >= m.minimum_payment_term_days OR (NEW.payment_term_days IS NULL AND m.minimum_payment_term_days = 0)) AND q.currency = m.currency
           AND NEW.pickup_window_start >= (w->>'start_at')::timestamptz
           AND NEW.pickup_window_end <= (w->>'end_at')::timestamptz) THEN
       RAISE EXCEPTION 'booking reschedule requires an approved window-only change' USING ERRCODE = '23514';
@@ -610,7 +666,7 @@ BEGIN
     RETURN NEW;
   END IF;
   IF request_operation IS DISTINCT FROM NEW.operation_id OR q.verdict <> 'dentro' OR q.status <> 'received'
-    OR q.valid_until <= now() OR q.evaluated_mandate_id IS DISTINCT FROM op.current_mandate_id
+    OR (q.valid_until IS NOT NULL AND q.valid_until <= now()) OR q.evaluated_mandate_id IS DISTINCT FROM op.current_mandate_id
     OR EXISTS (SELECT 1 FROM public.quotes successor WHERE successor.supersedes_quote_id = q.id)
     OR NEW.pickup_window_start IS DISTINCT FROM (q.proposed_pickup_window->>'start_at')::timestamptz
     OR NEW.pickup_window_end IS DISTINCT FROM (q.proposed_pickup_window->>'end_at')::timestamptz
