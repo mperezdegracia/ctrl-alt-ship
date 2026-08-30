@@ -1,19 +1,18 @@
-import type { ConferenceMove, SupervisorCall, TwilioGateway } from "./twilio-gateway";
+import type { SupervisorTransfer, TwilioGateway } from "./twilio-gateway";
 
 export type EscalationHandoff = Readonly<{
   callSid: string;
-  conferenceName: string;
   supervisorPhone: string;
 }>;
 
-type TwilioHandoffPort = Pick<TwilioGateway, "callSupervisorToConference" | "moveCallToConference">;
+type TwilioHandoffPort = Pick<TwilioGateway, "transferCallToSupervisor">;
 
 /** Coordinates a one-shot live handoff; persistence remains the caller's concern. */
 export class EscalationHandoffCoordinator {
   private handoff?: EscalationHandoff;
   private farewellResponseId?: string;
   private awaitingFarewellResponse = false;
-  private moved = false;
+  private transferred = false;
 
   constructor(private readonly twilio: TwilioHandoffPort) {}
 
@@ -43,16 +42,12 @@ export class EscalationHandoffCoordinator {
   }
 
   async onAudioStopped(responseId: string): Promise<boolean> {
-    if (!this.handoff || this.moved || responseId !== this.farewellResponseId) return false;
-    await this.twilio.moveCallToConference({
+    if (!this.handoff || this.transferred || responseId !== this.farewellResponseId) return false;
+    await this.twilio.transferCallToSupervisor({
       callSid: this.handoff.callSid,
-      conferenceName: this.handoff.conferenceName,
-    } satisfies ConferenceMove);
-    await this.twilio.callSupervisorToConference({
-      conferenceName: this.handoff.conferenceName,
       to: this.handoff.supervisorPhone,
-    } satisfies SupervisorCall);
-    this.moved = true;
+    } satisfies SupervisorTransfer);
+    this.transferred = true;
     return true;
   }
 }

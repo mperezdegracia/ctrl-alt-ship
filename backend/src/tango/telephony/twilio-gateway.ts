@@ -11,12 +11,17 @@ export type TwilioGatewayLogger = Readonly<{
   error: (event: string, fields: Record<string, unknown>) => void;
 }>;
 
+export type SupervisorTransfer = Readonly<{
+  callSid: string;
+  to: string;
+}>;
+
 export type ConferenceMove = Readonly<{
   callSid: string;
   conferenceName: string;
 }>;
 
-export type SupervisorCall = Readonly<{
+export type SupervisorConferenceCall = Readonly<{
   conferenceName: string;
   to: string;
 }>;
@@ -33,15 +38,32 @@ export class TwilioGateway {
     this.authorization = `Basic ${Buffer.from(`${options.accountSid}:${options.authToken}`).toString("base64")}`;
   }
 
+  async transferCallToSupervisor(transfer: SupervisorTransfer): Promise<void> {
+    await this.post(`/Calls/${encodeURIComponent(transfer.callSid)}.json`, {
+      Twiml: transferTwiml(transfer.to, this.options.fromNumber),
+    }, {
+      operation: "transfer.dial_supervisor",
+      call_sid_suffix: transfer.callSid.slice(-6),
+      destination_phone_suffix: transfer.to.slice(-4),
+    });
+  }
+
+  /**
+   * Retained for manual conference experiments. The live `escalate` path uses
+   * transferCallToSupervisor and does not invoke either conference method.
+   */
   async moveCallToConference(move: ConferenceMove): Promise<void> {
-    await this.post(`/Calls/${encodeURIComponent(move.callSid)}.json`, { Twiml: conferenceTwiml(move.conferenceName) }, {
+    await this.post(`/Calls/${encodeURIComponent(move.callSid)}.json`, {
+      Twiml: conferenceTwiml(move.conferenceName),
+    }, {
       operation: "conference.move_caller",
       conference_name: move.conferenceName,
       call_sid_suffix: move.callSid.slice(-6),
     });
   }
 
-  async callSupervisorToConference(supervisor: SupervisorCall): Promise<void> {
+  /** See moveCallToConference: available, but not connected to `escalate`. */
+  async callSupervisorToConference(supervisor: SupervisorConferenceCall): Promise<void> {
     await this.post("/Calls.json", {
       To: supervisor.to,
       From: this.options.fromNumber,
@@ -92,6 +114,10 @@ async function errorCode(response: Response): Promise<number | undefined> {
   } catch {
     return undefined;
   }
+}
+
+function transferTwiml(destination: string, callerId: string): string {
+  return `<Response><Dial callerId="${escapeXml(callerId)}"><Number>${escapeXml(destination)}</Number></Dial></Response>`;
 }
 
 function conferenceTwiml(conferenceName: string): string {

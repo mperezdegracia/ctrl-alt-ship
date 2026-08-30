@@ -354,7 +354,6 @@ app.post("/openai/webhook", express.raw({ type: "*/*" }), async (req, res) => {
       if (!handoffCoordinator || handoffCoordinator.prepared) return;
       await handoffCoordinator.prepare({
         callSid: routingDecision.twilioCallSid,
-        conferenceName: `tango-escalation-${persistedCallId}`,
         supervisorPhone: MOCK_SUPERVISOR_PHONE,
       });
     };
@@ -507,7 +506,7 @@ app.post("/openai/webhook", express.raw({ type: "*/*" }), async (req, res) => {
               break;
             }
             if (await handoffCoordinator?.onAudioStopped(message.response_id)) {
-              callLogger.info("escalation.conference_started", { response_id: message.response_id });
+              callLogger.info("escalation.transfer_started", { response_id: message.response_id });
             }
             break;
 

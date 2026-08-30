@@ -31,40 +31,55 @@ async function main(): Promise<void> {
     fetch: fetchStub,
   });
 
-  await gateway.moveCallToConference({
+  await gateway.transferCallToSupervisor({
     callSid: "CA123",
-    conferenceName: "escalation-esc-1",
-  });
-
-  await gateway.callSupervisorToConference({
-    conferenceName: "escalation-esc-1",
     to: "+5491100000000",
   });
 
-  assert.equal(requests.length, 2);
+  assert.equal(requests.length, 1);
   assertTwilioRequest(requests[0]!, "/Calls/CA123.json");
-  const conferenceTwiml = new URLSearchParams(String(requests[0]!.init.body)).get("Twiml");
-  assert.match(conferenceTwiml ?? "", /<Conference/);
-  assert.match(conferenceTwiml ?? "", /escalation-esc-1/);
-  assertTwilioRequest(requests[1]!, "/Calls.json", {
-    To: "+5491100000000",
-    From: "+14155550100",
-  });
-  const supervisorTwiml = new URLSearchParams(String(requests[1]!.init.body)).get("Twiml");
-  assert.equal(supervisorTwiml, conferenceTwiml);
+  const transferTwiml = new URLSearchParams(String(requests[0]!.init.body)).get("Twiml");
+  assert.match(transferTwiml ?? "", /<Dial callerId="\+14155550100">/);
+  assert.match(transferTwiml ?? "", /<Number>\+5491100000000<\/Number>/);
   assert.deepEqual(logs.map((entry) => [entry.level, entry.event, entry.fields.operation]), [
-    ["info", "twilio.request_started", "conference.move_caller"],
-    ["info", "twilio.request_succeeded", "conference.move_caller"],
-    ["info", "twilio.request_started", "conference.dial_supervisor"],
-    ["info", "twilio.request_succeeded", "conference.dial_supervisor"],
+    ["info", "twilio.request_started", "transfer.dial_supervisor"],
+    ["info", "twilio.request_succeeded", "transfer.dial_supervisor"],
   ]);
 
+  await verifyConferenceGateway();
   await verifyFailureLogging();
 
   await verifyFarewellOrdering();
   await verifyMockEscalationTool();
 
   console.log("Escalation Twilio gateway harness passed.");
+}
+
+async function verifyConferenceGateway(): Promise<void> {
+  const conferenceRequests: RequestRecord[] = [];
+  const gateway = new TwilioGateway({
+    accountSid: "AC123",
+    authToken: "token",
+    fromNumber: "+14155550100",
+    fetch: async (url, init) => {
+      conferenceRequests.push({ url: String(url), init: init ?? {} });
+      return new Response(JSON.stringify({ sid: "CF123", status: "queued" }), { status: 201 });
+    },
+  });
+
+  await gateway.moveCallToConference({ callSid: "CA123", conferenceName: "escalation-esc-1" });
+  await gateway.callSupervisorToConference({ conferenceName: "escalation-esc-1", to: "+5491100000000" });
+
+  assert.equal(conferenceRequests.length, 2);
+  assertTwilioRequest(conferenceRequests[0]!, "/Calls/CA123.json");
+  assertTwilioRequest(conferenceRequests[1]!, "/Calls.json", {
+    To: "+5491100000000",
+    From: "+14155550100",
+  });
+  const callerTwiml = new URLSearchParams(String(conferenceRequests[0]!.init.body)).get("Twiml");
+  const supervisorTwiml = new URLSearchParams(String(conferenceRequests[1]!.init.body)).get("Twiml");
+  assert.equal(callerTwiml, "<Response><Dial><Conference>escalation-esc-1</Conference></Dial></Response>");
+  assert.equal(supervisorTwiml, callerTwiml);
 }
 
 async function verifyFailureLogging(): Promise<void> {
@@ -81,16 +96,16 @@ async function verifyFailureLogging(): Promise<void> {
   });
 
   await assert.rejects(
-    gateway.callSupervisorToConference({ conferenceName: "escalation-esc-1", to: "+5491100000000" }),
-    /Twilio conference\.dial_supervisor failed with status 400 \(code 21211\)/,
+    gateway.transferCallToSupervisor({ callSid: "CA123", to: "+5491100000000" }),
+    /Twilio transfer\.dial_supervisor failed with status 400 \(code 21211\)/,
   );
   assert.deepEqual(logs, [
     {
       level: "info",
       event: "twilio.request_started",
       fields: {
-        operation: "conference.dial_supervisor",
-        conference_name: "escalation-esc-1",
+        operation: "transfer.dial_supervisor",
+        call_sid_suffix: "CA123",
         destination_phone_suffix: "0000",
       },
     },
@@ -98,8 +113,8 @@ async function verifyFailureLogging(): Promise<void> {
       level: "error",
       event: "twilio.request_failed",
       fields: {
-        operation: "conference.dial_supervisor",
-        conference_name: "escalation-esc-1",
+        operation: "transfer.dial_supervisor",
+        call_sid_suffix: "CA123",
         destination_phone_suffix: "0000",
         failure_kind: "http",
         http_status: 400,
@@ -129,12 +144,10 @@ async function verifyMockEscalationTool(): Promise<void> {
 async function verifyFarewellOrdering(): Promise<void> {
   const actions: string[] = [];
   const coordinator = new EscalationHandoffCoordinator({
-    async moveCallToConference() { actions.push("move-caller"); },
-    async callSupervisorToConference() { actions.push("dial-supervisor"); },
+    async transferCallToSupervisor() { actions.push("transfer-caller"); },
   });
   const handoff = {
     callSid: "CA123",
-    conferenceName: "escalation-esc-1",
     supervisorPhone: "+5491100000000",
   };
 
@@ -146,7 +159,7 @@ async function verifyFarewellOrdering(): Promise<void> {
   assert.equal(await coordinator.onAudioStopped("resp-other"), false);
   assert.equal(await coordinator.onAudioStopped("resp-farewell"), true);
   assert.equal(await coordinator.onAudioStopped("resp-farewell"), false);
-  assert.deepEqual(actions, ["move-caller", "dial-supervisor"]);
+  assert.deepEqual(actions, ["transfer-caller"]);
 }
 
 function assertTwilioRequest(request: RequestRecord, path: string, expected: Record<string, string> = {}): void {
