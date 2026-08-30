@@ -20,30 +20,12 @@
 - **Responsibility and authority map:** useful in the pitch when explaining that the server, not the model, is the decision-maker.
 - **Flow-map pack:** appendix/reference material for rehearsals and judge questions. It separates outbound sourcing, an inbound carrier change, a mandate change, cancellation and live escalation.
 
-## Public, no-login link
+## Local presentation materials
 
-The preferred browser view is the static **Architecture Atlas**. The repository deploys `docs/pitch/` to GitHub Pages with [the Pages workflow](../../.github/workflows/deploy-pitch-atlas.yml), so it will be available without a login at:
-
-<https://mperezdegracia.github.io/ctrl-alt-ship/pitch/>
-
-It includes the technology architecture, all five flow maps, direct PDF downloads and the explicit trial-by-fire cases. Check that URL once in a private browser window after publishing.
-
-The same Pages deployment also exposes a browser-controlled slide deck at:
-
-<https://mperezdegracia.github.io/ctrl-alt-ship/pitch/presentation.html>
-
-Use the direct PDF below as the universal fallback: it is stable, printable and
-does not depend on a presentation-app login.
-
-After these files are merged to the public `main` branch, share this direct PDF URL and verify it once in a private browser window:
-
-<https://raw.githubusercontent.com/mperezdegracia/ctrl-alt-ship/main/docs/pitch/tango-pitch.pdf>
-
-The supplementary architecture pack is also shareable after merge:
-
-<https://raw.githubusercontent.com/mperezdegracia/ctrl-alt-ship/main/docs/pitch/tango-architecture-and-flows.pdf>
-
-This is intentionally a direct file link: it does not require a Google account, a GitHub sign-in, or a presentation-app permission. The editable PPTX remains the presenter version because it contains the speaker notes.
+The deck, its PDF export, the standalone architecture diagram and the rehearsal
+guide live in this folder. Open the PDF locally for a presentation-ready
+version; use the PPTX only when speaker notes or edits are needed. Any external
+sharing decision is deliberately outside this repository checklist.
 
 ## Before the final rehearsal
 
