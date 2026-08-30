@@ -8,7 +8,8 @@ ALTER TABLE public.tool_command_receipts
   DROP CONSTRAINT tool_command_receipts_tool_name_check,
   ADD CONSTRAINT tool_command_receipts_tool_name_check CHECK (tool_name IN (
     'create_operation', 'update_operation', 'confirm_mandate', 'cancel_operation',
-    'create_quote', 'decline_quote_request', 'reschedule_booking', 'cancel_booking'
+    'create_quote', 'decline_quote_request', 'reschedule_booking', 'cancel_booking',
+    'record_provider_quote' -- History only; the integration revokes the legacy RPC.
   ));
 
 CREATE OR REPLACE FUNCTION public.validate_booking() RETURNS trigger

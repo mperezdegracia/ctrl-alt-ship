@@ -1,4 +1,6 @@
 -- Durable email delivery for confirmed bookings.
+-- This migration was renumbered after its original version had already run in
+-- some environments. Reconcile the identical objects without deleting data.
 --
 -- The booking transition owns queuing. A future confirm_booking RPC only has
 -- to persist status = confirmed: this trigger creates the two idempotent jobs
@@ -6,16 +8,16 @@
 BEGIN;
 
 ALTER TABLE public.outbox
-  ADD COLUMN locked_until timestamptz,
-  ADD COLUMN lock_token uuid,
-  ADD COLUMN last_error_code text,
-  ADD COLUMN provider_message_id text;
+  ADD COLUMN IF NOT EXISTS locked_until timestamptz,
+  ADD COLUMN IF NOT EXISTS lock_token uuid,
+  ADD COLUMN IF NOT EXISTS last_error_code text,
+  ADD COLUMN IF NOT EXISTS provider_message_id text;
 
-CREATE INDEX outbox_email_claim_idx
+CREATE INDEX IF NOT EXISTS outbox_email_claim_idx
   ON public.outbox (available_at, created_at)
   WHERE job_type = 'send_email' AND status IN ('pending', 'processing');
 
-CREATE TABLE public.email_previews (
+CREATE TABLE IF NOT EXISTS public.email_previews (
   outbox_id uuid PRIMARY KEY REFERENCES public.outbox(id),
   subject text NOT NULL CHECK (btrim(subject) <> ''),
   text_body text NOT NULL CHECK (btrim(text_body) <> ''),
@@ -27,11 +29,12 @@ ALTER TABLE public.email_previews ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON public.email_previews FROM PUBLIC, anon, authenticated;
 GRANT SELECT, INSERT ON public.email_previews TO service_role;
 REVOKE UPDATE, DELETE ON public.email_previews FROM service_role;
+DROP TRIGGER IF EXISTS email_previews_append_only ON public.email_previews;
 CREATE TRIGGER email_previews_append_only
 BEFORE UPDATE OR DELETE ON public.email_previews
 FOR EACH ROW EXECUTE FUNCTION public.reject_mutation();
 
-CREATE FUNCTION public.enqueue_booking_confirmation_email(
+CREATE OR REPLACE FUNCTION public.enqueue_booking_confirmation_email(
   p_operation_id uuid,
   p_booking_id uuid,
   p_template text,
@@ -86,7 +89,7 @@ BEGIN
 END;
 $$;
 
-CREATE FUNCTION public.queue_booking_confirmation_emails(
+CREATE OR REPLACE FUNCTION public.queue_booking_confirmation_emails(
   p_booking_id uuid
 ) RETURNS TABLE(outbox_id uuid, recipient_type text)
 LANGUAGE plpgsql
@@ -176,7 +179,7 @@ BEGIN
 END;
 $$;
 
-CREATE FUNCTION public.enqueue_booking_confirmation_emails_after_confirm()
+CREATE OR REPLACE FUNCTION public.enqueue_booking_confirmation_emails_after_confirm()
 RETURNS trigger
 LANGUAGE plpgsql
 SECURITY INVOKER
@@ -191,11 +194,12 @@ BEGIN
 END;
 $$;
 
+DROP TRIGGER IF EXISTS bookings_enqueue_confirmation_emails ON public.bookings;
 CREATE TRIGGER bookings_enqueue_confirmation_emails
 AFTER INSERT OR UPDATE OF status ON public.bookings
 FOR EACH ROW EXECUTE FUNCTION public.enqueue_booking_confirmation_emails_after_confirm();
 
-CREATE FUNCTION public.claim_email_outbox(p_limit integer DEFAULT 10)
+CREATE OR REPLACE FUNCTION public.claim_email_outbox(p_limit integer DEFAULT 10)
 RETURNS TABLE(
   id uuid,
   operation_id uuid,
@@ -243,7 +247,7 @@ BEGIN
 END;
 $$;
 
-CREATE FUNCTION public.record_email_preview(
+CREATE OR REPLACE FUNCTION public.record_email_preview(
   p_outbox_id uuid,
   p_lock_token uuid,
   p_subject text,
@@ -271,7 +275,7 @@ BEGIN
 END;
 $$;
 
-CREATE FUNCTION public.complete_email_outbox(
+CREATE OR REPLACE FUNCTION public.complete_email_outbox(
   p_outbox_id uuid,
   p_lock_token uuid,
   p_provider_message_id text
@@ -343,7 +347,7 @@ BEGIN
 END;
 $$;
 
-CREATE FUNCTION public.fail_email_outbox(
+CREATE OR REPLACE FUNCTION public.fail_email_outbox(
   p_outbox_id uuid,
   p_lock_token uuid,
   p_error_code text,

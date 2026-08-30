@@ -27,7 +27,7 @@ CREATE TYPE outbox_status AS ENUM ('pending', 'processing', 'processed', 'failed
 CREATE TYPE domain_event_type AS ENUM (
   'call.rejected', 'call.routed', 'call.completed', 'call.failed', 'call.transferred',
   'operation.created', 'operation.updated', 'operation.cancelled',
-  'mandate.confirmed', 'sourcing.started',
+  'mandate.confirmed', 'sourcing.started', 'sourcing.dispatch_queued',
   'quote.requested', 'quote.received', 'quote.counteroffer_requested',
   'quote.declined', 'quote.expired', 'quote.selected',
   'booking.pending', 'booking.confirmed', 'booking.declined',

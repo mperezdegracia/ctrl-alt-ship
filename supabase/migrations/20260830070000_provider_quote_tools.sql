@@ -45,7 +45,8 @@ FOR EACH ROW EXECUTE FUNCTION public.bind_quote_request_mandate();
 ALTER TABLE public.tool_command_receipts
   DROP CONSTRAINT tool_command_receipts_tool_name_check,
   ADD CONSTRAINT tool_command_receipts_tool_name_check CHECK (tool_name IN (
-    'create_operation', 'update_operation', 'confirm_mandate', 'cancel_operation', 'create_quote', 'decline_quote_request'
+    'create_operation', 'update_operation', 'confirm_mandate', 'cancel_operation', 'create_quote', 'decline_quote_request',
+    'record_provider_quote' -- Preserve historical receipts from the previous runtime.
   ));
 
 CREATE FUNCTION public.provider_quote_operation(op public.operations) RETURNS jsonb

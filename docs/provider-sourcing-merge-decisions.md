@@ -45,18 +45,22 @@ se ejecuta antes de que `operations.current_mandate_id` cambie.
 ## Migraciones y despliegue pendiente
 
 El remoto contenía dos archivos con versión `20260830050000`. Se conserva sourcing
-en esa versión y **solo se renombra** el archivo de emails a `20260830050001`;
-su contenido no cambia. Las nuevas migraciones locales pasan a:
+en esa versión y se renombra el archivo de emails a `20260830050001`.
+El check de GitHub confirmó que esa migración fallaba por `outbox.locked_until`
+ya existente. Se hizo repetible para reconciliar columnas/tablas/índices y
+reemplazar las mismas funciones/triggers sin borrar datos. Las migraciones locales son:
 
 1. `20260830070000_provider_quote_tools.sql`
 2. `20260830080000_provider_booking_changes.sql`
 3. `20260830090000_integrate_provider_sourcing.sql`
 
-Antes de aplicar, revisar el historial de migraciones del entorno. Si emails ya
-figura aplicado como `20260830050000`, reconciliar ese historial con los objetos
-realmente existentes; **no ejecutar de nuevo la creación de sus tablas/functions**
-ni marcar versiones aplicadas sin verificar. Este merge no repara metadata remota
-ni aplica SQL a Supabase. Las pruebas SQL son estáticas, sin PostgreSQL.
+La integración GitHub aplica las migraciones desde `main`; no hay que usar el
+editor SQL ni modificar manualmente su metadata. La migración de emails tolera
+los objetos de su versión anterior. Se preservan recibos históricos de
+`record_provider_quote`, sin reactivar esa tool. La migración adicional
+`20260830100000_sourcing_dispatch_event.sql` registra el evento faltante que
+revertía `confirm_mandate` y solicita recargar la caché de PostgREST.
+Las pruebas locales son estáticas/simuladas; el check de Supabase valida el despliegue.
 
 Aplicar el conjunto de migraciones antes de desplegar este backend. Reiniciar las
 llamadas de prueba que todavía usen la antigua tool. Para enviar emails reales,
