@@ -392,7 +392,7 @@ REVOKE ALL ON FUNCTION public.prepare_sourcing_review(uuid),public.finalize_oper
 GRANT EXECUTE ON FUNCTION public.prepare_sourcing_review(uuid),public.finalize_operation_sourcing(uuid) TO service_role;
 
 CREATE OR REPLACE FUNCTION public.get_provider_tool_state(p_call_id uuid,p_realtime_call_id text,p_provider_id uuid)
-RETURNS jsonb LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $
+RETURNS jsonb LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $$
 DECLARE c public.calls%ROWTYPE; op public.operations%ROWTYPE; qr public.quote_requests%ROWTYPE;
   sr public.sourcing_rounds%ROWTYPE; m public.mandates%ROWTYPE; q public.quotes%ROWTYPE;
   last_offer jsonb; result_profile text; authorized boolean;
@@ -434,11 +434,11 @@ BEGIN
         WHERE z.quote_request_id=qr.id AND z.verdict='contraoferta')),
       'fixed_terms',jsonb_build_object('proposed_pickup_window',q.proposed_pickup_window,'payment_term_days',q.payment_term_days,
         'valid_until',q.valid_until,'conditions',q.conditions)) END,'lastOffer',last_offer);
-END; $;
+END; $$;
 
 CREATE OR REPLACE FUNCTION public.record_provider_offer(
   p_call_id uuid,p_realtime_call_id text,p_provider_id uuid,p_tool_call_id text,p_arguments jsonb
-) RETURNS jsonb LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $
+) RETURNS jsonb LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $$
 DECLARE c public.calls%ROWTYPE; op public.operations%ROWTYPE; sr public.sourcing_rounds%ROWTYPE;
   qr public.quote_requests%ROWTYPE; m public.mandates%ROWTYPE; receipt public.tool_command_receipts%ROWTYPE;
   result jsonb; price jsonb; currency_value text; operation_id_value uuid;
@@ -511,12 +511,12 @@ BEGIN
   INSERT INTO public.tool_command_receipts(call_id,tool_call_id,tool_name,arguments,result)
     VALUES(c.id,p_tool_call_id,'record_provider_offer',p_arguments,result);
   RETURN result;
-END; $;
+END; $$;
 
 CREATE OR REPLACE FUNCTION public.execute_provider_quote_tool(
   p_call_id uuid, p_realtime_call_id text, p_provider_id uuid,
   p_tool_call_id text, p_tool_name text, p_arguments jsonb, p_context jsonb DEFAULT NULL
-) RETURNS jsonb LANGUAGE plpgsql SECURITY INVOKER SET search_path = public, pg_temp AS $
+) RETURNS jsonb LANGUAGE plpgsql SECURITY INVOKER SET search_path = public, pg_temp AS $$
 DECLARE
   c public.calls%ROWTYPE;
   op public.operations%ROWTYPE;
@@ -744,7 +744,7 @@ COMMIT;
   VALUES (c.id, p_tool_call_id, p_tool_name, p_arguments, result);
   RETURN result;
 END;
-$;
+$$;
 REVOKE ALL ON FUNCTION public.get_provider_tool_state(uuid,text,uuid),
  public.record_provider_offer(uuid,text,uuid,text,jsonb),
  public.execute_provider_quote_tool(uuid,text,uuid,text,text,jsonb,jsonb) FROM PUBLIC,anon,authenticated;
