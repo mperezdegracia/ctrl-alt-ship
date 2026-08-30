@@ -1,0 +1,430 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="Tango architecture atlas: one live call, durable decisions, and explicit exception paths." />
+    <title>Tango — Architecture Atlas</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Source+Serif+4:opsz,wght@8..60,500;8..60,600&display=swap" rel="stylesheet" />
+    <style>
+      :root {
+        --ink: #15222a;
+        --ink-soft: #486a76;
+        --paper: #f2efe8;
+        --paper-deep: #e5dfd3;
+        --line: #c8c9bf;
+        --copper: #b76e31;
+        --voice: #3182f5;
+        --runtime: #6b5cff;
+        --data: #27936d;
+        --human: #cb6b19;
+        --exception: #d9534f;
+        --success: #30684b;
+        --max: 88rem;
+      }
+
+      * { box-sizing: border-box; }
+      html { scroll-behavior: smooth; }
+      body {
+        margin: 0;
+        background: var(--paper);
+        color: var(--ink);
+        font-family: "Manrope", Arial, sans-serif;
+        font-feature-settings: "tnum" 1;
+      }
+      ::selection { background: var(--copper); color: var(--paper); }
+      a { color: inherit; text-decoration-thickness: 1px; text-underline-offset: 0.24em; }
+      button, a { -webkit-tap-highlight-color: transparent; }
+      :focus-visible { outline: 3px solid var(--copper); outline-offset: 4px; }
+
+      .shell { width: min(calc(100% - 3rem), var(--max)); margin-inline: auto; }
+      .masthead {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 2rem;
+        min-height: 4.5rem;
+        border-bottom: 1px solid var(--line);
+      }
+      .wordmark {
+        font-size: 0.82rem;
+        font-weight: 800;
+        letter-spacing: 0.03em;
+        text-decoration: none;
+      }
+      .wordmark span { color: var(--copper); }
+      .masthead nav { display: flex; gap: 1.25rem; align-items: center; }
+      .masthead nav a {
+        color: var(--ink-soft);
+        font-size: 0.68rem;
+        font-weight: 800;
+        letter-spacing: 0.075em;
+        text-decoration: none;
+        text-transform: uppercase;
+      }
+      .masthead nav a:hover { color: var(--ink); }
+
+      .hero { padding: clamp(3.8rem, 8vw, 7rem) 0 3rem; }
+      .hero-top {
+        display: grid;
+        grid-template-columns: minmax(0, 1.08fr) minmax(17rem, 0.92fr);
+        gap: clamp(2rem, 6vw, 7rem);
+        align-items: end;
+        margin-bottom: 3rem;
+      }
+      h1, h2, h3, p { margin: 0; }
+      h1, h2, h3 { font-family: "Source Serif 4", Georgia, serif; font-weight: 600; }
+      h1 {
+        max-width: 12ch;
+        font-size: clamp(3.5rem, 7.3vw, 6.9rem);
+        letter-spacing: -0.042em;
+        line-height: 0.88;
+        text-wrap: balance;
+      }
+      .hero-copy {
+        max-width: 39rem;
+        color: var(--ink-soft);
+        font-size: 0.82rem;
+        line-height: 1.48;
+      }
+      .hero-copy strong { color: var(--ink); font-weight: 800; }
+      .signal-line {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        margin-top: 1.6rem;
+        color: var(--copper);
+        font-size: 0.67rem;
+        font-weight: 800;
+        letter-spacing: 0.09em;
+        text-transform: uppercase;
+      }
+      .signal-line::before,
+      .signal-line::after { content: ""; height: 1px; background: var(--line); }
+      .signal-line::before { width: 2.5rem; background: var(--copper); }
+      .signal-line::after { flex: 1; }
+      .hero-figure {
+        position: relative;
+        overflow: hidden;
+        margin: 0;
+        border-top: 2px solid var(--ink);
+        border-bottom: 1px solid var(--line);
+        background: var(--paper);
+      }
+      .diagram-scroll { min-width: 0; }
+      .hero-figure .diagram-scroll img { display: block; width: 100%; height: auto; }
+      .hero-figure figcaption,
+      .map-figure figcaption {
+        display: flex;
+        justify-content: space-between;
+        gap: 1rem;
+        padding: 0.85rem 1rem;
+        border-top: 1px solid var(--line);
+        color: var(--ink-soft);
+        font-size: 0.66rem;
+        line-height: 1.45;
+      }
+      .hero-figure figcaption span:first-child,
+      .map-figure figcaption span:first-child { color: var(--copper); font-weight: 800; }
+      .legend {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.55rem 1rem;
+        margin-top: 1.5rem;
+      }
+      .legend-item { display: inline-flex; align-items: center; gap: 0.4rem; color: var(--ink-soft); font-size: 0.66rem; font-weight: 700; }
+      .legend-dot { width: 0.56rem; height: 0.56rem; border-radius: 50%; background: var(--dot); }
+
+      .rule-section { border-top: 1px solid var(--line); }
+      .section-intro {
+        display: grid;
+        grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.15fr);
+        gap: clamp(2rem, 7vw, 9rem);
+        padding: clamp(4rem, 8vw, 7rem) 0 2.7rem;
+        align-items: end;
+      }
+      h2 {
+        font-size: clamp(1.8rem, 4.7vw, 2.65rem);
+        letter-spacing: -0.035em;
+        line-height: 0.92;
+        text-wrap: balance;
+      }
+      .section-intro p { max-width: 37rem; color: var(--ink-soft); font-size: 0.82rem; line-height: 1.62; }
+
+      .flow-workbench {
+        display: grid;
+        grid-template-columns: minmax(13rem, 0.36fr) minmax(0, 1fr);
+        border-top: 1px solid var(--ink);
+        border-bottom: 1px solid var(--ink);
+      }
+      .flow-tabs { border-right: 1px solid var(--line); }
+      .flow-tab {
+        display: grid;
+        grid-template-columns: 1.25rem 1fr auto;
+        width: 100%;
+        gap: 0.65rem;
+        align-items: center;
+        padding: 1.1rem 1rem;
+        border: 0;
+        border-bottom: 1px solid var(--line);
+        background: transparent;
+        color: var(--ink-soft);
+        cursor: pointer;
+        font: inherit;
+        text-align: left;
+        transition: background 180ms ease, color 180ms ease, transform 180ms ease;
+      }
+      .flow-tab:last-child { border-bottom: 0; }
+      .flow-tab:hover { background: var(--paper-deep); color: var(--ink); }
+      .flow-tab[aria-selected="true"] { background: var(--ink); color: var(--paper); transform: translateX(0.2rem); }
+      .flow-index { color: var(--copper); font-size: 0.65rem; font-weight: 800; }
+      .flow-tab[aria-selected="true"] .flow-index { color: var(--copper); }
+      .flow-name { font-size: 0.82rem; font-weight: 800; line-height: 1.25; }
+      .flow-state { width: 0.55rem; height: 0.55rem; border-radius: 50%; background: var(--flow-color); }
+      .flow-panel { min-width: 0; display: grid; grid-template-rows: auto 1fr; }
+      .panel-note {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 1rem;
+        min-height: 5.4rem;
+        padding: 1rem 1.25rem;
+        border-bottom: 1px solid var(--line);
+        background: var(--paper);
+      }
+      .panel-note strong { display: block; font-family: "Source Serif 4", Georgia, serif; font-size: clamp(1.7rem, 2vw, 2.4rem); font-weight: 600; letter-spacing: -0.025em; }
+      .panel-note p { align-self: end; max-width: 30rem; color: var(--ink-soft); font-size: 0.82rem; line-height: 1.48; }
+      .map-figure { display: grid; grid-template-rows: 1fr auto; min-height: 30rem; margin: 0; background: var(--paper); }
+      .map-figure .diagram-scroll { display: flex; align-items: center; min-width: 0; }
+      .map-figure .diagram-scroll img { display: block; width: 100%; height: auto; }
+      .map-figure figcaption { border-top: 0; }
+      [hidden] { display: none !important; }
+
+      .trials { padding: clamp(4rem, 8vw, 7rem) 0; }
+      .trials-head { display: flex; justify-content: space-between; gap: 2rem; align-items: end; margin-bottom: 2rem; }
+      .trials-head h2 { max-width: 11ch; }
+      .trials-head p { max-width: 31rem; color: var(--ink-soft); font-size: 0.82rem; line-height: 1.55; }
+      .trial-register { border-top: 2px solid var(--ink); }
+      .trial {
+        display: grid;
+        grid-template-columns: 1.2fr 1fr 1.1fr auto;
+        gap: 1.25rem;
+        align-items: start;
+        padding: 1.15rem 0;
+        border-bottom: 1px solid var(--line);
+      }
+      .trial-label { color: var(--exception); font-size: 0.65rem; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; }
+      .trial h3 { font-family: "Manrope", Arial, sans-serif; font-size: 0.82rem; font-weight: 800; line-height: 1.45; }
+      .trial p { color: var(--ink-soft); font-size: 0.82rem; line-height: 1.5; }
+      .trial-result { color: var(--success); font-size: 0.66rem; font-weight: 800; line-height: 1.38; text-align: right; }
+
+      .close { padding: clamp(4.5rem, 9vw, 8rem) 0 2.2rem; border-top: 1px solid var(--line); }
+      .close-grid { display: grid; grid-template-columns: 1.1fr 0.9fr; gap: clamp(2rem, 6vw, 8rem); }
+      .close h2 { max-width: 11ch; }
+      .close-copy { padding-top: 0.4rem; }
+      .close-copy p { color: var(--ink-soft); font-size: 0.82rem; line-height: 1.6; }
+      .downloads { display: grid; margin-top: 2rem; border-top: 1px solid var(--ink); }
+      .download {
+        display: flex;
+        justify-content: space-between;
+        gap: 1rem;
+        padding: 0.9rem 0;
+        border-bottom: 1px solid var(--line);
+        color: var(--ink);
+        font-size: 0.82rem;
+        font-weight: 800;
+        text-decoration: none;
+      }
+      .download:hover { color: var(--copper); }
+      .download span:last-child { color: var(--copper); }
+      .footer { display: flex; justify-content: space-between; gap: 2rem; padding: 1.2rem 0 2rem; border-top: 1px solid var(--line); color: var(--ink-soft); font-size: 0.66rem; line-height: 1.5; }
+      .footer strong { color: var(--ink); }
+
+      @media (max-width: 760px) {
+        .shell { width: min(calc(100% - 2rem), var(--max)); }
+        .masthead { min-height: 4rem; }
+        .wordmark { max-width: 8.75rem; font-size: 0.66rem; }
+        .masthead nav { gap: 0.7rem; }
+        .masthead nav a:last-child { display: none; }
+        .hero { padding-top: 3.2rem; }
+        .hero-top, .section-intro, .close-grid { grid-template-columns: 1fr; gap: 1.6rem; }
+        h1 { max-width: 10ch; font-size: clamp(3.5rem, 15vw, 6.9rem); }
+        .hero-figure { margin-inline: -1rem; }
+        .diagram-scroll { overflow-x: auto; scrollbar-color: var(--copper) var(--paper-deep); scrollbar-width: thin; }
+        .hero-figure .diagram-scroll img, .map-figure .diagram-scroll img { width: 68rem; max-width: none; }
+        .hero-figure figcaption, .map-figure figcaption { align-items: start; flex-direction: column; }
+        .flow-workbench { grid-template-columns: 1fr; }
+        .flow-tabs { display: flex; overflow-x: auto; border-right: 0; border-bottom: 1px solid var(--line); scrollbar-color: var(--copper) var(--paper-deep); }
+        .flow-tab { flex: 0 0 9.2rem; grid-template-columns: 1fr auto; padding: 0.85rem; border-bottom: 0; border-right: 1px solid var(--line); }
+        .flow-index { grid-column: 1 / -1; }
+        .panel-note { grid-template-columns: 1fr; min-height: auto; padding: 1rem; }
+        .panel-note p { align-self: auto; }
+        .map-figure { grid-template-rows: auto auto; min-height: 0; }
+        .trials-head { display: block; }
+        .trials-head p { margin-top: 1.5rem; }
+        .trial { grid-template-columns: 1fr 1fr; gap: 0.7rem 1rem; }
+        .trial-label { grid-column: 1 / -1; }
+        .trial-result { grid-column: 1 / -1; text-align: left; }
+        .footer { flex-direction: column; gap: 0.4rem; }
+      }
+
+      @media (prefers-reduced-motion: no-preference) {
+        .hero-figure { animation: settle 700ms cubic-bezier(.16, 1, .3, 1) both; }
+        @keyframes settle { from { opacity: 0; transform: translateY(1rem); } to { opacity: 1; transform: translateY(0); } }
+      }
+    </style>
+  </head>
+  <body>
+    <!-- THESIS: A browsable operation ledger, not a slide dump: every call crosses an explicit boundary before it becomes durable truth. OWN-WORLD: Tango Dispatch Ledger—ivory paper, blue-black rules, copper evidence and the architecture’s semantic boundary colors. STORY: A judge can understand the system, pick a path, and inspect how exceptions are contained. FIRST VIEWPORT: A large plain-language thesis sits above the technology map; the visual evidence is the action. FORM: Code-led architecture atlas, established Tango visual system; seed key: user-pinned narrow artifact. FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, DESIGN.md, and every shipping raster carrying its provenance -->
+    <header class="shell masthead">
+      <a class="wordmark" href="#top">TANGO <span>/</span> ARCHITECTURE ATLAS</a>
+      <nav aria-label="Page navigation">
+        <a href="#architecture">Technology</a>
+        <a href="#flows">Flows</a>
+        <a href="#trials">Trials</a>
+        <a href="#files">Files</a>
+      </nav>
+    </header>
+
+    <main id="top">
+      <section class="shell hero" id="architecture" aria-labelledby="hero-title">
+        <div class="hero-top">
+          <div>
+            <h1 id="hero-title">One call. Four boundaries. One source of truth.</h1>
+            <div class="signal-line">A voice agent that knows when to stop</div>
+          </div>
+          <p class="hero-copy">Tango coordinates freight by phone, but it <strong>never lets a model write operational truth on its own.</strong> The backend validates the current mandate, preserves every commitment and hands ambiguity to a human.</p>
+        </div>
+
+        <figure class="hero-figure">
+          <div class="diagram-scroll" tabindex="0" aria-label="Scrollable technology architecture diagram">
+            <img src="assets/tango-technology-architecture.png" alt="Technology architecture: callers use Twilio Voice, OpenAI Realtime and Tango on Render; validated state is persisted in Supabase and a supervisor can take over through SIP REFER." />
+          </div>
+          <figcaption>
+            <span>Technology architecture</span>
+            <span>On a small screen, swipe the map to inspect every deployed system boundary.</span>
+          </figcaption>
+        </figure>
+        <div class="legend" aria-label="Technology architecture legend">
+          <span class="legend-item"><i class="legend-dot" style="--dot: var(--voice)"></i>Voice</span>
+          <span class="legend-item"><i class="legend-dot" style="--dot: var(--runtime)"></i>Runtime</span>
+          <span class="legend-item"><i class="legend-dot" style="--dot: var(--data)"></i>Durable data</span>
+          <span class="legend-item"><i class="legend-dot" style="--dot: var(--human)"></i>Human control</span>
+          <span class="legend-item"><i class="legend-dot" style="--dot: var(--exception)"></i>Exception</span>
+        </div>
+      </section>
+
+      <section class="rule-section" id="flows" aria-labelledby="flows-title">
+        <div class="shell section-intro">
+          <h2 id="flows-title">Follow the decision, not just the call.</h2>
+          <p>Each map is a complete operational path. Move across the five tabs to see where the agent can act, where server-side validation has to intervene, and when the supervisor receives the line.</p>
+        </div>
+
+        <div class="shell flow-workbench">
+          <div class="flow-tabs" role="tablist" aria-label="Operational flow maps">
+            <button class="flow-tab" role="tab" id="tab-sourcing" aria-selected="true" aria-controls="panel-sourcing" data-flow="sourcing" style="--flow-color: var(--voice)">
+              <span class="flow-index">01</span><span class="flow-name">Outbound sourcing</span><span class="flow-state"></span>
+            </button>
+            <button class="flow-tab" role="tab" id="tab-carrier" aria-selected="false" aria-controls="panel-carrier" data-flow="carrier" style="--flow-color: var(--runtime)">
+              <span class="flow-index">02</span><span class="flow-name">Inbound carrier change</span><span class="flow-state"></span>
+            </button>
+            <button class="flow-tab" role="tab" id="tab-mandate" aria-selected="false" aria-controls="panel-mandate" data-flow="mandate" style="--flow-color: var(--data)">
+              <span class="flow-index">03</span><span class="flow-name">Client mandate change</span><span class="flow-state"></span>
+            </button>
+            <button class="flow-tab" role="tab" id="tab-cancellation" aria-selected="false" aria-controls="panel-cancellation" data-flow="cancellation" style="--flow-color: var(--exception)">
+              <span class="flow-index">04</span><span class="flow-name">Cancellation</span><span class="flow-state"></span>
+            </button>
+            <button class="flow-tab" role="tab" id="tab-escalation" aria-selected="false" aria-controls="panel-escalation" data-flow="escalation" style="--flow-color: var(--human)">
+              <span class="flow-index">05</span><span class="flow-name">Live escalation</span><span class="flow-state"></span>
+            </button>
+          </div>
+
+          <section class="flow-panel" id="panel-sourcing" role="tabpanel" aria-labelledby="tab-sourcing">
+            <div class="panel-note"><strong>Source and commit—only inside the mandate.</strong><p>The worker makes the calls; the backend validates the decision and emits an auditable handoff.</p></div>
+            <figure class="map-figure"><div class="diagram-scroll" tabindex="0" aria-label="Scrollable outbound sourcing flow map"><img src="assets/tango-flow-outbound-sourcing.png" alt="Outbound sourcing flow from an operation through outbox worker calls, quotes, mandate validation and a confirmed booking." /></div><figcaption><span>Outbound sourcing</span><span>Autonomous call work, bounded by an explicit server decision.</span></figcaption></figure>
+          </section>
+          <section class="flow-panel" id="panel-carrier" role="tabpanel" aria-labelledby="tab-carrier" hidden>
+            <div class="panel-note"><strong>A carrier can request a change. It cannot quietly rewrite the record.</strong><p>The inbound leg resolves the operation, verifies the authority, then changes or escalates.</p></div>
+            <figure class="map-figure"><div class="diagram-scroll" tabindex="0" aria-label="Scrollable inbound carrier change flow map"><img src="assets/tango-flow-inbound-carrier-change.png" alt="Inbound carrier change flow that identifies the operation, validates authority and mandate, then creates a new commitment or escalates." /></div><figcaption><span>Inbound carrier change</span><span>Identity, operation and mandate are checked before a state transition.</span></figcaption></figure>
+          </section>
+          <section class="flow-panel" id="panel-mandate" role="tabpanel" aria-labelledby="tab-mandate" hidden>
+            <div class="panel-note"><strong>Changing the mandate creates a new version—not an invisible edit.</strong><p>The current version determines what Tango may negotiate; the prior version remains in the ledger.</p></div>
+            <figure class="map-figure"><div class="diagram-scroll" tabindex="0" aria-label="Scrollable client mandate change flow map"><img src="assets/tango-flow-mandate-change.png" alt="Client mandate change flow creates a new mandate version and either continues sourcing or escalates an out of bounds conflict." /></div><figcaption><span>Client mandate change</span><span>The server owns the version that gives the agent authority.</span></figcaption></figure>
+          </section>
+          <section class="flow-panel" id="panel-cancellation" role="tabpanel" aria-labelledby="tab-cancellation" hidden>
+            <div class="panel-note"><strong>Cancellation is a durable event, not a missing row.</strong><p>Tango records who requested it, evaluates the current booking and leaves a complete trace for the supervisor.</p></div>
+            <figure class="map-figure"><div class="diagram-scroll" tabindex="0" aria-label="Scrollable cancellation flow map"><img src="assets/tango-flow-cancellation.png" alt="Cancellation flow that identifies the requester and operation, cancels the booking, records the event and notifies the relevant party." /></div><figcaption><span>Cancellation</span><span>A terminal operation state with an audit trail and notification path.</span></figcaption></figure>
+          </section>
+          <section class="flow-panel" id="panel-escalation" role="tabpanel" aria-labelledby="tab-escalation" hidden>
+            <div class="panel-note"><strong>When authority ends, the agent transfers the line with context.</strong><p>The system creates an escalation, resolves the configured active recipient and transfers the caller by SIP REFER.</p></div>
+            <figure class="map-figure"><div class="diagram-scroll" tabindex="0" aria-label="Scrollable live escalation flow map"><img src="assets/tango-flow-live-escalation.png" alt="Live escalation flow that creates an escalation record, reads the active handoff recipient and transfers the caller to the supervisor by SIP REFER." /></div><figcaption><span>Live escalation</span><span>The human recipient is data-managed in the directory, never hardcoded in the call path.</span></figcaption></figure>
+          </section>
+        </div>
+      </section>
+
+      <section class="shell trials" id="trials" aria-labelledby="trials-title">
+        <div class="trials-head">
+          <h2 id="trials-title">The ugly cases have a route.</h2>
+          <p>These are the pressure tests we can rehearse live. They are not a happy-path footnote; each maps to durable state, a bounded decision, or a human handoff.</p>
+        </div>
+        <div class="trial-register" aria-label="Exception register">
+          <article class="trial">
+            <span class="trial-label">Authority conflict</span><h3>A carrier asks to move a booking outside the active mandate.</h3><p>The backend rejects an out-of-bounds commitment even if the voice agent is willing to negotiate.</p><span class="trial-result">Escalation created<br />caller transferred</span>
+          </article>
+          <article class="trial">
+            <span class="trial-label">Live change</span><h3>The client edits the mandate while sourcing is in progress.</h3><p>The new mandate is versioned; subsequent decisions read the new authority instead of overwriting history.</p><span class="trial-result">New mandate version<br />full audit trail</span>
+          </article>
+          <article class="trial">
+            <span class="trial-label">Delivery failure</span><h3>A side effect retries after a worker or provider interruption.</h3><p>The outbox and idempotent receipts let the worker resume without duplicating a booking or losing the event.</p><span class="trial-result">Safe retry<br />durable receipt</span>
+          </article>
+          <article class="trial">
+            <span class="trial-label">Human routing</span><h3>The supervisor number changes moments before a live transfer.</h3><p>The outbound destination is read from the managed handoff directory, so the active recipient takes the call.</p><span class="trial-result">Live directory lookup<br />no hardcoded destination</span>
+          </article>
+        </div>
+      </section>
+
+      <section class="shell close" id="files" aria-labelledby="files-title">
+        <div class="close-grid">
+          <h2 id="files-title">A public artifact for the pitch room—and the README after it.</h2>
+          <div class="close-copy">
+            <p>This atlas is a static page: no account, no app permission and no presenter mode. The PDFs below remain useful as a downloadable pre-flight package or an appendix for judge questions.</p>
+            <div class="downloads">
+              <a class="download" href="tango-architecture-and-flows.pdf"><span>Architecture and flow-map pack</span><span>PDF ↗</span></a>
+              <a class="download" href="assets/tango-technology-architecture.pdf"><span>Technology architecture</span><span>PDF ↗</span></a>
+              <a class="download" href="tango-pitch.pdf"><span>Seven-minute pitch deck</span><span>PDF ↗</span></a>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="shell footer">
+      <span><strong>Tango</strong> — The Agent on the Line</span>
+      <span>Architecture Atlas · Static, shareable and ready for a private-window check.</span>
+    </footer>
+
+    <script>
+      const tabs = [...document.querySelectorAll('[role="tab"]')];
+      const panels = [...document.querySelectorAll('[role="tabpanel"]')];
+      function activate(tab) {
+        tabs.forEach((item) => item.setAttribute('aria-selected', String(item === tab)));
+        panels.forEach((panel) => { panel.hidden = panel.id !== tab.getAttribute('aria-controls'); });
+      }
+      tabs.forEach((tab, index) => {
+        tab.addEventListener('click', () => activate(tab));
+        tab.addEventListener('keydown', (event) => {
+          if (!['ArrowRight', 'ArrowDown', 'ArrowLeft', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
+          event.preventDefault();
+          let next = index;
+          if (event.key === 'Home') next = 0;
+          else if (event.key === 'End') next = tabs.length - 1;
+          else if (event.key === 'ArrowRight' || event.key === 'ArrowDown') next = (index + 1) % tabs.length;
+          else next = (index - 1 + tabs.length) % tabs.length;
+          tabs[next].focus();
+          activate(tabs[next]);
+        });
+      });
+    </script>
+  </body>
+</html>

@@ -3,6 +3,12 @@
 Voice-driven freight coordination with a durable operation as the source of
 truth.
 
+## Pitch and demo materials
+
+The seven-minute English pitch, standalone architecture diagram, rehearsal
+guide and public-share instructions live in [docs/pitch](docs/pitch/README.md).
+The real implementation trade-offs are recorded in the [decision log](docs/decision-log.md).
+
 The initial structure and boundaries between the backend, dashboard, and Tango
 are documented in [`docs/architecture.md`](docs/architecture.md).
 

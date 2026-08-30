@@ -1,0 +1,17 @@
+# Decision log
+
+This log records the product choices that shape the demo. It complements the detailed ADRs and implementation notes; the decisions below are intentionally stated as trade-offs, not as a feature list.
+
+| Date | Decision | Alternatives considered | Why this choice | Consequence / accepted cost |
+| --- | --- | --- | --- | --- |
+| 2026-08-29 | Make `operation` in Postgres the source of truth; keep voice sessions stateless with respect to business authority. | Treat the agent conversation history or transcript as the operational record. | Calls can end, be retried or arrive late. A durable operation carries mandate versions, quotes, booking, events and correlation across calls. | More schema, transactions and idempotency work; the agent must refresh server state rather than relying on its memory. See ADR 0001. |
+| 2026-08-29 | Run the voice runtime and worker in Render; keep the dashboard outside the voice path. | Put API, websocket/sideband and worker in a serverless frontend deployment. | A live Realtime sideband and outbound worker need a long-lived process. Render is familiar to the team and is suited to the hackathon vertical slice. | A sleeping free instance creates unacceptable demo risk; use an always-on instance or a rehearsed warm-up plan. See ADR 0002. |
+| 2026-08-30 | Use Twilio SIP into OpenAI Realtime, with Media Streams as an isolated fallback. | Bridge audio through a custom WebSocket/Media Streams implementation from the start. | SIP keeps the audio transport simple while the backend accepts signed calls and holds a sideband for tools and diagnostics. | The Twilio/OpenAI configuration is a real integration risk and must be proven with an actual call, not only harnesses. See `docs/outbound-call-flows.md`. |
+| 2026-08-30 | Keep the mandate, quote selection and commitment transition on the server; never reveal the price cap to a carrier. | Let the model determine compliance or disclose its ceiling during negotiation. | The mandate is the supervisor's authority boundary. The database can validate price, window, identity and state atomically; a language model cannot be that authority. | The conversation can feel less flexible and an outside-mandate request must be declined or escalated rather than improvised. See `docs/provider-sourcing-merge-decisions.md`. |
+| 2026-08-30 | Resolve human escalation targets from active, prioritized `handoff_recipients` data. | Hardcode a supervisor number or configure a `SUPERVISOR_PHONE` environment variable. | The person taking a live transfer is operational data: the initial demo recipient can be edited, disabled or replaced from Directory without a deploy. | The demo must seed and verify an active recipient before every trial; an unconfigured destination produces a durable escalation but no transfer. |
+
+## Non-negotiable implementation rules
+
+- A transfer to an Argentine mobile is an outbound destination and may need the mobile `9`; the stored inbound caller ID remains unchanged because Twilio routing compares the received value exactly.
+- A recording-backed commitment is created only when its evidence exists. The system must not invent transcript excerpts, recording checkpoints or commitments to make the demo look complete.
+- An escalation is persisted before any transfer is attempted, so a failed handoff cannot silently turn into approval.
