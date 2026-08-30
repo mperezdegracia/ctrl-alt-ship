@@ -12,6 +12,7 @@ import {
 import { isSupabaseConfigured } from "@/lib/supabase/config";
 import { createClient } from "@/lib/supabase/server";
 import { CommitmentEvidence } from "@/features/operation/commitment-evidence";
+import { OperationLiveUpdates } from "@/features/operation/operation-live-updates";
 import { OperationTrace } from "@/features/operation/operation-trace";
 import { DashboardHeader } from "../../dashboard-header";
 
@@ -52,6 +53,8 @@ export default async function OperationPage({ params }: { params: Promise<{ refe
             <p>Updated {formatDateTime(operation.updatedAt)}</p>
           </div>
         </header>
+
+        <OperationLiveUpdates reference={operation.reference} updatedAt={operation.updatedAt} />
 
         {operation.activeEscalation && (
           <section className="detail-escalation" aria-labelledby="live-decision-title">

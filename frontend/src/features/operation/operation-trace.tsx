@@ -60,7 +60,7 @@ export function OperationTrace({ trace }: OperationTraceProps) {
       <div className="trace-heading">
         <div>
           <h2 id="trace-heading">Operation trace</h2>
-          <p>Read top to bottom. The main lane is the operation state; side lanes are calls. A return line means that call changed the operation record.</p>
+            <p>Read top to bottom. The operation record stays on the left; each call opens a branch to the right. A return line marks what that call changed.</p>
         </div>
         <span>{trace.nodes.length} recorded events</span>
       </div>

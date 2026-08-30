@@ -8,6 +8,7 @@ import {
 } from "@/lib/dashboard-api";
 import { isSupabaseConfigured } from "@/lib/supabase/config";
 import { createClient } from "@/lib/supabase/server";
+import { DashboardLiveUpdates } from "@/features/operation/operation-live-updates";
 import { DashboardHeader } from "./dashboard-header";
 
 export const dynamic = "force-dynamic";
@@ -70,6 +71,8 @@ export default async function DashboardPage({ searchParams }: { searchParams: Da
           </div>
           <p className="report-date">Read at request time<br />{formatDateTime(new Date().toISOString())}</p>
         </div>
+
+        {operations[0] && <DashboardLiveUpdates updatedAt={operations[0].updatedAt} />}
 
         {escalation?.escalation && (
           <section className="escalation-sheet" aria-labelledby="escalation-title">

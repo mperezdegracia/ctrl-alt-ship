@@ -1,4 +1,9 @@
-import { getDashboardOperationDossier, listDashboardOperations } from "../../src/tango/supabase/dashboard";
+import {
+  getDashboardOperationDossier,
+  getDashboardOperationRevision,
+  getDashboardRevision,
+  listDashboardOperations,
+} from "../../src/tango/supabase/dashboard";
 
 async function main(): Promise<void> {
   const operations = await listDashboardOperations();
@@ -10,6 +15,9 @@ async function main(): Promise<void> {
   if (!first) throw new Error("Missing the first active operation");
   const dossier = await getDashboardOperationDossier(first.reference);
   if (!dossier) throw new Error(`Dashboard could not reread ${first.reference}`);
+  const revision = await getDashboardOperationRevision(first.reference);
+  if (!revision) throw new Error(`Dashboard could not read a live revision for ${first.reference}`);
+  const dashboardRevision = await getDashboardRevision();
   if (dossier.reference !== first.reference) {
     throw new Error(`Dossier reference mismatch: expected ${first.reference}, got ${dossier.reference}`);
   }
@@ -28,6 +36,8 @@ async function main(): Promise<void> {
     commitment_count: dossier.commitments.length,
     trace_lane_count: dossier.trace.lanes.length,
     trace_node_count: dossier.trace.nodes.length,
+    has_live_revision: Boolean(revision),
+    has_live_dashboard_revision: Boolean(dashboardRevision),
     has_mandate: Boolean(dossier.mandate),
     has_active_escalation: Boolean(dossier.activeEscalation),
   }, null, 2));

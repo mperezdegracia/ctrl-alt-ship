@@ -540,6 +540,87 @@ export async function listDashboardOperations(
   return toDashboardOperations((result.data ?? []) as unknown as OperationRow[], client);
 }
 
+/** A durable cursor for the live operations register. */
+export async function getDashboardRevision(
+  client: SupabaseClient = supabaseAdmin,
+): Promise<string> {
+  const [operationResult, eventResult] = await Promise.all([
+    client
+      .from("operations")
+      .select("id,updated_at")
+      .not("status", "in", "(cancelled,failed)")
+      .order("updated_at", { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+    client
+      .from("events")
+      .select("id,occurred_at")
+      .not("operation_id", "is", null)
+      .order("occurred_at", { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+  ]);
+  if (operationResult.error) throw operationResult.error;
+  if (eventResult.error) throw eventResult.error;
+
+  const operation = operationResult.data as { id: string; updated_at: string } | null;
+  const latestEvent = eventResult.data as { id: string; occurred_at: string } | null;
+  return [
+    operation ? `${operation.id}:${operation.updated_at}` : "no-active-operations",
+    latestEvent ? `${latestEvent.id}:${latestEvent.occurred_at}` : "no-operation-events",
+  ].join("|");
+}
+
+/**
+ * A durable cursor for the dashboard event stream. It intentionally contains
+ * no operational data: the notification tells the browser to reread the
+ * dossier through the usual authenticated route.
+ */
+export async function getDashboardOperationRevision(
+  reference: string,
+  client: SupabaseClient = supabaseAdmin,
+): Promise<string | null> {
+  const operationResult = await client
+    .from("operations")
+    .select("id,updated_at")
+    .eq("reference", reference)
+    .maybeSingle();
+  if (operationResult.error) throw operationResult.error;
+  if (!operationResult.data) return null;
+
+  const operation = operationResult.data as { id: string; updated_at: string };
+  const [eventResult, callsResult] = await Promise.all([
+    client
+      .from("events")
+      .select("id,occurred_at")
+      .eq("operation_id", operation.id)
+      .order("occurred_at", { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+    client
+      .from("calls")
+      .select("id,started_at,ended_at,outcome")
+      .eq("operation_id", operation.id)
+      .order("started_at", { ascending: false }),
+  ]);
+  if (eventResult.error) throw eventResult.error;
+  if (callsResult.error) throw callsResult.error;
+
+  const latestEvent = eventResult.data as { id: string; occurred_at: string } | null;
+  const callRevision = (callsResult.data ?? [])
+    .map((call) => {
+      const typedCall = call as { id: string; started_at: string; ended_at: string | null; outcome: string };
+      return `${typedCall.id}:${typedCall.started_at}:${typedCall.ended_at ?? "active"}:${typedCall.outcome}`;
+    })
+    .join(",");
+
+  return [
+    operation.updated_at,
+    latestEvent ? `${latestEvent.id}:${latestEvent.occurred_at}` : "no-events",
+    callRevision,
+  ].join("|");
+}
+
 export async function getDashboardOperationDossier(
   reference: string,
   client: SupabaseClient = supabaseAdmin,
