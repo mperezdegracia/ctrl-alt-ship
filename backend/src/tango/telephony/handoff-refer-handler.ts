@@ -25,6 +25,21 @@ const xml = (value: string) => value.replace(/[&<>"']/g, (c) => ({
   '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;',
 })[c]!);
 
+/**
+ * Twilio forwards the Refer-To contact in ReferTransferTarget. A compliant
+ * telephone URI may retain its angle brackets and URI parameters, although
+ * this application always dials the phone stored on the durable recipient.
+ */
+function transferTargetPhone(target: string): string | null {
+  if (/^\+[1-9]\d{7,14}$/.test(target)) return target;
+  return /^<?tel:(\+[1-9]\d{7,14})(?:;[^?<>]*)?>?$/i.exec(target)?.[1] ?? null;
+}
+
+function transferTargetKind(target: string, phone: string | null): "bare_e164" | "tel_uri" | "unsupported" {
+  if (!phone) return "unsupported";
+  return target === phone ? "bare_e164" : "tel_uri";
+}
+
 /** Only signed Twilio requests for an existing durable handoff may dial a person. */
 export class HandoffReferHandler {
   constructor(private readonly dependencies: Dependencies) {}
@@ -64,9 +79,34 @@ export class HandoffReferHandler {
       }
       return '<Response><Hangup/></Response>';
     }
-    if (!context.active || !/^\+[1-9]\d{7,14}$/.test(context.phone)
+    const transferTarget = body.ReferTransferTarget ?? '';
+    const requestedPhone = transferTargetPhone(transferTarget);
+    const recipientPhoneIsValid = /^\+[1-9]\d{7,14}$/.test(context.phone);
+    const targetIsAuthorized = requestedPhone === context.phone;
+    if (!context.active || !recipientPhoneIsValid
       || !['pending', 'transfer_requested'].includes(context.handoffStatus)
-      || ![context.phone, `tel:${context.phone}`].includes(body.ReferTransferTarget ?? '')) {
+      || !targetIsAuthorized) {
+      this.dependencies.log('escalation.twilio_dial_rejected', {
+        ...fields,
+        recipient_active: context.active,
+        recipient_phone_valid: recipientPhoneIsValid,
+        handoff_status: context.handoffStatus,
+        transfer_target_kind: transferTargetKind(transferTarget, requestedPhone),
+        transfer_target_matches_authorized_recipient: targetIsAuthorized,
+      });
+      // This is a signed callback for the durable call, so a mismatched target
+      // means no human dial will happen. Keep the escalation open for review.
+      if (!targetIsAuthorized && context.active && recipientPhoneIsValid
+        && ['pending', 'transfer_requested'].includes(context.handoffStatus)) {
+        try {
+          await this.dependencies.markFailed(
+            context,
+            'The Twilio transfer target did not match the authorized recipient. Manual review remains open.',
+          );
+        } catch (error) {
+          this.dependencies.log('escalation.twilio_dial_rejection_persist_failed', { ...fields, error });
+        }
+      }
       throw new HandoffReferHttpError(403, 'Transfer target is not the authorized recipient');
     }
     const action = new URL('/twilio/handoff-finished', this.dependencies.baseUrl);

@@ -46,6 +46,7 @@ async function main() {
   await assert.rejects(handler.handle(signed({ ...body, AccountSid: `AC${'3'.repeat(32)}` })), forbidden);
   await assert.rejects(handler.handle(signed({ ...body, CallSid: `CA${'3'.repeat(32)}` })), forbidden);
   await assert.rejects(handler.handle(signed({ ...body, ReferTransferTarget: 'tel:+14155550999' })), forbidden);
+  assert.match(failures.at(-1)!, /did not match the authorized recipient/);
   const tampered = signed(body);
   await assert.rejects(handler.handle({ ...tampered, body: { ...body, ReferTransferTarget: 'tel:+14155550999' } }), forbidden);
   const result = await handler.handle(signed(body));
@@ -54,6 +55,8 @@ async function main() {
   assert.match(result, /timeout="30"/);
   assert.ok(result.includes(`${baseUrl}/twilio/handoff-finished?call_record_id=${callId}`));
   assert.equal(await handler.handle(signed({ ...body, ReferTransferTarget: '+5491100000000' })), result);
+  assert.equal(await handler.handle(signed({ ...body, ReferTransferTarget: '<tel:+5491100000000;user=phone>' })), result);
+  await assert.rejects(handler.handle(signed({ ...body, ReferTransferTarget: 'tel:+5491100000000?unexpected=parameter' })), forbidden);
   context!.active = false;
   await assert.rejects(handler.handle(signed(body)), forbidden);
   context!.active = true;
@@ -67,7 +70,7 @@ async function main() {
     assert.doesNotMatch(failure, /<Dial/);
   }
   assert.equal(await handler.handle(signed({ ...body, DialCallStatus: 'completed' }, true)), '<Response><Hangup/></Response>');
-  assert.equal(failures.length, 4, 'Completed leg must not be marked failed');
+  assert.equal(failures.length, 6, 'Completed leg must not be marked failed');
   assert.equal(logs.at(-1)?.fields.human_answer_confirmed, false, 'Do not confuse answered or voicemail with a human');
   context = null;
   await assert.rejects(handler.handle(signed(body)), forbidden);

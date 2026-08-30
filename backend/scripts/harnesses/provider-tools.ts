@@ -103,8 +103,10 @@ async function main(): Promise<void> {
   await assert.rejects(new ProviderQuoteService(clientScope, rpc.repository).execute("create_quote", quote, "forged"), /authenticated provider/);
 
   const evidenceMigration = readFileSync(resolve(__dirname, "../../../supabase/migrations/20260830232200_quote_transcript_evidence.sql"), "utf8");
+  const evidencePermissionsMigration = readFileSync(resolve(__dirname, "../../../supabase/migrations/20260830232400_fix_quote_evidence_staging_permissions.sql"), "utf8");
   assert.match(evidenceMigration, /quote_transcript_evidence/);
   assert.match(evidenceMigration, /bookings_assign_quote_evidence/);
+  assert.match(evidencePermissionsMigration, /stage_provider_quote_evidence[\s\S]*SECURITY DEFINER/);
   console.log("Provider quote harness passed: outbound scope, trusted context, offer recording, quote replay, prompt isolation and evidence staging. Mocked RPC only.");
 }
 
