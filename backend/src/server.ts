@@ -8,6 +8,7 @@ import {
   requireDashboardAuth,
   type DashboardRequest,
 } from "./http/middleware/require-dashboard-auth";
+import { registerDashboardRoutes } from "./http/routes/dashboard";
 import { StructuredLogger } from "./observability/logger";
 import { RealtimeSessionFactory } from "./tango/realtime/realtime-session";
 import {
@@ -112,6 +113,8 @@ app.get("/health", async (_req, res) => {
 app.get("/api/me", requireDashboardAuth, (req: DashboardRequest, res) => {
   res.json({ user: req.dashboardUser });
 });
+
+registerDashboardRoutes(app, logger);
 
 app.post("/openai/webhook", express.raw({ type: "*/*" }), async (req, res) => {
   const webhookSecret = environment.OPENAI_WEBHOOK_SECRET;

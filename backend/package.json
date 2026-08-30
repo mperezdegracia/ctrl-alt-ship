@@ -14,6 +14,7 @@
     "harness:tools": "npm run harness:tools:read && npm run harness:tools:client && npm run harness:tools:evidence",
     "harness:tools:evidence": "node --require tsx/cjs scripts/harnesses/confirmation-evidence.ts",
     "harness:realtime:sdk": "node --require tsx/cjs scripts/harnesses/realtime-sdk.ts",
+    "dashboard:read": "tsx scripts/harnesses/dashboard-read.ts",
     "db:seed": "tsx scripts/db/seed.ts",
     "auth:smoke": "tsx scripts/harnesses/auth-smoke.ts",
     "typecheck": "tsc --project tsconfig.json"

@@ -1,10 +1,11 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import type { Commitment } from "@/lib/mock-operations";
+import { formatTime } from "@/lib/dashboard-api";
+import type { DashboardOperationDossier } from "@/lib/dashboard-api";
 
 type CommitmentEvidenceProps = {
-  commitments: Commitment[];
+  commitments: DashboardOperationDossier["commitments"];
 };
 
 function RecordingIcon() {
@@ -33,7 +34,7 @@ export function CommitmentEvidence({ commitments }: CommitmentEvidenceProps) {
 
   if (!selected) return null;
 
-  const recordingReady = selected.recording.status === "ready" && Boolean(selected.recording.url);
+  const recordingReady = Boolean(selected.recordingUrl);
 
   return (
     <section className="detail-section evidence-section" aria-labelledby="commitments-heading">
@@ -51,7 +52,7 @@ export function CommitmentEvidence({ commitments }: CommitmentEvidenceProps) {
             const selectedCommitment = commitment.id === selected.id;
             return (
               <li key={commitment.id} className={selectedCommitment ? "is-selected" : undefined}>
-                <time dateTime={commitment.occurredAt}>{commitment.timestamp}</time>
+                <time dateTime={commitment.occurredAt}>{formatTime(commitment.occurredAt)}</time>
                 <button
                   type="button"
                   className="commitment-record"
@@ -61,7 +62,7 @@ export function CommitmentEvidence({ commitments }: CommitmentEvidenceProps) {
                   <span className="commitment-kind">{commitment.kind}</span>
                   <strong>{commitment.title}</strong>
                   <span>{commitment.summary}</span>
-                  <small>Evidence at {commitment.checkpoint}</small>
+                  <small>Evidence at {commitment.recordingCheckpoint.toFixed(2)}s</small>
                 </button>
               </li>
             );
@@ -79,7 +80,7 @@ export function CommitmentEvidence({ commitments }: CommitmentEvidenceProps) {
 
           <dl className="evidence-meta">
             <div><dt>Call</dt><dd>{selected.call.label}</dd></div>
-            <div><dt>Counterparty</dt><dd>{selected.call.counterparty}</dd></div>
+            <div><dt>Counterparty</dt><dd>{selected.call.counterpartyName ?? "Not recorded"}</dd></div>
             <div><dt>Direction</dt><dd>{selected.call.direction}</dd></div>
           </dl>
 
@@ -88,18 +89,18 @@ export function CommitmentEvidence({ commitments }: CommitmentEvidenceProps) {
             <footer>Conversation excerpt around the verified action</footer>
           </blockquote>
 
-          {selected.supersedes && (
-            <p className="supersedes-note"><span>Supersedes</span>{selected.supersedes}</p>
+          {selected.supersedesCommitmentId && (
+            <p className="supersedes-note"><span>Supersedes</span>{selected.supersedesCommitmentId}</p>
           )}
 
           <div className="recording-control">
             <div className="recording-symbol"><RecordingIcon /></div>
             <div>
               <p>Call recording</p>
-              <span>Replay from checkpoint {selected.checkpoint}</span>
+              <span>Replay from checkpoint {selected.recordingCheckpoint.toFixed(2)}s</span>
             </div>
             {recordingReady ? (
-              <audio controls preload="metadata" src={selected.recording.url} aria-label={`Recording for ${selected.title}`} />
+              <audio controls preload="metadata" src={selected.recordingUrl ?? undefined} aria-label={`Recording for ${selected.title}`} />
             ) : (
               <button type="button" className="replay-button" disabled title="A Twilio recording URL will enable replay here.">
                 <PlayIcon />

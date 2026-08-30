@@ -1,21 +1,29 @@
+import Link from "next/link";
 import { redirect } from "next/navigation";
+
+import {
+  formatDateTime,
+  formatStatus,
+  getDashboardOperations,
+} from "@/lib/dashboard-api";
 import { isSupabaseConfigured } from "@/lib/supabase/config";
 import { createClient } from "@/lib/supabase/server";
-import { getOpenOperations } from "@/lib/mock-operations";
 import { DashboardHeader } from "./dashboard-header";
-import Link from "next/link";
 
 export const dynamic = "force-dynamic";
 
 export default async function DashboardPage() {
   if (!isSupabaseConfigured) redirect("/login");
   const supabase = await createClient();
-  const { data: claimsData } = await supabase.auth.getClaims();
-  if (!claimsData) redirect("/login");
+  const [{ data: claimsData }, { data: sessionData }] = await Promise.all([
+    supabase.auth.getClaims(),
+    supabase.auth.getSession(),
+  ]);
+  if (!claimsData?.claims || !sessionData.session?.access_token) redirect("/login");
 
   const email = typeof claimsData.claims.email === "string" ? claimsData.claims.email : "Supervisor";
-  const operations = await getOpenOperations();
-  const escalation = operations.find((operation) => operation.isEscalated);
+  const operations = await getDashboardOperations(sessionData.session.access_token);
+  const escalation = operations.find((operation) => operation.escalation);
 
   return (
     <main className="dashboard-shell">
@@ -24,21 +32,21 @@ export default async function DashboardPage() {
         <div className="dashboard-title-row">
           <div>
             <h1>Operations</h1>
-            <p>Open work across your active freight coordination.</p>
+            <p>Live work from Tango&apos;s durable operation record.</p>
           </div>
-          <p className="report-date">Friday, 29 August<br />14:42 ART</p>
+          <p className="report-date">Last refreshed<br />{formatDateTime(new Date().toISOString())}</p>
         </div>
 
-        {escalation && (
+        {escalation?.escalation && (
           <section className="escalation-sheet" aria-labelledby="escalation-title">
             <div className="escalation-live"><span className="live-dot" aria-hidden="true" />Live call · awaiting supervisor</div>
             <div className="escalation-copy">
-              <p className="operation-reference">{escalation.reference} · {escalation.name}</p>
-              <h2 id="escalation-title">A provider requested a pickup outside the Action Window.</h2>
-              <p>Requested: Tue 02 Sep, 16:00–18:00 · Authorized: Mon 01 Sep, 08:00–14:00</p>
+              <p className="operation-reference">{escalation.reference} · {escalation.clientName}</p>
+              <h2 id="escalation-title">{escalation.escalation.reason}</h2>
+              <p>Started {formatDateTime(escalation.escalation.startedAt)}</p>
             </div>
             <div className="escalation-action">
-              <p>Provider call<br /><strong>Transporte Sur</strong></p>
+              <p>Active counterparty<br /><strong>{escalation.escalation.counterpartyName ?? "Not recorded"}</strong></p>
               <Link href={`/dashboard/operations/${escalation.reference}`}>Review operation</Link>
             </div>
           </section>
@@ -46,26 +54,34 @@ export default async function DashboardPage() {
 
         <div className="operations-heading">
           <h2>Active operations <span>{operations.length}</span></h2>
-          <p>Ordered by attention needed, then latest update.</p>
+          <p>Ordered by most recently updated.</p>
         </div>
-        <div className="operations-table-wrap">
-          <table className="operations-table">
-            <thead>
-              <tr><th>Operation</th><th>Route</th><th>Status</th><th>Next step</th><th>Updated</th></tr>
-            </thead>
-            <tbody>
-              {operations.map((operation) => (
-                <tr key={operation.reference} className={operation.isEscalated ? "operation-row-escalated" : undefined}>
-                  <td><Link href={`/dashboard/operations/${operation.reference}`}><strong>{operation.reference}</strong><span>{operation.name}</span><span>{operation.client}</span></Link></td>
-                  <td><span>{operation.origin}</span><strong>{operation.destination}</strong></td>
-                  <td><span className={`status-mark status-${operation.status.toLowerCase().replaceAll(" ", "-")}`}>{operation.status}</span></td>
-                  <td>{operation.nextStep}</td>
-                  <td className="updated-time">{operation.updated}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+
+        {operations.length > 0 ? (
+          <div className="operations-table-wrap">
+            <table className="operations-table">
+              <thead>
+                <tr><th>Operation</th><th>Route</th><th>Status</th><th>Next step</th><th>Updated</th></tr>
+              </thead>
+              <tbody>
+                {operations.map((operation) => (
+                  <tr key={operation.reference} className={operation.escalation ? "operation-row-escalated" : undefined}>
+                    <td><Link href={`/dashboard/operations/${operation.reference}`}><strong>{operation.reference}</strong><span>{operation.clientName}</span></Link></td>
+                    <td><span>{operation.pickupLocation ?? "Not recorded"}</span><strong>{operation.deliveryLocation ?? "Not recorded"}</strong></td>
+                    <td><span className={`status-mark status-${operation.status.replaceAll("_", "-")}`}>{formatStatus(operation.status)}</span></td>
+                    <td>{operation.nextStep}</td>
+                    <td className="updated-time">{formatDateTime(operation.updatedAt)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <section className="dashboard-empty" aria-labelledby="empty-operations-title">
+            <h2 id="empty-operations-title">No active operations.</h2>
+            <p>When Tango records an authorised shipment request, it will appear here with its mandate and evidence trail.</p>
+          </section>
+        )}
       </section>
     </main>
   );
