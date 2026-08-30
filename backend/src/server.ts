@@ -29,6 +29,10 @@ import { CallToolFactory } from "./tango/tools/call-tool-factory";
 import { SupabaseClientOperationRepository } from "./tango/supabase/client-operation-repository";
 import { OpenAIRealtimeGateway } from "./tango/realtime/openai-realtime-gateway";
 import { ConfirmationEvidenceTracker } from "./tango/realtime/confirmation-evidence-tracker";
+import { TwilioGateway } from "./tango/telephony/twilio-gateway";
+import { EscalationHandoffCoordinator } from "./tango/telephony/escalation-handoff-coordinator";
+import { MockEscalationTool } from "./tango/tools/mock-escalation-tool";
+import { NegotiationStallTracker } from "./tango/telephony/negotiation-stall-tracker";
 
 const app = express();
 
@@ -84,6 +88,17 @@ const callToolFactory = new CallToolFactory(
 
 const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 const realtimeGateway = new OpenAIRealtimeGateway(openai);
+// Temporary trial-by-fire destination. Replace with SUPERVISOR_PHONE when the
+// durable escalation service is enabled.
+const MOCK_SUPERVISOR_PHONE = "+5491132555829";
+const twilioGateway = environment.ESCALATION_SPIKE_ENABLED
+  ? new TwilioGateway({
+    accountSid: environment.TWILIO_ACCOUNT_SID!,
+    authToken: environment.TWILIO_AUTH_TOKEN!,
+    fromNumber: environment.TWILIO_FROM_NUMBER!,
+    publicBaseUrl: environment.PUBLIC_BASE_URL!,
+  })
+  : undefined;
 
 async function rejectRealtimeCall(callId: string): Promise<void> {
   await realtimeGateway.reject(callId);
@@ -207,6 +222,30 @@ app.post("/openai/webhook", express.raw({ type: "*/*" }), async (req, res) => {
       return;
     }
 
+    const handoffCoordinator = twilioGateway && routingDecision.identity.persona === "provider"
+      ? new EscalationHandoffCoordinator(twilioGateway) : undefined;
+    const stallTracker = handoffCoordinator
+      ? new NegotiationStallTracker(environment.ESCALATION_STALLED_TURNS) : undefined;
+    let stalledEscalationPending = false;
+    const prepareMockHandoff = async (request: { operationReference?: string; trigger: string; reason: string }) => {
+      if (!handoffCoordinator || handoffCoordinator.prepared) return;
+      const operationReference = request.operationReference
+        ?? routingDecision.operations[0]?.reference
+        ?? "current-operation";
+      const publicBaseUrl = environment.PUBLIC_BASE_URL!;
+      const dashboardUrl = new URL(`/dashboard/operations/${encodeURIComponent(operationReference)}`, publicBaseUrl).toString();
+      await handoffCoordinator.prepare({
+        callSid: routingDecision.twilioCallSid,
+        conferenceName: `tango-escalation-${persistedCallId}`,
+        supervisorPhone: MOCK_SUPERVISOR_PHONE,
+        summary: `Tango escalation\nOperation: ${operationReference}\nTrigger: ${request.trigger}\nReason: ${request.reason}\nReview: ${dashboardUrl}`,
+        conferenceStatusCallbackUrl: new URL(`/twilio/conference-events?call_id=${encodeURIComponent(persistedCallId)}`, publicBaseUrl).toString(),
+        participantStatusCallbackUrl: new URL(`/twilio/participant-events?call_id=${encodeURIComponent(persistedCallId)}`, publicBaseUrl).toString(),
+        recordingStatusCallbackUrl: new URL(`/twilio/recording-events?call_id=${encodeURIComponent(persistedCallId)}`, publicBaseUrl).toString(),
+      });
+    };
+    const escalationTool = handoffCoordinator
+      ? new MockEscalationTool(prepareMockHandoff) : undefined;
     const realtimeTools = callToolFactory.create({
       callId: persistedCallId,
       realtimeCallId: callId,
@@ -214,7 +253,7 @@ app.post("/openai/webhook", express.raw({ type: "*/*" }), async (req, res) => {
       counterpartyId: routingDecision.identity.persona === "client"
         ? routingDecision.identity.contactId
         : routingDecision.identity.providerId,
-    });
+    }, escalationTool);
     try {
       await realtimeTools.refresh();
       callLogger.info("call.tools_configured", {
@@ -327,6 +366,7 @@ app.post("/openai/webhook", express.raw({ type: "*/*" }), async (req, res) => {
            */
 
           case "conversation.item.input_audio_transcription.completed":
+            if (stallTracker?.recordCallerTurn()) stalledEscalationPending = true;
             callLogger.debug("transcript.caller", {
               transcript: message.transcript,
             });
@@ -362,6 +402,7 @@ app.post("/openai/webhook", express.raw({ type: "*/*" }), async (req, res) => {
                 toolCallId: message.call_id, confirmationEvidence: evidence,
               });
               if (message.name === "confirm_mandate") confirmationEvidence.invalidate();
+              if (message.name !== "escalate") stallTracker?.recordProgress();
 
               try {
                 await realtimeTools.refresh();
@@ -370,8 +411,9 @@ app.post("/openai/webhook", express.raw({ type: "*/*" }), async (req, res) => {
                 // result, but remove tools until state can be refreshed safely.
                 callLogger.error("tool.profile_refresh_failed", { error });
               }
+              const liveEscalation = message.name === "escalate" && handoffCoordinator;
               realtime.send(realtimeSessionFactory.createFlowUpdate(
-                routingDecision, realtimeTools.definitions, realtimeTools.flowState,
+                routingDecision, liveEscalation ? [] : realtimeTools.definitions, realtimeTools.flowState,
               ));
 
               callLogger.debug("tool.result", {
@@ -401,7 +443,17 @@ app.post("/openai/webhook", express.raw({ type: "*/*" }), async (req, res) => {
                * continuá respondiendo."
                */
 
-              realtime.send({ type: "response.create" });
+              if (liveEscalation) {
+                handoffCoordinator.beginFarewell();
+                realtime.send({
+                  type: "response.create",
+                  response: {
+                    instructions: "In the caller's active language, say exactly: I will connect you with my supervisor now. I have shared the relevant context. Do not add any other sentence.",
+                  },
+                });
+              } else {
+                realtime.send({ type: "response.create" });
+              }
 
               callLogger.info("tool.completed", {
                 tool_name: message.name,
@@ -444,6 +496,28 @@ app.post("/openai/webhook", express.raw({ type: "*/*" }), async (req, res) => {
            */
 
           case "response.output_audio_transcript.delta":
+            break;
+
+          case "response.created":
+            if (handoffCoordinator?.observeResponseCreated(message.response.id)) {
+              callLogger.info("escalation.farewell_started", { response_id: message.response.id });
+            }
+            break;
+
+          case "output_audio_buffer.stopped":
+            if (stalledEscalationPending && handoffCoordinator && !handoffCoordinator.prepared) {
+              stalledEscalationPending = false;
+              await prepareMockHandoff({
+                trigger: "negotiation_stalled",
+                reason: `No progress after ${environment.ESCALATION_STALLED_TURNS} consecutive caller turns.`,
+              });
+              handoffCoordinator.beginFarewell();
+              realtime.send({ type: "response.create", response: { instructions: "In the caller's active language, say exactly: I will connect you with my supervisor now. I have shared the relevant context. Do not add any other sentence." } });
+              break;
+            }
+            if (await handoffCoordinator?.onAudioStopped(message.response_id)) {
+              callLogger.info("escalation.conference_started", { response_id: message.response_id });
+            }
             break;
 
           case "response.output_audio_transcript.done":

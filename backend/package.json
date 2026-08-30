@@ -15,6 +15,8 @@
     "harness:tools:evidence": "node --require tsx/cjs scripts/harnesses/confirmation-evidence.ts",
     "harness:realtime:sdk": "node --require tsx/cjs scripts/harnesses/realtime-sdk.ts",
     "dashboard:read": "tsx scripts/harnesses/dashboard-read.ts",
+    "harness:escalation": "node --require tsx/cjs scripts/harnesses/escalation-handoff.ts",
+    "harness:escalation:triggers": "node --require tsx/cjs scripts/harnesses/escalation-triggers.ts",
     "db:seed": "tsx scripts/db/seed.ts",
     "auth:smoke": "tsx scripts/harnesses/auth-smoke.ts",
     "typecheck": "tsc --project tsconfig.json"

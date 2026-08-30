@@ -3,6 +3,7 @@ import { ListOpenOperationsTool, ListProviderOperationsTool } from "./list-opera
 import { ClientOperationService, type ClientOperationRepository } from "../../domain/client-operation-service";
 import { ConfirmMandateTool, CreateOperationTool, UpdateOperationTool } from "./client-operation-tool";
 import { CallToolSession } from "./call-tool-session";
+import type { RealtimeTool } from "./realtime-tool";
 
 export class CallToolFactory {
   constructor(
@@ -10,7 +11,7 @@ export class CallToolFactory {
     private readonly mutations?: ClientOperationRepository,
   ) {}
 
-  create(scope: ToolCallScope): CallToolSession {
+  create(scope: ToolCallScope, providerExtension?: RealtimeTool): CallToolSession {
     const service = new OperationReadService(scope, this.repository);
     const clientService = scope.persona === "client" && this.mutations
       ? new ClientOperationService(scope, this.mutations) : undefined;
@@ -19,6 +20,7 @@ export class CallToolFactory {
         ? new ListOpenOperationsTool(service)
         : new ListProviderOperationsTool(service),
       ...(clientService ? [new CreateOperationTool(clientService), new UpdateOperationTool(clientService), new ConfirmMandateTool(clientService)] : []),
+      ...(scope.persona === "provider" && providerExtension ? [providerExtension] : []),
     ], clientService);
   }
 }

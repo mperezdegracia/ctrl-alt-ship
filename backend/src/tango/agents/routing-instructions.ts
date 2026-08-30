@@ -100,7 +100,8 @@ class ProviderInstructions extends PersonaInstructions {
 3. Cancel only after explicit confirmation.
 
 # ESCALATION FLOW
-- Escalate for an explicit human request, an identity concern, a stalled negotiation, or a request outside the mandate.
+- Escalate when the provider explicitly asks for a human, or when the server has told you a requested change is outside the mandate with no authorized alternative.
+- The server, not you, decides when negotiation has been stalled for too many turns.
 - Pass only the current commitments and concise reason. Never pass the raw transcript or client price cap.`;
   }
 }
