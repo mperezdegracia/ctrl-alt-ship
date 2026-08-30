@@ -68,16 +68,16 @@ Pase de una llamada viva al supervisor sin cortar, entregando compromisos, manda
 _Avoid_: transferencia, derivación
 
 **Supervisor**:
-Humano del lado del agente (Nauta operando sobre el ERP del cliente) que recibe las escalaciones; en el demo, uno del equipo.
+Humano del lado de Tango, que opera sobre el ERP del cliente y recibe las escalaciones; en el demo, uno del equipo.
 _Avoid_: operador, admin, agente humano
 
 **Tango**:
 El agente de voz; un solo sistema con dos personas de conversación (agente de cliente y agente de proveedor).
-_Avoid_: Jarvis, Volta, el bot
+_Avoid_: Jarvis, el bot
 
 **ERP del cliente**:
-Sistema de la empresa importadora sobre el que Nauta opera Tango; ahí viven los contactos autorizados y los proveedores habituales, y contra él se valida quién llama. En el demo es un mock con datos seed.
-_Avoid_: nuestra base de proveedores (los proveedores son de la empresa de Carlos, no de Nauta)
+Sistema de la empresa importadora sobre el que opera Tango; ahí viven los contactos autorizados y los proveedores habituales, y contra él se valida quién llama. En el demo es un mock con datos seed.
+_Avoid_: nuestra base de proveedores (los proveedores son de la empresa de Carlos, no de Tango)
 
 **Agente de cliente**:
 Persona de conversación que atiende al cliente: toma el pedido, completa faltantes y captura el mandato.
@@ -142,8 +142,8 @@ pendiente; ningún worker los consume todavía.
 - "ventana de retiro" vs "ventana de acción" — resuelto: **Ventana de acción** es el término; cubre fijar *y* mover el retiro.
 - "reserva" y "booking" se usaban indistinto — resuelto: **Booking**.
 - Compromiso ≠ transcript — el transcript es evidencia; el **Compromiso** es el hecho estructurado que se puede exigir.
-- Nombre del agente: el pizarrón decía "Jarvis" y el challenge "Volta" — resuelto: **Tango**.
-- "Nuestros proveedores" — resuelto: los proveedores pertenecen al **ERP del cliente**; Tango llama a los fleteros habituales de la empresa de Carlos, no a un marketplace de Nauta.
+- Nombre del producto y del agente: resuelto como **Tango**.
+- "Nuestros proveedores" — resuelto: los proveedores pertenecen al **ERP del cliente**; Tango llama a los fleteros habituales de la empresa de Carlos, no a un marketplace de Tango.
 - "Preferencias" vs. **Mandato** — resuelto: no son capas distintas; todas las
   reglas expresadas por el cliente viven en una versión del mandato.
 - Una cotización cara que luego mejora no se sobrescribe: se conservan ambas

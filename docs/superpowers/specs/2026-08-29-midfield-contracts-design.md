@@ -19,7 +19,7 @@ romper las claves, cardinalidades ni significados congelados aquí.
 
 - `contacts` son clientes autorizados del ERP mock.
 - `providers` son transportistas habituales del cliente, no un marketplace de
-  Nauta.
+  Tango.
 - No existe `organizations`; el MVP usa una sola empresa implícita.
 - Una `operation` representa exactamente un contenedor.
 - Todo requisito expresado por el cliente vive en una versión de `mandates`;

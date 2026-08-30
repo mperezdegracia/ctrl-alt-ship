@@ -8,11 +8,11 @@ web
 
 ## Users
 
-El **Supervisor** de Nauta opera el dashboard interno durante las excepciones y el seguimiento de la coordinación de fletes. En el MVP es el único rol con acceso al producto web.
+El **Supervisor** de Tango opera el dashboard interno durante las excepciones y el seguimiento de la coordinación de fletes. En el MVP es el único rol con acceso al producto web.
 
 ## Product Purpose
 
-Nauta opera Tango, un agente de voz que coordina por teléfono la pata terrestre de un envío: toma el pedido del Cliente, solicita cotizaciones a Proveedores, negocia dentro del Mandato y deja un rastro auditable de los Compromisos.
+Tango es el agente de voz que coordina por teléfono la pata terrestre de un envío: toma el pedido del Cliente, solicita cotizaciones a Proveedores, negocia dentro del Mandato y deja un rastro auditable de los Compromisos.
 
 El dashboard permite al Supervisor seguir las Operaciones y hacerse cargo de las Escalaciones sin perder el contexto verificado de cada llamada, Mandato y Compromiso.
 
@@ -31,13 +31,14 @@ El Supervisor interviene mientras hay llamadas activas o luego de ellas, con la 
 - El servidor, no el modelo, valida el Mandato vigente.
 - El agente resuelve cambios dentro de la Ventana de acción y escala los demás al Supervisor.
 - El dashboard se autentica con Supabase Auth mediante email y contraseña, con recuperación de contraseña.
-- No existe registro público: Nauta crea las cuentas de Supervisor directamente desde Supabase Dashboard.
+- No existe registro público: Tango crea las cuentas de Supervisor directamente desde Supabase Dashboard.
 - Tras autenticarse, el Supervisor siempre llega al dashboard general; las Escalaciones activas se presentan allí como prioridad, sin redirección automática a una Operación.
+- Toda la interfaz del producto, incluidos estados, acciones y datos simulados, se presenta en inglés.
 - Las credenciales públicas de Supabase se configuran localmente mediante variables de entorno y no se guardan en el repositorio.
 
 ## Brand Commitments
 
-El producto se llama Nauta y su agente de voz se llama Tango. El lenguaje de producto debe usar los términos definidos en `CONTEXT.md`.
+El producto y su agente de voz se llaman Tango. El lenguaje de producto debe usar los términos definidos en `CONTEXT.md`.
 
 ## Evidence on Hand
 
