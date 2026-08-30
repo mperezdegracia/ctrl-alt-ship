@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="Tango: the agent on the line." />
+    <title>Tango — The Agent on the Line</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;600;700;800&family=Source+Serif+4:opsz,wght@8..60,500;8..60,600&display=swap" rel="stylesheet" />
+    <style>
+      :root {
+        --ink: #15222a;
+        --ink-soft: #486a76;
+        --paper: #f2efe8;
+        --line: #c8c9bf;
+        --copper: #b76e31;
+        --blue: #3182f5;
+        --purple: #6b5cff;
+        --green: #27936d;
+        --orange: #cb6b19;
+      }
+
+      * { box-sizing: border-box; }
+      html, body { width: 100%; height: 100%; overflow: hidden; }
+      body { margin: 0; background: var(--paper); color: var(--ink); font-family: "Manrope", Arial, sans-serif; }
+      button { font: inherit; }
+      :focus-visible { outline: 4px solid var(--copper); outline-offset: 5px; }
+
+      .deck { position: relative; width: 100%; height: 100%; }
+      .slide {
+        position: absolute;
+        inset: 0;
+        display: grid;
+        min-height: 0;
+        padding: clamp(2rem, 5vw, 5.5rem) clamp(2rem, 6vw, 7rem);
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 180ms ease;
+      }
+      .slide[aria-hidden="false"] { z-index: 1; opacity: 1; pointer-events: auto; }
+      h1, h2, p { margin: 0; }
+      h1, h2 { font-family: "Source Serif 4", Georgia, serif; font-weight: 600; letter-spacing: -0.055em; }
+      strong { font-weight: 800; }
+
+      .cover { grid-template-columns: minmax(0, 0.93fr) minmax(20rem, 0.8fr); gap: clamp(3rem, 8vw, 10rem); align-items: center; }
+      .cover h1 { max-width: 12ch; font-size: clamp(4rem, 8.2vw, 8.6rem); line-height: 0.84; text-wrap: balance; }
+      .cover-copy { max-width: 39rem; }
+      .cover-lead { display: flex; align-items: center; gap: 1rem; margin-bottom: 2.1rem; color: var(--copper); font-size: clamp(1rem, 1.4vw, 1.4rem); font-weight: 800; line-height: 1.28; }
+      .cover-lead::before { width: clamp(2.8rem, 5vw, 5.2rem); height: 3px; flex: 0 0 auto; background: var(--copper); content: ""; }
+      .cover-copy p { color: var(--ink-soft); font-size: clamp(1.4rem, 2.05vw, 2rem); line-height: 1.38; }
+      .cover-signature { margin-top: 3rem; color: var(--ink); font-size: clamp(1.1rem, 1.3vw, 1.35rem); font-weight: 800; letter-spacing: 0.04em; }
+
+      .capabilities { grid-template-columns: minmax(21rem, 0.92fr) minmax(22rem, 1.08fr); gap: clamp(3rem, 9vw, 12rem); align-items: center; }
+      .capabilities h2 { max-width: 9ch; font-size: clamp(3.7rem, 7vw, 7.3rem); line-height: 0.86; }
+      .capability-list, .outcome-list { display: grid; gap: clamp(1.3rem, 2.1vw, 2.4rem); }
+      .capability { display: flex; align-items: baseline; gap: 1rem; font-family: "Source Serif 4", Georgia, serif; font-size: clamp(2.3rem, 4.3vw, 4.4rem); font-weight: 600; letter-spacing: -0.045em; line-height: 0.96; }
+      .capability::before { width: 0.45em; height: 0.45em; flex: 0 0 auto; border-radius: 50%; background: var(--capability-color); content: ""; }
+      .outcome-column { padding-left: clamp(2rem, 5vw, 5rem); border-left: 2px solid var(--line); }
+      .outcome-heading { margin-bottom: 1.6rem; color: var(--ink-soft); font-size: clamp(1.2rem, 1.55vw, 1.6rem); font-weight: 700; }
+      .outcome { color: var(--ink); font-size: clamp(1.9rem, 3.3vw, 3.45rem); font-weight: 800; letter-spacing: -0.045em; line-height: 1.02; }
+
+      .architecture { grid-template-rows: minmax(0, 1fr); place-items: center; padding: clamp(1.25rem, 3vw, 3rem); }
+      .architecture img { display: block; max-width: 100%; max-height: 100%; object-fit: contain; }
+
+      .demo { grid-template-rows: auto 1fr; gap: clamp(2.8rem, 6vw, 7rem); align-content: center; }
+      .demo h2 { max-width: 9ch; font-size: clamp(4.2rem, 8vw, 8.5rem); line-height: 0.84; }
+      .demo-steps { display: grid; grid-template-columns: 1fr auto 1fr auto 1fr; gap: clamp(1rem, 2.8vw, 3rem); align-items: center; }
+      .demo-step { font-family: "Source Serif 4", Georgia, serif; font-size: clamp(2.3rem, 4.4vw, 4.6rem); font-weight: 600; letter-spacing: -0.05em; line-height: 0.92; }
+      .demo-step em { display: block; margin-top: 1rem; color: var(--ink-soft); font-family: "Manrope", Arial, sans-serif; font-size: clamp(1.12rem, 1.5vw, 1.55rem); font-style: normal; font-weight: 600; letter-spacing: 0; line-height: 1.3; }
+      .demo-arrow { color: var(--copper); font-size: clamp(2.6rem, 4.2vw, 4.5rem); font-weight: 500; }
+
+      .cta { place-items: center; text-align: center; }
+      .cta-content { display: grid; justify-items: center; gap: clamp(1.4rem, 3vw, 3rem); }
+      .cta h2 { max-width: 11ch; font-size: clamp(5.5rem, 11vw, 12rem); line-height: 0.8; }
+      .cta p { max-width: 27ch; color: var(--ink-soft); font-size: clamp(1.4rem, 2.2vw, 2.2rem); font-weight: 600; line-height: 1.35; }
+      .cta-signature { color: var(--copper); font-size: clamp(1.25rem, 1.65vw, 1.7rem); font-weight: 800; letter-spacing: 0.06em; }
+
+      .controls { position: fixed; right: clamp(1.2rem, 2.4vw, 2.6rem); bottom: clamp(1.2rem, 2.4vw, 2.6rem); z-index: 2; display: flex; gap: 0.65rem; }
+      .controls button { display: grid; width: clamp(3.2rem, 4vw, 4rem); height: clamp(3.2rem, 4vw, 4rem); place-items: center; border: 2px solid var(--ink); background: var(--paper); color: var(--ink); cursor: pointer; font-size: clamp(1.5rem, 2vw, 2rem); }
+      .controls button:hover { background: var(--ink); color: var(--paper); }
+
+      @media (max-width: 800px), (max-height: 650px) {
+        .slide { padding: 1.5rem; overflow: auto; }
+        .cover, .capabilities { grid-template-columns: 1fr; gap: 1.8rem; }
+        .cover h1, .capabilities h2, .demo h2 { font-size: clamp(3.4rem, 13vw, 5rem); }
+        .cover-copy p { font-size: 1.08rem; }
+        .cover-lead { font-size: 0.9rem; }
+        .cover-signature { margin-top: 1.5rem; }
+        .capability { font-size: clamp(2.1rem, 10vw, 3.1rem); }
+        .outcome-column { padding: 1.8rem 0 0; border-top: 2px solid var(--line); border-left: 0; }
+        .outcome { font-size: clamp(1.6rem, 8vw, 2.4rem); }
+        .architecture { padding: 0.7rem; }
+        .demo { gap: 1.8rem; align-content: start; }
+        .demo-steps { grid-template-columns: 1fr; gap: 1rem; }
+        .demo-step { font-size: clamp(2rem, 10vw, 3.2rem); }
+        .demo-arrow { display: none; }
+        .cta h2 { font-size: clamp(4.5rem, 17vw, 7rem); }
+        .controls { right: 1rem; bottom: 1rem; }
+      }
+      @media (prefers-reduced-motion: reduce) { .slide { transition: none; } }
+    </style>
+  </head>
+  <body>
+    <main class="deck" aria-label="Tango pitch presentation">
+      <section class="slide cover" aria-roledescription="slide" aria-label="Slide 1 of 5" aria-hidden="false">
+        <h1>We Brought<br />Agents to<br />Freight<br />Negotiation</h1>
+        <div class="cover-copy">
+          <div class="cover-lead">Give Tango a mandate and take your business to the next level.</div>
+          <p>We built a solution that allows you to scale your company while improving <strong>control, auditability, and overall efficiency.</strong></p>
+          <div class="cover-signature">TANGO — THE AGENT ON THE LINE</div>
+        </div>
+      </section>
+
+      <section class="slide capabilities" aria-roledescription="slide" aria-label="Slide 2 of 5" aria-hidden="true">
+        <h2>What Tango can do.</h2>
+        <div class="outcome-column">
+          <div class="capability-list" aria-label="Tango capabilities">
+            <div class="capability" style="--capability-color: var(--blue)">Source</div>
+            <div class="capability" style="--capability-color: var(--purple)">Negotiate</div>
+            <div class="capability" style="--capability-color: var(--green)">Validate</div>
+            <div class="capability" style="--capability-color: var(--orange)">Escalate</div>
+          </div>
+          <div class="outcome-list" style="margin-top: clamp(2.4rem, 4.5vw, 5rem);">
+            <div class="outcome-heading">While improving</div>
+            <div class="outcome">Control</div>
+            <div class="outcome">Auditability</div>
+            <div class="outcome">Efficiency</div>
+          </div>
+        </div>
+      </section>
+
+      <section class="slide architecture" aria-roledescription="slide" aria-label="Slide 3 of 5" aria-hidden="true">
+        <img src="assets/tango-tech-architecture.jpeg" alt="Tango technology architecture." />
+      </section>
+
+      <section class="slide demo" aria-roledescription="slide" aria-label="Slide 4 of 5" aria-hidden="true">
+        <h2>See Tango in action.</h2>
+        <div class="demo-steps">
+          <div class="demo-step">Set the mandate<em>Define the boundaries.</em></div>
+          <div class="demo-arrow" aria-hidden="true">→</div>
+          <div class="demo-step">Tango negotiates<em>Calls and sources autonomously.</em></div>
+          <div class="demo-arrow" aria-hidden="true">→</div>
+          <div class="demo-step">You keep control<em>Every exception has a path.</em></div>
+        </div>
+      </section>
+
+      <section class="slide cta" aria-roledescription="slide" aria-label="Slide 5 of 5" aria-hidden="true">
+        <div class="cta-content">
+          <h2>Book your demo!</h2>
+          <p>Bring governed voice negotiation to your freight operation.</p>
+          <div class="cta-signature">TANGO — THE AGENT ON THE LINE</div>
+        </div>
+      </section>
+    </main>
+
+    <div class="controls" aria-label="Presentation controls">
+      <button type="button" class="previous" aria-label="Previous slide">←</button>
+      <button type="button" class="next" aria-label="Next slide">→</button>
+    </div>
+    <script>
+      const slides = [...document.querySelectorAll('.slide')];
+      const previous = document.querySelector('.previous');
+      const next = document.querySelector('.next');
+      let current = 0;
+
+      function show(index) {
+        const target = Math.max(0, Math.min(index, slides.length - 1));
+        if (target === current) return;
+        slides[current].setAttribute('aria-hidden', 'true');
+        slides[target].setAttribute('aria-hidden', 'false');
+        current = target;
+      }
+      previous.addEventListener('click', () => show(current - 1));
+      next.addEventListener('click', () => show(current + 1));
+      document.addEventListener('keydown', (event) => {
+        if (event.altKey || event.ctrlKey || event.metaKey) return;
+        if (['ArrowRight', 'ArrowDown', 'PageDown', ' '].includes(event.key)) { event.preventDefault(); show(current + 1); }
+        if (['ArrowLeft', 'ArrowUp', 'PageUp'].includes(event.key)) { event.preventDefault(); show(current - 1); }
+        if (event.key === 'Home') { event.preventDefault(); show(0); }
+        if (event.key === 'End') { event.preventDefault(); show(slides.length - 1); }
+      });
+    </script>
+  </body>
+</html>

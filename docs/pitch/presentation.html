@@ -1,0 +1,326 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="Tango architecture presentation: one live call, durable decisions, and explicit exception paths." />
+    <title>Tango — Architecture Presentation</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Source+Serif+4:opsz,wght@8..60,500;8..60,600&display=swap" rel="stylesheet" />
+    <style>
+      :root {
+        --ink: #15222a;
+        --ink-soft: #486a76;
+        --paper: #f2efe8;
+        --paper-deep: #e5dfd3;
+        --line: #c8c9bf;
+        --copper: #b76e31;
+        --voice: #3182f5;
+        --runtime: #6b5cff;
+        --data: #27936d;
+        --human: #cb6b19;
+        --exception: #d9534f;
+        --success: #30684b;
+      }
+
+      * { box-sizing: border-box; }
+      html, body { width: 100%; height: 100%; overflow: hidden; }
+      body {
+        margin: 0;
+        background: var(--paper);
+        color: var(--ink);
+        font-family: "Manrope", Arial, sans-serif;
+        font-feature-settings: "tnum" 1;
+      }
+      ::selection { background: var(--copper); color: var(--paper); }
+      a { color: inherit; text-underline-offset: 0.24em; }
+      button, a { -webkit-tap-highlight-color: transparent; }
+      :focus-visible { outline: 3px solid var(--copper); outline-offset: 4px; }
+      h1, h2, h3, p { margin: 0; }
+      h1, h2, h3 { font-family: "Source Serif 4", Georgia, serif; font-weight: 600; }
+
+      .deck { position: relative; width: 100%; height: 100%; }
+      .slide {
+        position: absolute;
+        inset: 0;
+        display: grid;
+        grid-template-rows: auto 1fr auto;
+        padding: clamp(1.5rem, 4vw, 4rem) clamp(1.5rem, 6vw, 7rem) clamp(1.4rem, 3vw, 2.6rem);
+        background: var(--paper);
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 160ms ease;
+      }
+      .slide[aria-hidden="false"] { opacity: 1; pointer-events: auto; z-index: 1; }
+      .slide.is-leaving { opacity: 0; }
+      .slide-kicker {
+        display: flex;
+        align-items: center;
+        gap: 0.8rem;
+        color: var(--copper);
+        font-size: 0.66rem;
+        font-weight: 800;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+      }
+      .slide-kicker::before { width: 2.8rem; height: 2px; background: var(--copper); content: ""; }
+      .slide-body { min-height: 0; }
+      .slide-footer {
+        display: flex;
+        justify-content: space-between;
+        gap: 1rem;
+        align-items: end;
+        padding-top: 1rem;
+        border-top: 1px solid var(--line);
+        color: var(--ink-soft);
+        font-size: 0.66rem;
+        line-height: 1.45;
+      }
+      .slide-footer strong { color: var(--ink); }
+      .counter { color: var(--copper); font-weight: 800; letter-spacing: 0.08em; }
+
+      .cover { grid-template-rows: auto 1fr auto; }
+      .cover .slide-body {
+        display: grid;
+        grid-template-columns: minmax(0, 1.1fr) minmax(18rem, 0.9fr);
+        gap: clamp(2rem, 8vw, 10rem);
+        align-items: center;
+      }
+      .cover h1 {
+        max-width: 11ch;
+        font-size: clamp(3.65rem, 8.4vw, 8.8rem);
+        letter-spacing: -0.055em;
+        line-height: 0.86;
+        text-wrap: balance;
+      }
+      .cover-copy { max-width: 31rem; padding-bottom: 0.8rem; }
+      .cover-copy p { color: var(--ink-soft); font-size: clamp(1.32rem, 1.95vw, 1.72rem); line-height: 1.46; }
+      .signal-line {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        margin-bottom: 1.5rem;
+        color: var(--copper);
+        font-size: clamp(1rem, 1.2vw, 1.12rem);
+        font-weight: 800;
+        letter-spacing: 0.09em;
+        text-transform: uppercase;
+      }
+      .signal-line::before { width: 2.4rem; height: 1px; background: var(--copper); content: ""; }
+      .cover-mark { display: grid; gap: 0.5rem; margin-top: 2.25rem; color: var(--ink); font-size: clamp(1.02rem, 1.25vw, 1.18rem); font-weight: 800; }
+      .cover-mark span { color: var(--ink-soft); font-weight: 500; }
+
+      .map-slide .slide-body { min-height: 0; padding-top: clamp(0.35rem, 1vw, 0.8rem); }
+      .map-slide .slide-kicker, .map-slide .slide-head, .map-slide figcaption,
+      .flow-slide .slide-kicker, .flow-slide .slide-head, .flow-slide .flow-note, .flow-slide figcaption { display: none; }
+      .map-slide .slide-footer, .flow-slide .slide-footer { min-height: 1rem; padding-top: 0; border-top: 0; }
+      .map-slide .slide-footer > span:first-child, .flow-slide .slide-footer > span:first-child { display: none; }
+      .slide-head { display: grid; grid-template-columns: minmax(15rem, 0.93fr) minmax(22rem, 1.07fr); gap: clamp(2rem, 6vw, 8rem); align-items: end; }
+      .slide-head h2 { max-width: 13ch; font-size: clamp(2.2rem, 4.7vw, 4.8rem); letter-spacing: -0.048em; line-height: 0.9; text-wrap: balance; }
+      .slide-head p { max-width: 40rem; color: var(--ink-soft); font-size: clamp(0.78rem, 1.1vw, 0.98rem); line-height: 1.58; }
+      .architecture-frame, .flow-frame { height: 100%; min-height: 0; margin: 0; background: var(--paper); }
+      .architecture-frame img, .flow-frame img { display: block; width: 100%; height: 100%; min-height: 0; object-fit: contain; object-position: center; }
+      .architecture-frame { display: grid; place-items: center; overflow: hidden; }
+      .architecture-source { position: relative; width: auto; height: 100%; max-width: 100%; aspect-ratio: 16 / 9; }
+      .architecture-source > img { width: 100%; height: 100%; object-fit: contain; }
+      .connector-label { position: absolute; z-index: 1; padding: 0.12em 0.38em; background: #fff; color: var(--runtime); font-size: clamp(0.38rem, 0.57vw, 0.64rem); font-weight: 800; line-height: 1; white-space: nowrap; }
+      .connector-label.sideband { left: 51.2%; top: 42.15%; }
+      .architecture-diagram { position: relative; width: 100%; min-width: 58rem; height: 100%; min-height: 30rem; overflow: hidden; }
+      .architecture-links { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
+      .architecture-link { fill: none; stroke: var(--link-color, var(--voice)); stroke-width: 2.4; vector-effect: non-scaling-stroke; }
+      .architecture-link.dashed { stroke-dasharray: 7 7; }
+      .architecture-node { position: absolute; z-index: 1; display: flex; flex-direction: column; justify-content: center; gap: 0.45rem; min-height: 5.9rem; padding: 0.9rem 1rem; border: 2px solid var(--node-color); background: var(--node-bg); color: var(--ink); }
+      .architecture-node .node-system { color: var(--node-color); font-size: clamp(0.48rem, 0.57vw, 0.66rem); font-weight: 800; letter-spacing: 0.03em; text-transform: uppercase; }
+      .architecture-node strong { font-size: clamp(0.82rem, 1.15vw, 1.28rem); line-height: 1.1; }
+      .architecture-node small { color: var(--ink-soft); font-size: clamp(0.52rem, 0.72vw, 0.77rem); font-weight: 600; line-height: 1.3; }
+      .node-clients { --node-color: var(--human); --node-bg: #fff5eb; left: 1%; top: 10%; width: 16.5%; }
+      .node-twilio { --node-color: var(--voice); --node-bg: #eef5ff; left: 21%; top: 10%; width: 16.5%; }
+      .node-api { --node-color: var(--runtime); --node-bg: #f1efff; left: 61%; top: 10%; width: 16.5%; }
+      .node-ledger { --node-color: var(--data); --node-bg: #edf8f3; left: 81%; top: 10%; width: 18%; }
+      .node-supervisor { --node-color: var(--exception); --node-bg: #fff0f0; left: 31%; top: 66%; width: 18%; }
+      .node-worker { --node-color: var(--runtime); --node-bg: #f1efff; left: 61%; top: 46%; width: 16.5%; }
+      .node-outbox { --node-color: var(--data); --node-bg: #edf8f3; left: 81%; top: 46%; width: 18%; }
+      .node-dashboard { --node-color: var(--human); --node-bg: #fff5eb; left: 81%; top: 76%; width: 18%; }
+      figcaption { display: flex; justify-content: space-between; gap: 1rem; padding: 0.75rem 1rem; border-top: 1px solid var(--line); color: var(--ink-soft); font-size: 0.65rem; line-height: 1.45; }
+      figcaption span:first-child { color: var(--copper); font-weight: 800; }
+      .legend { display: flex; flex-wrap: wrap; gap: 0.5rem 1.1rem; }
+      .legend-item { display: inline-flex; align-items: center; gap: 0.4rem; color: var(--ink-soft); font-size: 0.66rem; font-weight: 700; }
+      .legend-dot { width: 0.56rem; height: 0.56rem; border-radius: 50%; background: var(--dot); }
+
+      .flow-slide .slide-body { min-height: 0; padding-top: clamp(0.35rem, 1vw, 0.8rem); }
+      .flow-slide .slide-head { grid-template-columns: minmax(15rem, 0.85fr) minmax(24rem, 1.15fr); }
+      .flow-slide .slide-head h2 { max-width: 15ch; font-size: clamp(2rem, 4.1vw, 4.15rem); }
+      .flow-frame .map-image { padding: 0; }
+
+      .trials-slide .slide-body { display: grid; grid-template-rows: auto minmax(0, 1fr); gap: clamp(1.8rem, 4vw, 3.6rem); padding-top: clamp(1.7rem, 5vw, 4.5rem); }
+      .trials-head { display: grid; grid-template-columns: minmax(14rem, 0.9fr) minmax(22rem, 1.1fr); gap: clamp(2rem, 7vw, 9rem); align-items: end; }
+      .trials-head h2, .closing-head h2 { max-width: 12ch; font-size: clamp(2.5rem, 5.25vw, 5.4rem); letter-spacing: -0.052em; line-height: 0.88; text-wrap: balance; }
+      .trials-head p { max-width: 37rem; color: var(--ink-soft); font-size: clamp(0.82rem, 1.16vw, 1rem); line-height: 1.6; }
+      .trial-register { align-self: stretch; border-top: 2px solid var(--ink); }
+      .trial { display: grid; grid-template-columns: 0.85fr 1.35fr 1.2fr 0.7fr; gap: clamp(0.8rem, 2vw, 2rem); align-items: start; padding: clamp(0.8rem, 1.4vw, 1.25rem) 0; border-bottom: 1px solid var(--line); }
+      .trial-label { color: var(--exception); font-size: 0.65rem; font-weight: 800; letter-spacing: 0.08em; line-height: 1.35; text-transform: uppercase; }
+      .trial h3 { font-family: "Manrope", Arial, sans-serif; font-size: clamp(0.76rem, 0.95vw, 0.9rem); font-weight: 800; line-height: 1.48; }
+      .trial p { color: var(--ink-soft); font-size: clamp(0.73rem, 0.9vw, 0.85rem); line-height: 1.5; }
+      .trial-result { color: var(--success); font-size: 0.65rem; font-weight: 800; line-height: 1.42; text-align: right; }
+
+      .closing .slide-body { display: grid; align-items: center; padding-top: 1rem; }
+      .closing-grid { display: grid; grid-template-columns: minmax(15rem, 0.9fr) minmax(22rem, 1.1fr); gap: clamp(2rem, 8vw, 10rem); align-items: center; }
+      .closing-copy { max-width: 37rem; }
+      .closing-copy p { color: var(--ink-soft); font-size: clamp(0.9rem, 1.25vw, 1.1rem); line-height: 1.64; }
+      .downloads { display: grid; margin-top: 2.1rem; border-top: 1px solid var(--ink); }
+      .download { display: flex; justify-content: space-between; gap: 1rem; padding: 0.9rem 0; border-bottom: 1px solid var(--line); color: var(--ink); font-size: 0.82rem; font-weight: 800; text-decoration: none; }
+      .download:hover { color: var(--copper); }
+      .download span:last-child { color: var(--copper); }
+
+      .controls { position: fixed; right: clamp(1.2rem, 3vw, 2.8rem); bottom: clamp(1.2rem, 2.5vw, 2.2rem); z-index: 3; display: flex; gap: 0.45rem; }
+      .controls button { display: grid; width: 2.25rem; height: 2.25rem; place-items: center; border: 1px solid var(--line); background: color-mix(in srgb, var(--paper) 88%, transparent); color: var(--ink); cursor: pointer; font: inherit; font-size: 1rem; }
+      .controls button:hover { border-color: var(--ink); background: var(--paper-deep); }
+      .progress { position: fixed; top: 0; left: 0; z-index: 4; width: 100%; height: 3px; background: var(--paper-deep); }
+      .progress > span { display: block; width: 11.111%; height: 100%; background: var(--copper); transition: width 280ms ease; }
+      .slide-nav { position: fixed; top: 50%; right: clamp(1rem, 2.4vw, 2.3rem); z-index: 3; display: grid; gap: 0.45rem; transform: translateY(-50%); }
+      .slide-nav button { width: 0.52rem; height: 0.52rem; padding: 0; border: 1px solid var(--ink-soft); border-radius: 50%; background: transparent; cursor: pointer; }
+      .slide-nav button[aria-current="true"] { border-color: var(--copper); background: var(--copper); }
+
+      @media (max-width: 760px), (max-height: 620px) {
+        .slide { padding: 1.1rem 1.25rem 1rem; }
+        .slide-kicker { font-size: 0.55rem; }
+        .slide-kicker::before { width: 1.6rem; }
+        .slide-footer { font-size: 0.55rem; }
+        .cover .slide-body, .slide-head, .flow-slide .slide-head, .trials-head, .closing-grid { grid-template-columns: 1fr; gap: 1.1rem; }
+        .cover .slide-body, .closing .slide-body { align-content: center; }
+        .cover h1 { font-size: clamp(3rem, 14vw, 5rem); }
+        .slide-head h2, .flow-slide .slide-head h2, .trials-head h2, .closing-head h2 { font-size: clamp(2rem, 9.5vw, 3.3rem); }
+        .slide-head p, .trials-head p { font-size: 0.74rem; }
+        .architecture-frame img, .flow-frame img { object-fit: contain; }
+        figcaption { padding: 0.5rem 0.7rem; font-size: 0.52rem; }
+        .legend { gap: 0.3rem 0.7rem; }
+        .legend-item { font-size: 0.54rem; }
+        .trial { grid-template-columns: 0.8fr 1.4fr 1fr; gap: 0.5rem; padding: 0.55rem 0; }
+        .trial p { display: none; }
+        .trial-label, .trial-result { font-size: 0.5rem; }
+        .trial h3 { font-size: 0.58rem; }
+        .controls { right: 1.15rem; bottom: 1rem; }
+        .controls button { width: 1.9rem; height: 1.9rem; }
+        .slide-nav { display: none; }
+      }
+      @media (prefers-reduced-motion: reduce) { .slide, .progress > span { transition: none; } }
+    </style>
+  </head>
+  <body>
+    <div class="progress" aria-hidden="true"><span></span></div>
+    <main class="deck" aria-label="Tango architecture presentation">
+      <section class="slide cover" id="slide-1" aria-roledescription="slide" aria-label="Slide 1 of 8" aria-hidden="false">
+        <div class="slide-kicker">Tango / Architecture Atlas</div>
+        <div class="slide-body">
+          <div><h1>We Brought<br />Agents <br /> to Freight<br />Negotiation</h1></div>
+          <div class="cover-copy">
+            <div class="signal-line">Give Tango a mandate and take your business to the next level.</div>
+            <p>We built a solution that allows you to scale your company while improving <strong>control, auditability, and overall efficiency.</strong></p>
+            <div class="cover-mark">TANGO — THE AGENT ON THE LINE</div>
+          </div>
+        </div>
+        <footer class="slide-footer"><span><strong>Tango</strong> / A durable decision system for voice operations</span><span class="counter">01 / 08</span></footer>
+      </section>
+
+      <section class="slide map-slide" id="slide-2" aria-roledescription="slide" aria-label="Slide 2 of 8" aria-hidden="true">
+        <div class="slide-kicker">Technology architecture</div>
+        <div class="slide-body">
+          <header class="slide-head"><h2>The call is live; the decisions are durable.</h2><p>Voice, realtime orchestration, server-side validation and durable data each have a specific boundary. No single conversational turn can silently become an operational commitment.</p></header>
+          <figure class="architecture-frame">
+            <div class="architecture-source">
+              <img src="assets/tango-tech-architecture.jpeg" alt="Technology architecture: callers use Twilio Voice, OpenAI Realtime and Tango on Render; validated state is persisted in Supabase and a supervisor can take over through SIP REFER." />
+            </div>
+          </figure>
+        </div>
+        <footer class="slide-footer"><span class="legend"><span class="legend-item"><i class="legend-dot" style="--dot: var(--voice)"></i>Voice</span><span class="legend-item"><i class="legend-dot" style="--dot: var(--runtime)"></i>Runtime</span><span class="legend-item"><i class="legend-dot" style="--dot: var(--data)"></i>Durable data</span><span class="legend-item"><i class="legend-dot" style="--dot: var(--human)"></i>Human control</span><span class="legend-item"><i class="legend-dot" style="--dot: var(--exception)"></i>Exception</span></span><span class="counter">02 / 08</span></footer>
+      </section>
+
+      <section class="slide flow-slide" id="slide-3" aria-roledescription="slide" aria-label="Slide 3 of 8" aria-hidden="true">
+        <div class="slide-kicker">Flow 01 / Outbound sourcing</div>
+        <div class="slide-body"><header class="slide-head"><h2>Source and commit—only inside the mandate.</h2><p>The worker makes the calls; the backend validates the decision and emits an auditable handoff.</p></header><figure class="flow-frame"><div class="flow-note"><strong>Autonomous call work, bounded by an explicit server decision.</strong><p>Quotes can move the conversation forward. A confirmed booking only follows mandate validation.</p></div><img class="map-image" src="assets/tango-flow-outbound-sourcing.png" alt="Outbound sourcing flow from an operation through outbox worker calls, quotes, mandate validation and a confirmed booking." /><figcaption><span>Outbound sourcing</span><span>Worker calls → validation → confirmed booking</span></figcaption></figure></div>
+        <footer class="slide-footer"><span><strong>Tango</strong> / Follow the decision, not just the call.</span><span class="counter">03 / 08</span></footer>
+      </section>
+
+      <section class="slide flow-slide" id="slide-4" aria-roledescription="slide" aria-label="Slide 4 of 8" aria-hidden="true">
+        <div class="slide-kicker">Flow 02 / Inbound carrier change</div>
+        <div class="slide-body"><header class="slide-head"><h2>A carrier can request a change. It cannot quietly rewrite the record.</h2><p>The inbound leg resolves the operation, verifies the authority, then changes or escalates.</p></header><figure class="flow-frame"><div class="flow-note"><strong>Identity, operation and mandate are checked before a state transition.</strong><p>When the requested change falls outside the active authority, the call moves to a human rather than making an unsafe commitment.</p></div><img class="map-image" src="assets/tango-flow-inbound-carrier-change.png" alt="Inbound carrier change flow that identifies the operation, validates authority and mandate, then creates a new commitment or escalates." /><figcaption><span>Inbound carrier change</span><span>Verify authority before changing state</span></figcaption></figure></div>
+        <footer class="slide-footer"><span><strong>Tango</strong> / Follow the decision, not just the call.</span><span class="counter">04 / 08</span></footer>
+      </section>
+
+      <section class="slide flow-slide" id="slide-5" aria-roledescription="slide" aria-label="Slide 5 of 8" aria-hidden="true">
+        <div class="slide-kicker">Flow 03 / Client mandate change</div>
+        <div class="slide-body"><header class="slide-head"><h2>Changing the mandate creates a new version—not an invisible edit.</h2><p>The current version determines what Tango may negotiate; the prior version remains in the ledger.</p></header><figure class="flow-frame"><div class="flow-note"><strong>The server owns the version that gives the agent authority.</strong><p>A mandate change is durable, traceable and immediately governs subsequent sourcing decisions.</p></div><img class="map-image" src="assets/tango-flow-mandate-change.png" alt="Client mandate change flow creates a new mandate version and either continues sourcing or escalates an out of bounds conflict." /><figcaption><span>Client mandate change</span><span>New authority version → continue or escalate</span></figcaption></figure></div>
+        <footer class="slide-footer"><span><strong>Tango</strong> / Follow the decision, not just the call.</span><span class="counter">05 / 08</span></footer>
+      </section>
+
+      <section class="slide flow-slide" id="slide-6" aria-roledescription="slide" aria-label="Slide 6 of 8" aria-hidden="true">
+        <div class="slide-kicker">Flow 04 / Cancellation</div>
+        <div class="slide-body"><header class="slide-head"><h2>Cancellation is a durable event, not a missing row.</h2><p>Tango records who requested it, evaluates the current booking and leaves a complete trace for the supervisor.</p></header><figure class="flow-frame"><div class="flow-note"><strong>A terminal operation state with an audit trail and notification path.</strong><p>Every cancellation preserves the requester, the decision and the downstream communication.</p></div><img class="map-image" src="assets/tango-flow-cancellation.png" alt="Cancellation flow that identifies the requester and operation, cancels the booking, records the event and notifies the relevant party." /><figcaption><span>Cancellation</span><span>Identify → cancel → record → notify</span></figcaption></figure></div>
+        <footer class="slide-footer"><span><strong>Tango</strong> / Follow the decision, not just the call.</span><span class="counter">06 / 08</span></footer>
+      </section>
+
+      <section class="slide flow-slide" id="slide-7" aria-roledescription="slide" aria-label="Slide 7 of 8" aria-hidden="true">
+        <div class="slide-kicker">Flow 05 / Live escalation</div>
+        <div class="slide-body"><header class="slide-head"><h2>When authority ends, the agent transfers the line with context.</h2><p>The system creates an escalation, resolves the configured active recipient and transfers the caller by SIP REFER.</p></header><figure class="flow-frame"><div class="flow-note"><strong>The human recipient is data-managed in the directory, never hardcoded in the call path.</strong><p>Escalation is live, but the destination remains controlled by durable, editable operational data.</p></div><img class="map-image" src="assets/tango-flow-live-escalation.png" alt="Live escalation flow that creates an escalation record, reads the active handoff recipient and transfers the caller to the supervisor by SIP REFER." /><figcaption><span>Live escalation</span><span>Escalation record → directory lookup → SIP REFER</span></figcaption></figure></div>
+        <footer class="slide-footer"><span><strong>Tango</strong> / Follow the decision, not just the call.</span><span class="counter">07 / 08</span></footer>
+      </section>
+
+      <section class="slide trials-slide" id="slide-8" aria-roledescription="slide" aria-label="Slide 8 of 8" aria-hidden="true">
+        <div class="slide-kicker">Pressure tests</div>
+        <div class="slide-body"><header class="trials-head"><h2>The ugly cases have a route.</h2><p>These are pressure tests, not happy-path footnotes. Each maps to durable state, a bounded decision, or a human handoff.</p></header><div class="trial-register" aria-label="Exception register"><article class="trial"><span class="trial-label">Authority conflict</span><h3>A carrier asks to move a booking outside the active mandate.</h3><p>The backend rejects an out-of-bounds commitment even if the voice agent is willing to negotiate.</p><span class="trial-result">Escalation created<br />caller transferred</span></article><article class="trial"><span class="trial-label">Live change</span><h3>The client edits the mandate while sourcing is in progress.</h3><p>The new mandate is versioned; subsequent decisions read the new authority instead of overwriting history.</p><span class="trial-result">New mandate version<br />full audit trail</span></article><article class="trial"><span class="trial-label">Delivery failure</span><h3>A side effect retries after a worker or provider interruption.</h3><p>The outbox and idempotent receipts let the worker resume without duplicating a booking or losing the event.</p><span class="trial-result">Safe retry<br />durable receipt</span></article><article class="trial"><span class="trial-label">Human routing</span><h3>The supervisor number changes moments before a live transfer.</h3><p>The outbound destination is read from the managed handoff directory, so the active recipient takes the call.</p><span class="trial-result">Live directory lookup<br />no hardcoded destination</span></article></div></div>
+        <footer class="slide-footer"><span><strong>Tango</strong> / Designed for exception paths as well as the happy path.</span><span class="counter">08 / 08</span></footer>
+      </section>
+
+    </main>
+
+    <nav class="slide-nav" aria-label="Go to slide">
+      <button type="button" aria-label="Go to slide 1" aria-current="true" data-slide="0"></button><button type="button" aria-label="Go to slide 2" data-slide="1"></button><button type="button" aria-label="Go to slide 3" data-slide="2"></button><button type="button" aria-label="Go to slide 4" data-slide="3"></button><button type="button" aria-label="Go to slide 5" data-slide="4"></button><button type="button" aria-label="Go to slide 6" data-slide="5"></button><button type="button" aria-label="Go to slide 7" data-slide="6"></button><button type="button" aria-label="Go to slide 8" data-slide="7"></button>
+    </nav>
+    <div class="controls" aria-label="Presentation controls"><button type="button" class="previous" aria-label="Previous slide">←</button><button type="button" class="next" aria-label="Next slide">→</button></div>
+    <script>
+      const slides = [...document.querySelectorAll('.slide')];
+      const dots = [...document.querySelectorAll('.slide-nav button')];
+      const progress = document.querySelector('.progress > span');
+      const previous = document.querySelector('.previous');
+      const next = document.querySelector('.next');
+      let current = 0;
+      let locked = false;
+
+      function showSlide(index) {
+        const target = Math.max(0, Math.min(index, slides.length - 1));
+        if (target === current || locked) return;
+        locked = true;
+        const outgoing = slides[current];
+        outgoing.classList.add('is-leaving');
+        outgoing.setAttribute('aria-hidden', 'true');
+        slides[target].classList.remove('is-leaving');
+        slides[target].setAttribute('aria-hidden', 'false');
+        dots[current].setAttribute('aria-current', 'false');
+        dots[target].setAttribute('aria-current', 'true');
+        current = target;
+        progress.style.width = `${((current + 1) / slides.length) * 100}%`;
+        window.setTimeout(() => { outgoing.classList.remove('is-leaving'); locked = false; }, 360);
+      }
+      function move(delta) { showSlide(current + delta); }
+      previous.addEventListener('click', () => move(-1));
+      next.addEventListener('click', () => move(1));
+      dots.forEach((dot) => dot.addEventListener('click', () => showSlide(Number(dot.dataset.slide))));
+      document.addEventListener('keydown', (event) => {
+        if (event.altKey || event.ctrlKey || event.metaKey) return;
+        if (['ArrowRight', 'ArrowDown', 'PageDown', ' '].includes(event.key)) { event.preventDefault(); move(1); }
+        if (['ArrowLeft', 'ArrowUp', 'PageUp'].includes(event.key)) { event.preventDefault(); move(-1); }
+        if (event.key === 'Home') { event.preventDefault(); showSlide(0); }
+        if (event.key === 'End') { event.preventDefault(); showSlide(slides.length - 1); }
+      });
+      let touchStart = null;
+      document.addEventListener('touchstart', (event) => { touchStart = event.changedTouches[0].clientX; }, { passive: true });
+      document.addEventListener('touchend', (event) => {
+        if (touchStart === null) return;
+        const distance = event.changedTouches[0].clientX - touchStart;
+        if (Math.abs(distance) > 48) move(distance < 0 ? 1 : -1);
+        touchStart = null;
+      }, { passive: true });
+    </script>
+  </body>
+</html>
