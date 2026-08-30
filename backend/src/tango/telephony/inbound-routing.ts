@@ -28,6 +28,8 @@ export type RoutingDecision =
     }
   | {
       action: "accept";
+      /** True only when Tango originated the Twilio call to this provider. */
+      outbound?: boolean;
       callId: string;
       twilioCallSid: string;
       callerPhone: string;

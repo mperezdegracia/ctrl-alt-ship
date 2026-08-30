@@ -13,6 +13,7 @@
     "harness:observability": "node --require tsx/cjs scripts/harnesses/observability.ts",
     "inbound:routing": "tsx scripts/harnesses/inbound-routing.ts",
     "harness:outbound": "tsx scripts/harnesses/outbound-call.ts",
+    "harness:provider-quote-call": "tsx scripts/harnesses/provider-quote-call.ts",
     "harness:tools:read": "node --require tsx/cjs scripts/harnesses/tools-read.ts",
     "harness:tools:client": "node --require tsx/cjs scripts/harnesses/client-tools.ts",
     "harness:tools:provider": "node --require tsx/cjs scripts/harnesses/provider-tools.ts",

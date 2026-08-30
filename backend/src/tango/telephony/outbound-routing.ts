@@ -3,6 +3,7 @@ import type { CounterpartyIdentity, OperationContext } from "../supabase/erp";
 
 export type OutboundRoutingDecision = {
   action: "accept";
+  outbound: true;
   callRecordId: string;
   callId: string;
   twilioCallSid: string;
@@ -24,5 +25,5 @@ export async function routeOutboundCall(callRecordId: string, callId: string, si
   ]);
   if (provider.error || operation.error || !provider.data || !operation.data) throw provider.error ?? operation.error ?? new Error("Outbound context unavailable");
   await supabaseAdmin.from("calls").update({ realtime_call_id: callId }).eq("id", callRecordId);
-  return { action: "accept", callRecordId, callId, twilioCallSid: sipCallSid, callerPhone: provider.data.phone, identity: { persona: "provider", providerId: provider.data.id, name: provider.data.name, phone: provider.data.phone, email: provider.data.email, active: provider.data.active }, operations: [{ id: operation.data.id, reference: operation.data.reference, name: operation.data.reference, status: operation.data.status, containerType: operation.data.container_type, pickupLocation: operation.data.pickup_location, deliveryLocation: operation.data.delivery_location, updatedAt: operation.data.updated_at }] };
+  return { action: "accept", outbound: true, callRecordId, callId, twilioCallSid: sipCallSid, callerPhone: provider.data.phone, identity: { persona: "provider", providerId: provider.data.id, name: provider.data.name, phone: provider.data.phone, email: provider.data.email, active: provider.data.active }, operations: [{ id: operation.data.id, reference: operation.data.reference, name: operation.data.reference, status: operation.data.status, containerType: operation.data.container_type, pickupLocation: operation.data.pickup_location, deliveryLocation: operation.data.delivery_location, updatedAt: operation.data.updated_at }] };
 }
