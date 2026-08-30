@@ -120,6 +120,38 @@
     {
       "file": "20260830210000_call_evidence_retention.sql",
       "sha256": "3c44821949f1fdf9c2d8fc7eee66097355e266ce7ea1626963c4266b08ed90bd"
+    },
+    {
+      "file": "20260830220000_allow_operationless_routed_call_events.sql",
+      "sha256": "5b58de67ee6330b864d8ed43a7f777483dff5c681113fd35ea5af288e61ef25e"
+    },
+    {
+      "file": "20260830221000_provider_offer_event_type.sql",
+      "sha256": "7897e60e09d5906d160bed4e2f28d8b7771e9384309843c6487c7d72347df586"
+    },
+    {
+      "file": "20260830222000_immutable_booking_commands.sql",
+      "sha256": "14f7c4f3578ef1f2433d8969ab4b60d8ace1c8a9181c9df649ee37497376780c"
+    },
+    {
+      "file": "20260830223000_provider_call_flow_isolation.sql",
+      "sha256": "db9aa998a4c9d661e8ba12308529c63b562c9531400c332660b2be9ceb0053b3"
+    },
+    {
+      "file": "20260830224000_provider_sourcing_rounds.sql",
+      "sha256": "2923b119b609ad493236b6bc02a1af0193d3007224dfd905482b24296235982a"
+    },
+    {
+      "file": "20260830225000_provider_no_answer_retries.sql",
+      "sha256": "df3b5e5099accdb7fc9d2c96b74777f85ce16a2041ce5bf28346dba99326d981"
+    },
+    {
+      "file": "20260830230000_safe_call_evidence_retention.sql",
+      "sha256": "84fcf232f34ce9f82d97022549b85a088ec19bdbeb7112ce98db4a34b750c4d4"
+    },
+    {
+      "file": "20260830231000_allow_provider_booking_selection.sql",
+      "sha256": "dcd62c173aad8cc240e30236ba1e8c5b2ec1bb56d097d3ca82d2949c2a607a0c"
     }
   ]
 }
