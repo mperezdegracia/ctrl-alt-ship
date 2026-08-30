@@ -50,7 +50,7 @@ function parseSequence(value: string | undefined): number {
     throw new ProviderCallStatusHttpError(400, "Invalid SequenceNumber");
   }
   const parsed = Number(sequence);
-  if (!Number.isSafeInteger(parsed) || parsed < 0) {
+  if (!Number.isSafeInteger(parsed) || parsed < 0 || parsed > 2_147_483_647) {
     throw new ProviderCallStatusHttpError(400, "Invalid SequenceNumber");
   }
   return parsed;
@@ -76,7 +76,8 @@ export class ProviderCallStatusHandler {
     } catch {
       throw new ProviderCallStatusHttpError(400, "Invalid callback URL");
     }
-    if (callbackUrl.searchParams.get("call_record_id") !== callRecordId) {
+    if (callbackUrl.searchParams.getAll("call_record_id").length !== 1
+      || callbackUrl.searchParams.get("call_record_id") !== callRecordId) {
       throw new ProviderCallStatusHttpError(400, "Callback correlation mismatch");
     }
 
