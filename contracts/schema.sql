@@ -302,9 +302,11 @@ CREATE TABLE calls (
   recording_url text,
   recording_sid text UNIQUE,
   recording_status text NOT NULL DEFAULT 'pending'
-    CHECK (recording_status IN ('pending', 'completed', 'absent', 'deleted', 'failed')),
+    CHECK (recording_status IN ('pending', 'in-progress', 'completed', 'absent', 'deleted', 'deletion_pending', 'failed')),
   recording_completed_at timestamptz,
   evidence_expires_at timestamptz NOT NULL DEFAULT (now() + interval '90 days'),
+  transcript_purged_at timestamptz,
+  retention_checked_at timestamptz,
   started_at timestamptz NOT NULL DEFAULT now(),
   ended_at timestamptz,
   created_at timestamptz NOT NULL DEFAULT now(),
@@ -333,22 +335,78 @@ CREATE TABLE calls (
 CREATE INDEX calls_evidence_expiry_idx ON calls(evidence_expires_at)
   WHERE evidence_expires_at IS NOT NULL;
 
+CREATE TABLE call_recordings (
+  recording_sid text PRIMARY KEY CHECK (recording_sid ~ '^RE[0-9a-fA-F]{32}$'),
+  call_id uuid NOT NULL REFERENCES calls(id),
+  status text NOT NULL CHECK (status IN ('in-progress', 'completed', 'absent', 'failed')),
+  deleted_at timestamptz,
+  deletion_error text,
+  last_attempt_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  CHECK (deleted_at IS NULL OR status = 'completed'),
+  CHECK (deleted_at IS NULL OR deletion_error IS NULL)
+);
+CREATE INDEX call_recordings_call_idx ON call_recordings(call_id, created_at, recording_sid);
+CREATE INDEX call_recordings_pending_idx ON call_recordings(call_id, status, deleted_at)
+  WHERE deleted_at IS NULL;
+ALTER TABLE call_recordings ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON call_recordings FROM PUBLIC, anon, authenticated, service_role;
+GRANT SELECT ON call_recordings TO service_role;
+
 CREATE TABLE call_transcript_segments (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   call_id uuid NOT NULL REFERENCES calls(id),
   speaker text NOT NULL CHECK (speaker IN ('caller', 'tango')),
-  content text NOT NULL CHECK (btrim(content) <> '' AND char_length(content) <= 10000),
+  content text CHECK (content IS NULL OR (btrim(content) <> '' AND char_length(content) <= 10000)),
+  content_deleted_at timestamptz,
   realtime_item_id text,
   realtime_response_id text,
   recorded_at timestamptz NOT NULL DEFAULT now(),
   created_at timestamptz NOT NULL DEFAULT now(),
   CHECK (realtime_item_id IS NOT NULL OR realtime_response_id IS NOT NULL),
   UNIQUE (call_id, realtime_item_id),
-  UNIQUE (call_id, realtime_response_id)
+  UNIQUE (call_id, realtime_response_id),
+  CHECK ((content IS NOT NULL) <> (content_deleted_at IS NOT NULL))
 );
 CREATE INDEX call_transcript_segments_call_recorded_idx ON call_transcript_segments(call_id, recorded_at, id);
-CREATE TRIGGER call_transcript_segments_append_only
-BEFORE UPDATE OR DELETE ON call_transcript_segments FOR EACH ROW EXECUTE FUNCTION reject_mutation();
+CREATE FUNCTION guard_call_transcript_tombstone()
+RETURNS trigger LANGUAGE plpgsql SET search_path = public, pg_temp AS $$
+DECLARE expires_at timestamptz;
+BEGIN
+  IF (to_jsonb(NEW) - 'content' - 'content_deleted_at')
+     IS DISTINCT FROM (to_jsonb(OLD) - 'content' - 'content_deleted_at')
+    THEN RAISE EXCEPTION 'transcript metadata is immutable' USING ERRCODE = '55000'; END IF;
+  IF OLD.content_deleted_at IS NOT NULL AND
+     (NEW.content IS NOT NULL OR NEW.content_deleted_at IS DISTINCT FROM OLD.content_deleted_at) THEN
+    RAISE EXCEPTION 'transcript tombstone cannot be restored' USING ERRCODE = '55000';
+  END IF;
+  ELSIF NEW.content IS DISTINCT FROM OLD.content OR NEW.content_deleted_at IS DISTINCT FROM OLD.content_deleted_at THEN
+    SELECT evidence_expires_at INTO expires_at FROM calls WHERE id = OLD.call_id FOR UPDATE;
+    IF expires_at IS NULL OR expires_at > now() OR NEW.content IS NOT NULL OR NEW.content_deleted_at IS NULL THEN
+      RAISE EXCEPTION 'transcript content may only be tombstoned after expiry' USING ERRCODE = '55000';
+    END IF;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+CREATE FUNCTION tombstone_late_transcript()
+RETURNS trigger LANGUAGE plpgsql SET search_path = public, pg_temp AS $$
+DECLARE expired boolean;
+BEGIN
+  SELECT evidence_expires_at <= now() INTO expired FROM calls WHERE id = NEW.call_id FOR UPDATE;
+  IF (NEW.content IS NULL OR NEW.content_deleted_at IS NOT NULL) AND NOT coalesce(expired, false) THEN
+    RAISE EXCEPTION 'transcript tombstone is only valid after expiry' USING ERRCODE = '23514';
+  END IF;
+  IF coalesce(expired, false) THEN NEW.content := NULL; NEW.content_deleted_at := coalesce(NEW.content_deleted_at, now()); END IF;
+  RETURN NEW;
+END;
+$$;
+CREATE TRIGGER call_transcript_segments_tombstone_guard
+BEFORE UPDATE ON call_transcript_segments FOR EACH ROW EXECUTE FUNCTION guard_call_transcript_tombstone();
+CREATE TRIGGER call_transcript_segments_delete_guard
+BEFORE DELETE ON call_transcript_segments FOR EACH ROW EXECUTE FUNCTION reject_mutation();
+CREATE TRIGGER call_transcript_segments_late_insert
+BEFORE INSERT ON call_transcript_segments FOR EACH ROW EXECUTE FUNCTION tombstone_late_transcript();
 
 CREATE FUNCTION validate_call_context()
 RETURNS trigger
