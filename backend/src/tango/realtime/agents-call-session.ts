@@ -57,11 +57,11 @@ export class AgentsCallSession {
     private readonly hooks: Hooks = {},
     transportOptions: OpenAIRealtimeWebSocketOptions = {},
   ) {
-    const initial = this.factory.create(decision, tools.definitions, tools.flowState);
-    this.diagnostics = new RealtimeSessionDiagnostics(logger, initial, tools.flowState?.profile ?? "read_only");
+    const initial = this.factory.create(decision, tools.definitions, tools.flowState, tools.providerFlowState);
+    this.diagnostics = new RealtimeSessionDiagnostics(logger, initial, tools.profile);
     this.transport = new ObservedSIPTransport(transportOptions, (event) => event.type === "session.update"
       && ("tools" in event.session || "instructions" in event.session)
-      ? this.diagnostics.prepareUpdate(event as SessionUpdateEvent, tools.flowState, this.updateToolCallId)
+      ? this.diagnostics.prepareUpdate(event as SessionUpdateEvent, tools.flowState ?? tools.providerFlowState, this.updateToolCallId)
       : event);
     this.agent = new RealtimeAgent({
       name: `Tango ${decision.identity.persona}`, voice: initial.audio.output.voice,
@@ -164,9 +164,7 @@ export class AgentsCallSession {
     const responseId = this.responseByToolCall.get(toolCallId) ?? "";
     this.logger.info("tool.requested", {
       tool_name: name, tool_call_id: toolCallId, response_id: responseId,
-      arguments: args,
-      profile: this.tools.flowState?.profile ?? "read_only",
-      flow_state: this.tools.flowState ?? null,
+      profile: this.tools.profile,
       advertised_tools: this.tools.definitions.map((definition) => definition.name),
       server_tools: this.diagnostics.serverTools,
     });
@@ -199,7 +197,7 @@ export class AgentsCallSession {
     // result. Arm the one-shot callback before that await, not after it.
     this.escalationReady = escalation;
     this.agent.tools = escalation ? [] : this.buildTools();
-    this.agent.instructions = this.factory.create(this.decision, [], this.tools.flowState).instructions;
+    this.agent.instructions = this.factory.create(this.decision, [], this.tools.flowState, this.tools.providerFlowState).instructions;
     this.updateToolCallId = toolCallId;
     try {
       // Same agent identity preserves the SDK's in-flight/replay bookkeeping.

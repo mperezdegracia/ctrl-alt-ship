@@ -154,6 +154,9 @@ async function main(): Promise<void> {
     ["OP-000001", "quote_requested"], ["OP-000002", "booking_confirmed"], ["OP-000007", "booking_pending"],
   ]);
   const other = await db.factory.create(providerOther).execute("list_provider_operations", {}) as { operations: Row[] };
+  db.tables.quote_requests.find((request) => request.id === "r1")!.expires_at = "infinity";
+  const openEnded = await pTools.execute("list_provider_operations", {}) as { operations: Row[] };
+  assert.deepEqual(openEnded.operations, p.operations, "Open-ended sourcing requests remain visible to incoming/outbound routing");
   assert.deepEqual(other.operations.map((op) => op.operation_reference), ["OP-000005"]);
   for (const result of [a, b, p, other]) {
     assert.doesNotMatch(JSON.stringify(result), /price_cap|950000|contact_id|provider_id|quote_id|email|private@|"id"/);

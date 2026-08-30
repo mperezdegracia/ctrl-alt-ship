@@ -5,6 +5,7 @@ import {
 import type { RealtimeFunctionToolDefinition } from "../tools/realtime-tool";
 import type { ClientFlowState } from "../../domain/client-operation-service";
 import type { SessionUpdateEvent } from "openai/resources/realtime/realtime";
+import type { ProviderFlowState } from "../../domain/provider-quote-service";
 
 export type RealtimeSessionConfiguration = {
   type: "realtime";
@@ -32,6 +33,7 @@ export class RealtimeSessionFactory {
     decision: AcceptedRoutingDecision,
     tools: RealtimeFunctionToolDefinition[],
     flowState?: ClientFlowState,
+    providerState?: ProviderFlowState,
   ): RealtimeSessionConfiguration {
     return {
       type: "realtime",
@@ -48,7 +50,7 @@ export class RealtimeSessionFactory {
           speed: 1.05,
         },
       },
-      instructions: new RoutingInstructionsBuilder(decision, flowState).build(),
+      instructions: new RoutingInstructionsBuilder(decision, flowState, providerState).build(),
       tools,
       tool_choice: "auto",
       parallel_tool_calls: false,
@@ -59,13 +61,14 @@ export class RealtimeSessionFactory {
     decision: AcceptedRoutingDecision,
     tools: RealtimeFunctionToolDefinition[],
     flowState?: ClientFlowState,
+    providerState?: ProviderFlowState,
   ): SessionUpdateEvent {
     return {
       type: "session.update",
       session: {
         type: "realtime",
         tools,
-        instructions: new RoutingInstructionsBuilder(decision, flowState).build(),
+        instructions: new RoutingInstructionsBuilder(decision, flowState, providerState).build(),
       },
     };
   }

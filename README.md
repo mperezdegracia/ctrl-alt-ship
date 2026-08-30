@@ -122,7 +122,7 @@ The browser never receives it.
 
 ## Booking-confirmation email
 
-Apply migration `20260830050000_booking_confirmation_email_outbox.sql` before
+Apply migration `20260830050001_booking_confirmation_email_outbox.sql` before
 testing this slice. Any booking that transitions to `confirmed` now enqueues a
 client and selected-provider notification atomically; a future
 `confirm_booking` tool does not need to know about an email provider.

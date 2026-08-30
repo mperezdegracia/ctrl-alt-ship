@@ -1,6 +1,6 @@
 export type ToolErrorCode = "invalid_arguments" | "not_authorized" | "tool_unavailable"
   | "intent_locked" | "idempotency_conflict" | "operation_not_available" | "invalid_transition"
-  | "stale_operation" | "confirmation_not_ready";
+  | "stale_operation" | "confirmation_not_ready" | "fixed_terms_conflict";
 
 export class ToolError extends Error {
   constructor(readonly code: ToolErrorCode, message: string) {

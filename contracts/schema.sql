@@ -246,6 +246,7 @@ CREATE TABLE calls (
   direction call_direction NOT NULL,
   outcome call_outcome NOT NULL DEFAULT 'active',
   client_tools_completed_at timestamptz,
+  provider_tools_completed_at timestamptz,
   recording_url text,
   started_at timestamptz NOT NULL DEFAULT now(),
   ended_at timestamptz,
@@ -423,14 +424,44 @@ CREATE TABLE quote_requests (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   operation_id uuid NOT NULL REFERENCES operations(id),
   provider_id uuid NOT NULL REFERENCES providers(id),
+  mandate_id uuid REFERENCES mandates(id),
+  negotiation_limit smallint NOT NULL DEFAULT 3 CHECK (negotiation_limit BETWEEN 1 AND 10),
+  provider_decline_reason text CHECK (provider_decline_reason IN (
+    'no_capacity', 'unavailable_window', 'price_terms', 'route_unsupported', 'operational_constraints', 'other')),
+  provider_declined_at timestamptz,
   contact_attempt integer NOT NULL DEFAULT 1 CHECK (contact_attempt > 0),
   status quote_request_status NOT NULL DEFAULT 'pending',
   expires_at timestamptz NOT NULL,
+  dispatched_at timestamptz,
   idempotency_key text NOT NULL UNIQUE CHECK (btrim(idempotency_key) <> ''),
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now(),
-  CHECK (expires_at > created_at)
+  CHECK (expires_at > created_at),
+  CHECK ((provider_decline_reason IS NULL AND provider_declined_at IS NULL)
+    OR (provider_decline_reason IS NOT NULL AND provider_declined_at IS NOT NULL AND status = 'cancelled'))
 );
+CREATE FUNCTION bind_quote_request_mandate() RETURNS trigger
+LANGUAGE plpgsql SET search_path = public, pg_temp AS $$
+BEGIN
+  IF TG_OP = 'UPDATE' THEN
+    IF NEW.operation_id IS DISTINCT FROM OLD.operation_id OR NEW.provider_id IS DISTINCT FROM OLD.provider_id
+      OR NEW.mandate_id IS DISTINCT FROM OLD.mandate_id THEN
+      RAISE EXCEPTION 'quote request scope is immutable' USING ERRCODE = '23514';
+    END IF;
+  ELSE
+    IF NEW.mandate_id IS NULL THEN
+      SELECT current_mandate_id INTO NEW.mandate_id FROM public.operations WHERE id = NEW.operation_id;
+    END IF;
+    IF NEW.mandate_id IS NULL OR NOT EXISTS (SELECT 1 FROM public.mandates
+      WHERE id = NEW.mandate_id AND operation_id = NEW.operation_id) THEN
+      RAISE EXCEPTION 'quote request requires a mandate for this operation' USING ERRCODE = '23514';
+    END IF;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+CREATE TRIGGER quote_requests_bind_mandate BEFORE INSERT OR UPDATE ON quote_requests
+FOR EACH ROW EXECUTE FUNCTION bind_quote_request_mandate();
 CREATE TRIGGER quote_requests_touch_updated_at
 BEFORE UPDATE ON quote_requests FOR EACH ROW EXECUTE FUNCTION touch_updated_at();
 CREATE INDEX quote_requests_operation_status_idx ON quote_requests(operation_id, status);
@@ -504,6 +535,7 @@ CREATE TABLE bookings (
   confirmation_reference text,
   confirmed_at timestamptz,
   cancelled_at timestamptz,
+  last_change_request_id uuid,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now(),
   CHECK (pickup_window_start < pickup_window_end),
@@ -515,25 +547,56 @@ CREATE TABLE bookings (
 CREATE UNIQUE INDEX one_active_booking_per_operation
 ON bookings(operation_id) WHERE status IN ('pending', 'confirmed');
 
-CREATE FUNCTION validate_booking()
-RETURNS trigger
-LANGUAGE plpgsql
-AS $$
+CREATE OR REPLACE FUNCTION public.validate_booking() RETURNS trigger
+LANGUAGE plpgsql SET search_path = public, pg_temp AS $$
 DECLARE
-  q quotes%ROWTYPE;
+  q public.quotes%ROWTYPE;
+  op public.operations%ROWTYPE;
   request_operation uuid;
-  current_mandate uuid;
 BEGIN
-  SELECT * INTO q FROM quotes WHERE id = NEW.quote_id;
-  SELECT operation_id INTO request_operation FROM quote_requests WHERE id = q.quote_request_id;
-  SELECT current_mandate_id INTO current_mandate FROM operations WHERE id = NEW.operation_id;
+  SELECT * INTO q FROM public.quotes WHERE id = NEW.quote_id;
+  SELECT operation_id INTO request_operation FROM public.quote_requests WHERE id = q.quote_request_id;
+  SELECT * INTO op FROM public.operations WHERE id = NEW.operation_id;
+  -- An agreed booking may outlive its quote's expiry. Window-only changes
+  -- require a freshly applied change request; do not weaken creation checks.
+  IF TG_OP = 'UPDATE' AND OLD.status = 'confirmed' AND NEW.status = 'confirmed'
+    AND NEW.last_change_request_id IS DISTINCT FROM OLD.last_change_request_id THEN
+    IF NEW.operation_id IS DISTINCT FROM OLD.operation_id OR NEW.quote_id IS DISTINCT FROM OLD.quote_id
+      OR NEW.confirmed_price IS DISTINCT FROM OLD.confirmed_price
+      OR NEW.payment_term_days IS DISTINCT FROM OLD.payment_term_days
+      OR NEW.payment_term_anchor IS DISTINCT FROM OLD.payment_term_anchor
+      OR NEW.confirmed_at IS DISTINCT FROM OLD.confirmed_at
+      OR NEW.confirmation_reference IS DISTINCT FROM OLD.confirmation_reference
+      OR request_operation IS DISTINCT FROM NEW.operation_id
+      OR op.status NOT IN ('booking_confirmed', 'notifications_sent')
+      OR q.verdict <> 'dentro' OR q.status <> 'received'
+      OR EXISTS (SELECT 1 FROM public.quotes successor WHERE successor.supersedes_quote_id = q.id)
+      OR op.mandate_confirmation_required OR q.evaluated_mandate_id IS DISTINCT FROM op.current_mandate_id
+      OR NOT EXISTS (SELECT 1 FROM public.change_requests cr
+        WHERE cr.id = NEW.last_change_request_id AND cr.booking_id = OLD.id AND cr.operation_id = OLD.operation_id
+          AND cr.type = 'reschedule' AND cr.status = 'applied' AND cr.verdict = 'dentro'
+          AND cr.evaluated_mandate_id = op.current_mandate_id AND cr.requested_at >= OLD.updated_at
+          AND (cr.previous_pickup_window->>'start_at')::timestamptz = OLD.pickup_window_start
+          AND (cr.previous_pickup_window->>'end_at')::timestamptz = OLD.pickup_window_end
+          AND (cr.requested_pickup_window->>'start_at')::timestamptz = NEW.pickup_window_start
+          AND (cr.requested_pickup_window->>'end_at')::timestamptz = NEW.pickup_window_end)
+      OR NOT EXISTS (SELECT 1 FROM public.mandates m, jsonb_array_elements(m.action_windows) w
+        WHERE m.id = op.current_mandate_id AND NEW.confirmed_price <= m.price_cap
+          AND NEW.payment_term_days >= m.minimum_payment_term_days AND q.currency = m.currency
+          AND NEW.pickup_window_start >= (w->>'start_at')::timestamptz
+          AND NEW.pickup_window_end <= (w->>'end_at')::timestamptz) THEN
+      RAISE EXCEPTION 'booking reschedule requires an approved window-only change' USING ERRCODE = '23514';
+    END IF;
+    RETURN NEW;
+  END IF;
   IF request_operation IS DISTINCT FROM NEW.operation_id OR q.verdict <> 'dentro' OR q.status <> 'received'
-     OR q.valid_until <= now() OR q.evaluated_mandate_id IS DISTINCT FROM current_mandate
-     OR EXISTS (SELECT 1 FROM quotes successor WHERE successor.supersedes_quote_id = q.id)
-     OR NEW.pickup_window_start IS DISTINCT FROM (q.proposed_pickup_window->>'start_at')::timestamptz
-     OR NEW.pickup_window_end IS DISTINCT FROM (q.proposed_pickup_window->>'end_at')::timestamptz
-     OR NEW.payment_term_days IS DISTINCT FROM q.payment_term_days
-     OR (NEW.confirmed_price IS NOT NULL AND NEW.confirmed_price NOT BETWEEN q.price_min AND q.price_max) THEN
+    OR q.valid_until <= now() OR q.evaluated_mandate_id IS DISTINCT FROM op.current_mandate_id
+    OR EXISTS (SELECT 1 FROM public.quotes successor WHERE successor.supersedes_quote_id = q.id)
+    OR NEW.pickup_window_start IS DISTINCT FROM (q.proposed_pickup_window->>'start_at')::timestamptz
+    OR NEW.pickup_window_end IS DISTINCT FROM (q.proposed_pickup_window->>'end_at')::timestamptz
+    OR NEW.payment_term_days IS DISTINCT FROM q.payment_term_days
+    OR (NEW.confirmed_price IS NOT NULL AND NEW.confirmed_price NOT BETWEEN q.price_min AND q.price_max)
+    OR NEW.last_change_request_id IS NOT NULL THEN
     RAISE EXCEPTION 'booking does not match an eligible current quote' USING ERRCODE = '23514';
   END IF;
   RETURN NEW;
@@ -541,7 +604,7 @@ END;
 $$;
 CREATE TRIGGER bookings_validate
 BEFORE INSERT OR UPDATE OF operation_id, quote_id, pickup_window_start, pickup_window_end,
-  payment_term_days, confirmed_price
+  payment_term_days, confirmed_price, last_change_request_id
 ON bookings FOR EACH ROW EXECUTE FUNCTION validate_booking();
 CREATE TRIGGER bookings_touch_updated_at
 BEFORE UPDATE ON bookings FOR EACH ROW EXECUTE FUNCTION touch_updated_at();
@@ -556,6 +619,7 @@ CREATE TABLE change_requests (
   evaluated_mandate_id uuid NOT NULL REFERENCES mandates(id),
   type change_request_type NOT NULL,
   requested_pickup_window jsonb,
+  previous_pickup_window jsonb CHECK (previous_pickup_window IS NULL OR is_window(previous_pickup_window)),
   reason text NOT NULL CHECK (btrim(reason) <> ''),
   verdict change_request_verdict NOT NULL,
   status change_request_status NOT NULL DEFAULT 'pending',
@@ -568,6 +632,9 @@ CREATE TABLE change_requests (
       OR (type = 'cancel' AND requested_pickup_window IS NULL)),
   CHECK ((status IN ('applied', 'rejected') AND resolved_at IS NOT NULL) OR status IN ('pending', 'escalated'))
 );
+
+ALTER TABLE bookings ADD CONSTRAINT bookings_last_change_request_id_fkey
+FOREIGN KEY (last_change_request_id) REFERENCES change_requests(id);
 
 CREATE FUNCTION validate_change_request_context()
 RETURNS trigger

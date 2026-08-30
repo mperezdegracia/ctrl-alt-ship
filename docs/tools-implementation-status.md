@@ -1,5 +1,14 @@
 # Implementación de tools — issue #13
 
+## Estado luego del merge (2026-08-30)
+
+Conservadas las tools locales de proveedor, tres rondas y cambios de reservas;
+integrados sourcing, selección automática y emails de adjudicación del remoto.
+Las secciones históricas inferiores no implican que selección siga pendiente.
+Decisiones, límites y despliegue (incluido el conflicto de versiones de migración):
+[provider-sourcing-merge-decisions.md](provider-sourcing-merge-decisions.md).
+Sin PostgreSQL ni pruebas reales de llamadas/emails en esta integración.
+
 ## Primer tramo: consultas reales
 
 - `list_open_operations` consulta las operaciones abiertas del contacto autenticado.
@@ -119,9 +128,9 @@ logs permiten inspeccionar el flujo, pero no prueban consentimiento humano.
 
 - Aplicar/validar los tramos de escritura, mandato y cancelación de operaciones.
 - Extender las transacciones e idempotencia al resto de mutaciones.
-- Perfiles y bloqueo de intención de los flujos de proveedor.
-- Registrar quotes y calcular el veredicto y la ronda de negociación en el servidor.
-- Confirmar/rechazar bookings, reprogramar/cancelar, negativas y escalación.
+- Validar en destino perfiles, quotes y cambios de reservas del proveedor.
+- Implementar selección/confirmación/rechazo de bookings y negativa de reprogramación;
+  completar la integración real de escalación.
 - Capturar evidencia desde la llamada para compromisos, sin argumentos controlados
   por el modelo; preservar la cadena `supersedes`.
 - Integrar las notificaciones y el handoff con sus respectivos componentes.
@@ -145,3 +154,31 @@ Requiere aplicar `20260830040000_client_cancellation.sql` antes de desplegar el
 backend con `CLIENT_OPERATION_TOOLS_ENABLED=true`. No se aplicó en la base
 compartida ni se validó en PostgreSQL. Pasaron typecheck y harnesses simulados
 de cliente y Agents SDK. Detalles: [client-cancellation.md](client-cancellation.md).
+
+## Primer tramo de proveedor: cotización y negativa (2026-08-30)
+
+Implementados `create_quote`, `decline_quote_request`, perfiles dinámicos, RPC
+con validación/veredicto e idempotencia, y prompt Tango adaptado al texto del usuario.
+Tres contraofertas por pedido por defecto, persistidas entre llamadas. No usa
+cotizaciones de otros proveedores, no revela topes, no envía correos ni crea booking
+o evidencia de compromiso ficticia. Respeta negativas sin presionar y ya no escala
+automáticamente solo por acumular tres intervenciones en este nuevo flujo.
+
+Requiere aplicar `20260830070000_provider_quote_tools.sql` antes del despliegue.
+Las tools de proveedor se habilitan directamente en el backend, sin variable
+de entorno ni feature flag. Si falta la migración, la llamada falla al cargar su estado.
+Pruebas simuladas (sin PostgreSQL/llamadas reales). Detalle y prueba manual:
+[provider-quote-flow.md](provider-quote-flow.md). Este tramo no cierra el #13.
+
+## Cambios de reservas del proveedor (2026-08-30)
+
+Implementados `reschedule_booking` (solo ventana) y `cancel_booking` (reserva propia,
+operación vuelve a sourcing). Tienen clases OOP, validación, transacción, controles
+de revisión/propiedad, recibos y perfiles dinámicos. Fuera del mandato se registra
+solicitud sin aplicar y queda solo escalación. Sin emails, nuevos mandatos ni
+evidencia de compromiso inventada. Confirmación conversacional solo del cambio.
+
+Requiere también `20260830080000_provider_booking_changes.sql` antes del despliegue.
+No se ejecutó PostgreSQL. Harness dedicado: `harness:tools:bookings`, incluido en
+`harness:tools`. Alcance, limitaciones y prueba manual:
+[provider-booking-changes.md](provider-booking-changes.md).

@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { SessionCreatedEvent, SessionUpdatedEvent, SessionUpdateEvent } from "openai/resources/realtime/realtime";
-import type { ClientFlowState } from "../../domain/client-operation-service";
+type DiagnosticFlowState = { profile: string; intent?: string; operation: { operation_reference: string; missing_fields?: string[] } | null };
 
 type LogSink = {
   info(event: string, fields: Record<string, unknown>): void;
@@ -24,7 +24,7 @@ export class RealtimeSessionDiagnostics {
 
   get serverTools(): string[] | null { return this.received?.tools ? [...this.received.tools] : null; }
 
-  prepareUpdate(update: SessionUpdateEvent, state: ClientFlowState | undefined, toolCallId: string): SessionUpdateEvent {
+  prepareUpdate(update: SessionUpdateEvent, state: DiagnosticFlowState | undefined, toolCallId: string): SessionUpdateEvent {
     this.sequence += 1;
     this.latestUpdateEventId = `session_update_${randomUUID()}`;
     this.expected = this.snapshot(update.session);

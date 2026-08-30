@@ -58,17 +58,17 @@ que queda reservado para una desviación a Media Streams.
    declarada.
 2. El worker contacta hasta dos en paralelo y cada conversación pide una
    Cotización para la misma Operación.
-3. La recolección cierra cuando todos alcanzan un resultado terminal o al
-   cumplirse cinco minutos. Una conversación ya conectada obtiene hasta dos
-   minutos de gracia para concluir; el ciclo completo no supera siete minutos.
+3. Se comparan propuestas hasta que todos terminen o pasen cinco minutos desde
+   el primer envío exitoso. Se conservan tres contraofertas por pedido. Si no hay
+   ninguna válida, se sigue esperando sin expirar pedidos por ese plazo.
 4. El servidor selecciona la Cotización vigente y dentro del Mandato con menor
-   `price_max`. Si no hay ninguna, la Operación queda en `needs_follow_up`;
-   la Escalación explícita queda para el siguiente flujo.
+   `price_max` (empate: primera recibida). Sin válidas al plazo, adjudica la primera
+   válida posterior. Las demás condiciones del envío también deben cumplirse.
 5. La selección crea el Booking inmediatamente. El mail al Cliente y al
-   Proveedor elegido es una notificación posterior, fuera de este alcance.
+   Proveedor elegido se encola idempotentemente, sin otra aprobación.
 
 `busy` y `no-answer` no se reintentan automáticamente en el MVP: el Pedido
-queda pendiente hasta el deadline. Sólo las fallas técnicas anteriores a la
+queda pendiente mientras la búsqueda siga abierta. Sólo las fallas técnicas anteriores a la
 obtención de un `CallSid` se reintentan.
 
 ## Flujo: Renegociación por Mandato incompatible

@@ -139,29 +139,40 @@ snapshot; authorized consumers join the referenced mandate.
 | Event | When emitted | Payload v1 |
 | --- | --- | --- |
 | `quote.requested` | A quote request is created for one provider. | `quote_request_id`, `provider_id`, `attempt`, `expires_at` |
-| `quote.received` | `create_quote` persists a complete immutable version. | `quote_id`, `quote_request_id`, `quote_version`, `price_range`, `proposed_pickup_window`, `payment_term_days`, `valid_until`, `verdict`, `reason_codes[]`, `negotiation_remaining` |
-| `quote.counteroffer_requested` | The first complete proposal is outside the mandate by price. | `quote_id`, `quote_version`, `reason_codes[]`, `negotiation_remaining: false` |
+| `quote.received` | `create_quote` persists a complete immutable version. | `quote_id`, `quote_request_id`, `quote_version`, `price_range`, `proposed_pickup_window`, `payment_term_days`, `valid_until`, `verdict`, `reason_codes[]`, `negotiation_remaining`, `negotiation_rounds_remaining` |
+| `quote.counteroffer_requested` | A complete proposal is outside by price and another revised proposal is allowed. | `quote_id`, `quote_version`, `reason_codes[]`, `negotiation_remaining: true`, `negotiation_rounds_remaining` |
 | `quote.declined` | The provider runs `decline_quote_request`. | `quote_request_id`, `reason`, `details?` |
 | `quote.expired` | The declarative quote deadline passes without a usable response. | `quote_request_id`, `expired_at` |
-| `quote.selected` | The server selects the valid quote with the lowest `price_max`. | `quote_id`, `price_max`, `currency`, `compared_quote_ids[]`, `selection_rule: "lowest_valid_price_max"` |
+| `quote.selected` | The server selects the lowest valid `price_max` in the comparison window, or the first valid late proposal if no eligible earlier proposal remains. | `quote_id`, `price_max`, `currency`, `selection_rule: "lowest_valid_price_max" or "first_valid_after_deadline"` |
 
 `quote.received.verdict` is `dentro`, `contraoferta` or `fuera`. Neither quote
 events nor counteroffer responses expose the mandate price cap.
 
 ### Booking events
 
+The provider quote rollout permits three counteroffers by default, tracked per
+quote request across calls. `negotiation_rounds_remaining` is the number of revised
+proposals still permitted after this quote (3, 2, 1, then 0 if all remain outside).
+An accepted or final outside quote reports zero. Structural/fixed-term errors do
+not persist a quote, emit success events or consume a round. No numerical client
+limit is included in quote tool results or counteroffer events.
+
 | Event | When emitted | Payload v1 |
 | --- | --- | --- |
 | `booking.pending` | A selected quote creates a pending booking. | `booking_id`, `quote_id`, `provider_id` |
-| `booking.confirmed` | `confirm_booking` records explicit provider acceptance. | `booking_id`, `quote_id`, `confirmed_price`, `currency`, `pickup_window`, `payment_term_days`, `provider_confirmation_reference?` |
+| `booking.confirmed` | The server selects an already verbally approved quote and creates the booking, without another approval call. | `booking_id`, `quote_id`, `confirmed_price`, `currency`, `pickup_window`, `payment_term_days`, `commitment_created: false` |
 | `booking.declined` | The provider runs `decline_booking`. | `booking_id`, `reason`, `details?`, `operation_status` |
 | `booking.rescheduled` | `reschedule_booking` applies a window inside the mandate. | `booking_id`, `change_request_id`, `previous_window`, `new_window`, `reason` |
 | `booking.reschedule_declined` | The provider runs `decline_reschedule`. | `booking_id`, `change_request_id`, `requested_window`, `reason`, `details?` |
 | `booking.cancelled` | Client or provider cancellation ends an active booking. | `booking_id`, `change_request_id?`, `source`, `reason`, `operation_status`, `notification_email_queued` |
 
-`booking.cancelled.source` is `client` or `provider`. Confirmation and accepted
-change events require `commitment_id` and a recording checkpoint when they came
-from a call. Declines never create a commitment.
+`booking.cancelled.source` is `client` or `provider`. The eventual recorded-evidence
+flow links accepted changes to `commitment_id` and a recording checkpoint.
+Current rollout (2026-08-30): provider reschedule/cancellation instead link a
+`change_request_id`, leave `commitment_id` null and return `commitment_created: false`.
+No recording checkpoint or acceptance evidence is fabricated. Declines never create
+a commitment. An out-of-mandate request is saved without a booking change event;
+`escalation.started` requires the subsequent handoff, not merely saving the request.
 
 ### Escalation events
 
@@ -215,7 +226,7 @@ booking_reschedule_provider
 | `decline_booking` | `booking.declined`, optionally `sourcing.started` |
 | `reschedule_booking` | `booking.rescheduled` when applied; `escalation.started` only after a subsequent `escalate` call |
 | `decline_reschedule` | `booking.reschedule_declined` |
-| `cancel_booking` | `booking.cancelled`, `sourcing.started`, `email.queued` |
+| `cancel_booking` | `booking.cancelled`, `sourcing.started`, optional `call.routed`. No email events in the current rollout. |
 | `escalate` | `escalation.started`; telephony later emits joined, transferred, resolved or failed events |
 
 Server workflows additionally emit `quote.requested`, `quote.expired`,

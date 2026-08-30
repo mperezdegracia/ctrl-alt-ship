@@ -28,11 +28,11 @@ import { SupabaseOperationReadRepository } from "./tango/supabase/operation-read
 import { CallToolFactory } from "./tango/tools/call-tool-factory";
 import { SupabaseClientOperationRepository } from "./tango/supabase/client-operation-repository";
 import { SupabaseProviderQuoteRepository } from "./tango/supabase/provider-quote-repository";
+import { SupabaseProviderBookingRepository } from "./tango/supabase/provider-booking-repository";
 import { OpenAIRealtimeGateway } from "./tango/realtime/openai-realtime-gateway";
 import { TwilioGateway } from "./tango/telephony/twilio-gateway";
 import { EscalationHandoffCoordinator } from "./tango/telephony/escalation-handoff-coordinator";
 import { MockEscalationTool } from "./tango/tools/mock-escalation-tool";
-import { NegotiationStallTracker } from "./tango/telephony/negotiation-stall-tracker";
 import { createTwilioOutboundCall, verifyTwilioSignature } from "./tango/telephony/twilio-outbound";
 import { extractOutboundCallRecordId, routeOutboundCall } from "./tango/telephony/outbound-routing";
 import { PreviewEmailGateway, ResendEmailGateway } from "./tango/services/email-gateway";
@@ -88,6 +88,7 @@ const callToolFactory = new CallToolFactory(
   environment.CLIENT_OPERATION_TOOLS_ENABLED
     ? new SupabaseClientOperationRepository(supabaseAdmin) : undefined,
   new SupabaseProviderQuoteRepository(supabaseAdmin),
+  new SupabaseProviderBookingRepository(supabaseAdmin),
 );
 
 const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
@@ -175,7 +176,7 @@ async function runOutboundSourcingWorker(): Promise<void> {
         logger.error("sourcing.provider_call_failed", { error, operation_id: job.operation_id, quote_request_id: job.quote_request_id });
       }
     }
-    const { data: sourcing, error: sourcingError } = await supabaseAdmin.from("operations").select("id").eq("status", "sourcing");
+    const { data: sourcing, error: sourcingError } = await supabaseAdmin.from("operations").select("id").in("status", ["sourcing", "quotes_received"]);
     if (sourcingError) throw sourcingError;
     await Promise.all((sourcing ?? []).map(async ({ id }) => {
       const { error: finalizeError } = await supabaseAdmin.rpc("finalize_operation_sourcing", { p_operation_id: id });
@@ -359,9 +360,7 @@ app.post("/openai/webhook", express.raw({ type: "*/*" }), async (req, res) => {
 
     const handoffCoordinator = routingDecision.identity.persona === "provider"
       ? new EscalationHandoffCoordinator(createTwilioGateway(callLogger)) : undefined;
-    const stallTracker = handoffCoordinator
-      ? new NegotiationStallTracker(environment.ESCALATION_STALLED_TURNS) : undefined;
-    let stalledEscalationPending = false;
+    // Negotiation uses the persisted quote-round budget, not raw turn count.
     const prepareMockHandoff = async (_request: { operationReference?: string; trigger: string; reason: string }) => {
       if (!handoffCoordinator || handoffCoordinator.prepared) return;
       await handoffCoordinator.prepare({
@@ -382,7 +381,7 @@ app.post("/openai/webhook", express.raw({ type: "*/*" }), async (req, res) => {
     try {
       await realtimeTools.refresh();
       callLogger.info("call.tools_configured", {
-        profile: realtimeTools.flowState?.profile ?? "read_only",
+        profile: realtimeTools.profile,
         tools: realtimeTools.definitions.map((tool) => tool.name),
       });
     } catch (error) {
@@ -400,7 +399,6 @@ app.post("/openai/webhook", express.raw({ type: "*/*" }), async (req, res) => {
 
     const acceptStartedAt = Date.now();
     const agentsCall = new AgentsCallSession(routingDecision, realtimeTools, callLogger, {
-      onProgress: () => stallTracker?.recordProgress(),
       onEscalationReady: handoffCoordinator ? () => {
         handoffCoordinator.beginFarewell();
         agentsCall.transport.requestResponse({
@@ -477,7 +475,6 @@ app.post("/openai/webhook", express.raw({ type: "*/*" }), async (req, res) => {
            */
 
           case "conversation.item.input_audio_transcription.completed":
-            if (stallTracker?.recordCallerTurn()) stalledEscalationPending = true;
             callLogger.debug("transcript.caller", {
               transcript: message.transcript,
             });
@@ -507,16 +504,6 @@ app.post("/openai/webhook", express.raw({ type: "*/*" }), async (req, res) => {
             break;
 
           case "output_audio_buffer.stopped":
-            if (stalledEscalationPending && handoffCoordinator && !handoffCoordinator.prepared) {
-              stalledEscalationPending = false;
-              await prepareMockHandoff({
-                trigger: "negotiation_stalled",
-                reason: `No progress after ${environment.ESCALATION_STALLED_TURNS} consecutive caller turns.`,
-              });
-              handoffCoordinator.beginFarewell();
-              agentsCall.transport.requestResponse({ instructions: "In the caller's active language, say exactly: I will connect you with my supervisor now. I have shared the relevant context. Do not add any other sentence." });
-              break;
-            }
             if (await handoffCoordinator?.onAudioStopped(message.response_id)) {
               callLogger.info("escalation.transfer_started", { response_id: message.response_id });
             }
@@ -567,6 +554,7 @@ app.listen(PORT, () => {
     client_operation_tools_enabled: environment.CLIENT_OPERATION_TOOLS_ENABLED,
     email_delivery_mode: environment.EMAIL_DELIVERY_MODE,
     email_worker_enabled: environment.EMAIL_WORKER_ENABLED,
+    provider_quote_tools_enabled: true,
     deploy_commit: process.env.RENDER_GIT_COMMIT ?? "local",
   });
   if (environment.EMAIL_WORKER_ENABLED) {

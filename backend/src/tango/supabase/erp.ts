@@ -187,7 +187,7 @@ export async function listActiveOperationsForProvider(
   const now = Date.now();
   for (const request of requests) {
     if (["pending", "queued", "contacted", "responded"].includes(request.status)
-      && Date.parse(request.expires_at) > now) {
+      && (request.expires_at === "infinity" || Date.parse(request.expires_at) > now)) {
       relationships.set(request.operation_id, "quote_requested");
     }
   }

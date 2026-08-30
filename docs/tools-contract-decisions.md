@@ -126,13 +126,25 @@ del transportista bajo las condiciones cambiadas.
   vigencia y condiciones. No recibe IDs internos.
 - El servidor evalúa `price_max` contra el mandato y selecciona por el menor
   `price_max` válido: el menor peor caso.
-- Existe exactamente una contraoferta por pedido. La primera propuesta completa
-  fuera por precio devuelve `contraoferta`, incluso si su mínimo supera el tope.
-  Una segunda propuesta aún fuera devuelve `fuera`.
+- Decisión vigente: varias rondas, por defecto **tres contraofertas por pedido**,
+  además de la propuesta inicial. `quote_requests.negotiation_limit` es un límite
+  del servidor (1–10), no un argumento del modelo. El contador se deriva de las
+  versiones guardadas y no se reinicia al cambiar de llamada.
+- Si solo falla el precio, devuelve `contraoferta` mientras quede presupuesto,
+  incluso si el mínimo supera el tope. La última propuesta aún fuera devuelve
+  `fuera`. Cada revisión exige resumen y confirmación verbal nuevamente.
+- Tango pregunta por disponibilidad, inclusiones y qué explica el precio; pide
+  una mejora con calma, no inventa una contraoferta numérica ni promete concesiones.
+- Por ahora **no se consultan ni usan quotes de otros transportistas**. Se retiró
+  esa posibilidad por pedido del usuario. El prompt identifica al agente como Tango.
 - El precio máximo del cliente nunca aparece en respuestas a tools de provider.
 - Errores estructurales y conflictos con términos fijos no consumen la ronda.
 - Las negativas explícitas se guardan como estado y evento, sin crear quote ni
   compromiso.
+- Primer tramo implementado: [provider-quote-flow.md](provider-quote-flow.md).
+  La tool guarda cotización/veredicto; el worker integrado compara y adjudica,
+  encolando emails solo al crear la reserva. No inventa evidencia de audio.
+  Decisiones vigentes: [provider-sourcing-merge-decisions.md](provider-sourcing-merge-decisions.md).
 
 ## Booking, cambios y escalación
 
@@ -141,10 +153,15 @@ del transportista bajo las condiciones cambiadas.
   por el Proveedor. Los emails posteriores son notificaciones, no aprobación.
 - `reschedule_booking` sólo cambia la ventana y conserva precio y condiciones.
   Fuera de `action_windows` no aplica nada y requiere escalación.
-- Si el provider exige otro precio, presenta una nueva cotización; no se modela
-  como reprogramación.
+- Si el provider exige otro precio, no se modela como reprogramación. En el tramo
+  actual se ofrece revisión humana; no se recotiza una reserva ya confirmada.
 - `cancel_booking` representa que el provider abandona el compromiso: crea el
-  rastro de cancelación, devuelve la operación a sourcing y avisa al cliente.
+  rastro de cancelación y devuelve la operación a sourcing. Por decisión vigente,
+  **no avisa al cliente ni encola correo**. No cancela la operación del cliente.
+- Tramo local 2026-08-30: reprogramación y cancelación guardan `change_requests`,
+  eventos y recibos, sin `commitments` ficticios (`commitment_created: false`).
+  Consentimiento conversacional solo del cambio mínimo; sin tracker ni approvals.
+  Ver [provider-booking-changes.md](provider-booking-changes.md).
 - Una negativa de booking o reprogramación conserva evidencia pero no crea un
   compromiso aceptado.
 - `escalate` entrega al supervisor compromisos, mandato y motivo. Nunca envía el

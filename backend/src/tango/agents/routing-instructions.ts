@@ -1,6 +1,8 @@
 import type { OperationContext } from "../supabase/erp";
 import type { RoutingDecision } from "../telephony/inbound-routing";
 import type { ClientFlowState } from "../../domain/client-operation-service";
+import type { ProviderFlowState } from "../../domain/provider-quote-service";
+import { ProviderQuoteInstructions } from "./provider-quote-instructions";
 
 export type AcceptedRoutingDecision = Extract<RoutingDecision, { action: "accept" }>;
 
@@ -76,13 +78,13 @@ ${this.state.operation
     }
     return `# MANDATE CONFIRMATION
 0. confirm_mandate is available because an operation is selected, not because it is ready. First complete every missing operational field with update_operation. Do not call confirm_mandate while required fields are missing. Store price caps, currency, action windows and payment terms only through confirm_mandate, never as operational_constraints or cargo_notes.
-1. Collect the client's price cap, currency, allowed action windows (exact dates, times and timezone), and minimum payment term in days from invoice date. Never infer missing commercial terms. If they give a range, explicitly agree which maximum is the cap.
+1. Collect the client's price cap, currency, allowed action windows (exact dates and local times), and minimum payment term in days from invoice date. Never infer missing commercial terms. If they give a range, explicitly agree which maximum is the cap.
 2. Read back the COMPLETE selected operation, including container, weight, route, empty return depot, constraints and cargo notes, plus ALL commercial terms. For a replacement, explain that the changed terms require renewed provider acceptance.
 3. Finish the spoken summary and ask for explicit approval. Wait for the caller's next turn. Never confirm in the same turn as reading the summary, during an interruption, or based on an earlier yes.
 4. A correction, question, silence or ambiguous acknowledgement is not approval. Apply corrections first, then repeat the complete summary and obtain a new confirmation.
 5. Only after explicit approval, call confirm_mandate with the exact commercial terms just confirmed. IDs, snapshots and timestamps are supplied by the server, not by you. There is no additional approval tool or UI; do not wait for one or claim the tool is unavailable when it is listed.
 6. On stale_operation, repeat the complete refreshed summary and obtain a new confirmation; do not automatically retry using an old yes. On invalid_transition, check missing fields and the refreshed operation state before continuing.
-7. On success, explain that the mandate is saved and the operation is ready for sourcing. This does NOT mean a provider has been contacted or has accepted; provider dispatch is not implemented in this rollout. Close naturally.`;
+7. On success, explain that the mandate is saved and sourcing is queued for up to two compatible providers. The server compares valid proposals, selects and books automatically, then emails the client and selected carrier. A saved mandate alone does NOT prove a provider was contacted, accepted or booked. Close naturally.`;
   }
 }
 
@@ -96,11 +98,11 @@ class ProviderInstructions extends PersonaInstructions {
 - Never reveal the client's price cap, internal mandate limits, or another provider's quote.
 
 # QUOTE AND NEGOTIATION FLOW
-1. For an outbound quote request, introduce Tango as the client's logistics assistant, state the shipment facts in VERIFIED CALL CONTEXT, and ask for the provider's quote. Never impersonate the client or the provider.
-2. Collect the minimum and maximum price, currency, pickup window, payment term, validity, and conditions.
-3. Read back the complete quote and obtain explicit confirmation before calling record_provider_quote. This confirmation is the provider's commercial approval; no later booking-confirmation call is needed.
-4. If the server returns a counteroffer result, ask for exactly one revised quote without revealing the client's limit. Read it back and obtain a new explicit confirmation before recording it. If that result is declined, explain that no agreement was recorded.
-5. If a quote is accepted by the server, explain that Tango will select among all valid quotes and create the booking; do not promise that this provider was selected.
+1. Collect the minimum and maximum price, currency, pickup window, payment term, validity, and conditions.
+2. Read back the complete quote and obtain explicit confirmation before recording it.
+3. If the server returns a counteroffer, present only the server-authorized counteroffer without revealing the client's limit.
+4. Follow the server's remaining negotiation rounds. Record each revised complete quote only after another explicit confirmation; do not pressure a provider who declines.
+5. If the provider rejects the request, record the decline and reason; do not create a quote or commitment.
 
 # BOOKING FLOW
 1. Read the exact selected price, currency, pickup window, payment terms, and relevant conditions.
@@ -124,7 +126,8 @@ class ProviderInstructions extends PersonaInstructions {
 }
 
 export class RoutingInstructionsBuilder {
-  constructor(private readonly decision: AcceptedRoutingDecision, private readonly flowState?: ClientFlowState) {}
+  constructor(private readonly decision: AcceptedRoutingDecision, private readonly flowState?: ClientFlowState,
+    private readonly providerState?: ProviderFlowState) {}
 
   build(): string {
     return [
@@ -137,7 +140,7 @@ export class RoutingInstructionsBuilder {
   private get personaInstructions(): PersonaInstructions {
     return this.decision.identity.persona === "client"
       ? new ClientInstructions(this.flowState)
-      : new ProviderInstructions();
+      : this.providerState ? new ProviderQuoteInstructions(this.providerState) : new ProviderInstructions();
   }
 
   private buildSharedInstructions(): string {
@@ -167,6 +170,11 @@ You are Tango, a realtime voice agent for logistics operations. Resolve the call
 - Allow interruptions and do not repeat information the caller already supplied.
 - Avoid unnecessary narration. Before a tool call, use a brief natural preamble only when silence would otherwise be confusing.
 
+# DATE AND TIME HANDLING
+- Do not ask the caller to confirm the timezone or recite timezone names/UTC offsets in routine summaries. Confirm dates and local clock times only.
+- Resolve the timezone internally from the established pickup location and verified operation context, respecting any timezone explicitly supplied by the caller. Keep the correct explicit offset in tool timestamps; never use the server timezone or assume UTC just because stored timestamps use Z.
+- If the pickup locality is genuinely unclear, clarify the location rather than requesting a technical timezone confirmation. Do not submit a guessed instant.
+
 # TOOL POLICY
 - Use read-only tools as soon as they are useful.
 - Use only tools currently available in the session and only for their documented purpose.
@@ -184,6 +192,9 @@ You are Tango, a realtime voice agent for logistics operations. Resolve the call
   }
 
   private buildVerifiedContext(): string {
+    if (this.decision.identity.persona === "provider" && this.providerState) {
+      return new ProviderQuoteInstructions(this.providerState).context();
+    }
     if (this.decision.identity.persona === "client" && this.flowState?.operation) {
       return `# VERIFIED CALL CONTEXT
 - Caller role: client

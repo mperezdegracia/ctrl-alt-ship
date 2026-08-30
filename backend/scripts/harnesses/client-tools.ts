@@ -204,6 +204,7 @@ async function main(): Promise<void> {
   assert.match(update.session.instructions, /# MANDATE UPDATE CONFIRMATION/);
   assert.match(update.session.instructions, /Do not ask the caller to repeat or reconfirm unchanged/);
   assert.match(update.session.instructions, /call it with \{\}/);
+  assert.match(update.session.instructions, /Do not ask the caller to confirm the timezone/);
   assert.match(update.session.instructions, /ONE short confirmation covering the entire set of shipment and mandate changes/);
   assert.match(update.session.instructions, /ALL and ONLY changed commercial fields in ONE call/);
   assert.match(update.session.instructions, /Do not ask for a second mandate confirmation/);

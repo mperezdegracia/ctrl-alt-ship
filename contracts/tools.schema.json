@@ -364,14 +364,16 @@
           "quote_version": { "type": "integer", "minimum": 1 },
           "verdict": { "type": "string", "enum": ["dentro", "contraoferta", "fuera"] },
           "reason_codes": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
-          "negotiation_remaining": { "type": "boolean" }
+          "negotiation_remaining": { "type": "boolean" },
+          "negotiation_rounds_remaining": { "type": "integer", "minimum": 0 }
         },
         "required": [
           "operation_reference",
           "quote_version",
           "verdict",
           "reason_codes",
-          "negotiation_remaining"
+          "negotiation_remaining",
+          "negotiation_rounds_remaining"
         ],
         "additionalProperties": false
       },
@@ -484,7 +486,7 @@
     {
       "type": "function",
       "name": "reschedule_booking",
-      "description": "Changes only the pickup window while preserving the confirmed price and terms. Outside the action window it applies nothing and requires escalation.",
+      "description": "Changes only the pickup window of the authenticated provider's confirmed booking after explicit confirmation, preserving price and terms. Outside the mandate it changes no booking and requires escalation. No email is sent or queued.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -556,7 +558,7 @@
     {
       "type": "function",
       "name": "cancel_booking",
-      "description": "Cancels the authenticated provider's active booking after explicit verbal confirmation, preserves the audit trail, and returns the operation to sourcing.",
+      "description": "Cancels only the authenticated provider's confirmed booking after explicit verbal confirmation, preserves history and returns the operation to sourcing. Does not cancel the client's operation or send or queue email.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -571,7 +573,7 @@
         "properties": {
           "booking_status": { "const": "cancelled" },
           "operation_status": { "const": "sourcing" },
-          "commitment_created": { "const": true },
+          "commitment_created": { "const": false },
           "client_email_queued": { "type": "boolean" }
         },
         "required": ["booking_status", "operation_status", "commitment_created", "client_email_queued"],
