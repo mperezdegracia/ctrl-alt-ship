@@ -135,7 +135,10 @@ app.post("/calls/outbound", async (req, res) => {
   } catch (error) {
     await supabaseAdmin.from("calls").update({ outcome: "failed", ended_at: new Date().toISOString() }).eq("id", call.data.id);
     logger.error("outbound_call.failed", { error });
-    return res.status(502).json({ error: "twilio_outbound_call_failed" });
+    return res.status(502).json({
+      error: "twilio_outbound_call_failed",
+      detail: error instanceof Error ? error.message : "unknown_twilio_error",
+    });
   }
 });
 
