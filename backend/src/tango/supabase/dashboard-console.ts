@@ -6,6 +6,22 @@ import type { DashboardPage } from "./dashboard";
 type JsonRecord = Record<string, unknown>;
 type DirectoryKind = "contacts" | "providers";
 type HandoffStatus = "pending" | "transfer_requested" | "transfer_failed" | "not_configured";
+type LegacyEscalationRow = {
+  id: string;
+  operation_id: string;
+  source_call_id: string;
+  reason: string;
+  status: DashboardEscalation["status"];
+  started_at: string;
+  resolved_at: string | null;
+};
+type HandoffDetailsRow = {
+  id: string;
+  trigger: string | null;
+  handoff_recipient_id: string | null;
+  handoff_status: HandoffStatus;
+  handoff_status_detail: string | null;
+};
 
 export class DashboardConsoleError extends Error {
   constructor(readonly status: number, message: string) {
@@ -84,6 +100,13 @@ function databaseError(error: unknown): never {
   throw new DashboardConsoleError(500, record.message ?? "The operations record could not be updated.");
 }
 
+/** New dashboard code may arrive before a forward migration finishes applying. */
+function missingHandoffSchema(error: unknown): boolean {
+  const record = error && typeof error === "object" ? error as { code?: string; message?: string } : {};
+  return record.code === "42703" || record.code === "42P01"
+    || (record.code === "PGRST204" && /handoff|escalation_contexts|call_transcript_segments/i.test(record.message ?? ""));
+}
+
 function snapshot(row: Record<string, unknown>, fields: string[]): JsonRecord {
   return Object.fromEntries(fields.map((field) => [field, row[field] ?? null]));
 }
@@ -103,7 +126,7 @@ async function recordOperatorAction(
   },
   client: SupabaseClient,
 ): Promise<void> {
-  const result = await client.from("operator_actions").insert({
+  const action = {
     actor_user_id: input.actorUserId,
     action: input.action,
     operation_id: input.operationId ?? null,
@@ -114,7 +137,12 @@ async function recordOperatorAction(
     before_state: input.beforeState ?? {},
     after_state: input.afterState ?? {},
     note: input.note ?? null,
-  });
+  };
+  let result = await client.from("operator_actions").insert(action);
+  if (result.error && missingHandoffSchema(result.error)) {
+    const { handoff_recipient_id: _handoffRecipientId, ...legacyAction } = action;
+    result = await client.from("operator_actions").insert(legacyAction);
+  }
   if (result.error) databaseError(result.error);
 }
 
@@ -134,7 +162,7 @@ export async function listDashboardEscalations(
 
   let query = client
     .from("escalations")
-    .select("id,operation_id,source_call_id,reason,trigger,status,started_at,resolved_at,handoff_recipient_id,handoff_status,handoff_status_detail", { count: "exact" })
+    .select("id,operation_id,source_call_id,reason,status,started_at,resolved_at", { count: "exact" })
     .order("started_at", { ascending: false });
   if (options.status) {
     query = options.status === "active"
@@ -149,15 +177,17 @@ export async function listDashboardEscalations(
   const result = await query.range(from, from + perPage - 1);
   if (result.error) databaseError(result.error);
 
-  const escalationRows = (result.data ?? []) as Array<{
-    id: string; operation_id: string; source_call_id: string; reason: string; trigger: string | null; status: DashboardEscalation["status"];
-    started_at: string; resolved_at: string | null; handoff_recipient_id: string | null; handoff_status: HandoffStatus;
-    handoff_status_detail: string | null;
-  }>;
+  const escalationRows = (result.data ?? []) as LegacyEscalationRow[];
   const operationIdsForRows = [...new Set(escalationRows.map((row) => row.operation_id))];
   const callIds = [...new Set(escalationRows.map((row) => row.source_call_id))];
-  const recipientIds = [...new Set(escalationRows.flatMap((row) => row.handoff_recipient_id ? [row.handoff_recipient_id] : []))];
   const escalationIds = escalationRows.map((row) => row.id);
+  const detailsResult = escalationIds.length > 0
+    ? await client.from("escalations").select("id,trigger,handoff_recipient_id,handoff_status,handoff_status_detail").in("id", escalationIds)
+    : { data: [], error: null };
+  if (detailsResult.error && !missingHandoffSchema(detailsResult.error)) databaseError(detailsResult.error);
+  const handoffDetails = detailsResult.error ? [] : (detailsResult.data ?? []) as HandoffDetailsRow[];
+  const detailsByEscalationId = new Map(handoffDetails.map((row) => [row.id, row]));
+  const recipientIds = [...new Set(handoffDetails.flatMap((row) => row.handoff_recipient_id ? [row.handoff_recipient_id] : []))];
   const [operationsResult, callsResult, contextsResult, recipientsResult] = await Promise.all([
     operationIdsForRows.length > 0
       ? client.from("operations").select("id,reference,status,contact_id").in("id", operationIdsForRows)
@@ -165,7 +195,7 @@ export async function listDashboardEscalations(
     callIds.length > 0
       ? client.from("calls").select("id,contact_id,provider_id").in("id", callIds)
       : Promise.resolve({ data: [], error: null }),
-    escalationIds.length > 0
+    handoffDetails.length > 0
       ? client.from("escalation_contexts").select("escalation_id,agent_summary,requested_action").in("escalation_id", escalationIds)
       : Promise.resolve({ data: [], error: null }),
     recipientIds.length > 0
@@ -174,8 +204,8 @@ export async function listDashboardEscalations(
   ]);
   if (operationsResult.error) databaseError(operationsResult.error);
   if (callsResult.error) databaseError(callsResult.error);
-  if (contextsResult.error) databaseError(contextsResult.error);
-  if (recipientsResult.error) databaseError(recipientsResult.error);
+  if (contextsResult.error && !missingHandoffSchema(contextsResult.error)) databaseError(contextsResult.error);
+  if (recipientsResult.error && !missingHandoffSchema(recipientsResult.error)) databaseError(recipientsResult.error);
 
   const operations = (operationsResult.data ?? []) as Array<{ id: string; reference: string; status: string; contact_id: string }>;
   const calls = (callsResult.data ?? []) as Array<{ id: string; contact_id: string | null; provider_id: string | null }>;
@@ -201,11 +231,11 @@ export async function listDashboardEscalations(
     const provider = row as { id: string; name: string };
     return [provider.id, provider.name];
   }));
-  const contextsByEscalationId = new Map((contextsResult.data ?? []).map((row) => {
+  const contextsByEscalationId = new Map((contextsResult.error ? [] : contextsResult.data ?? []).map((row) => {
     const context = row as { escalation_id: string; agent_summary: string; requested_action: string };
     return [context.escalation_id, context];
   }));
-  const recipientsById = new Map((recipientsResult.data ?? []).map((row) => {
+  const recipientsById = new Map((recipientsResult.error ? [] : recipientsResult.data ?? []).map((row) => {
     const recipient = row as { id: string; name: string; role: "supervisor" | "operator" };
     return [recipient.id, recipient];
   }));
@@ -217,8 +247,9 @@ export async function listDashboardEscalations(
     const counterpartyName = call?.provider_id
       ? providersById.get(call.provider_id) ?? null
       : call?.contact_id ? contactsById.get(call.contact_id) ?? null : null;
+    const handoff = detailsByEscalationId.get(row.id);
     const context = contextsByEscalationId.get(row.id);
-    const recipient = row.handoff_recipient_id ? recipientsById.get(row.handoff_recipient_id) ?? null : null;
+    const recipient = handoff?.handoff_recipient_id ? recipientsById.get(handoff.handoff_recipient_id) ?? null : null;
     return [{
       id: row.id,
       operationReference: operation.reference,
@@ -226,11 +257,11 @@ export async function listDashboardEscalations(
       clientName: contactsById.get(operation.contact_id) ?? "Unknown client",
       counterpartyName,
       reason: row.reason,
-      trigger: row.trigger,
+      trigger: handoff?.trigger ?? null,
       summary: context?.agent_summary ?? row.reason,
       requestedAction: context?.requested_action ?? "Human review is required.",
-      handoffStatus: row.handoff_status,
-      handoffStatusDetail: row.handoff_status_detail,
+      handoffStatus: handoff?.handoff_status ?? "pending",
+      handoffStatusDetail: handoff?.handoff_status_detail ?? null,
       recipient,
       status: row.status,
       startedAt: row.started_at,

@@ -503,12 +503,20 @@ type EscalationRow = {
   change_request_id: string | null;
   source_call_id: string;
   reason: string;
-  trigger: string | null;
-  handoff_recipient_id: string | null;
-  handoff_status: "pending" | "transfer_requested" | "transfer_failed" | "not_configured";
-  handoff_status_detail: string | null;
+  trigger?: string | null;
+  handoff_recipient_id?: string | null;
+  handoff_status?: "pending" | "transfer_requested" | "transfer_failed" | "not_configured";
+  handoff_status_detail?: string | null;
   started_at: string;
 };
+
+type HandoffDetailsRow = Pick<EscalationRow, "id" | "trigger" | "handoff_recipient_id" | "handoff_status" | "handoff_status_detail">;
+
+function missingHandoffSchema(error: unknown): boolean {
+  const record = error && typeof error === "object" ? error as { code?: string; message?: string } : {};
+  return record.code === "42703" || record.code === "42P01"
+    || (record.code === "PGRST204" && /handoff|escalation_contexts|call_transcript_segments/i.test(record.message ?? ""));
+}
 
 async function activeEscalationsFor(
   operationIds: string[],
@@ -517,16 +525,27 @@ async function activeEscalationsFor(
   if (operationIds.length === 0) return new Map();
   const result = await client
     .from("escalations")
-    .select("id,operation_id,change_request_id,source_call_id,reason,trigger,handoff_recipient_id,handoff_status,handoff_status_detail,started_at")
+    .select("id,operation_id,change_request_id,source_call_id,reason,started_at")
     .in("operation_id", operationIds)
     .in("status", ["started", "supervisor_joined"])
     .order("started_at", { ascending: false });
   if (result.error) throw result.error;
 
+  const rows = result.data as EscalationRow[];
+  const escalationIds = rows.map((row) => row.id);
+  const detailsResult = escalationIds.length > 0
+    ? await client.from("escalations").select("id,trigger,handoff_recipient_id,handoff_status,handoff_status_detail").in("id", escalationIds)
+    : { data: [], error: null };
+  if (detailsResult.error && !missingHandoffSchema(detailsResult.error)) throw detailsResult.error;
+  const detailsById = new Map((detailsResult.error ? [] : detailsResult.data ?? []).map((row) => {
+    const detail = row as HandoffDetailsRow;
+    return [detail.id, detail];
+  }));
+
   const latestByOperation = new Map<string, EscalationRow>();
-  for (const escalation of result.data as EscalationRow[]) {
+  for (const escalation of rows) {
     if (!latestByOperation.has(escalation.operation_id)) {
-      latestByOperation.set(escalation.operation_id, escalation);
+      latestByOperation.set(escalation.operation_id, { ...escalation, ...detailsById.get(escalation.id) });
     }
   }
   return latestByOperation;
@@ -800,17 +819,18 @@ export async function getDashboardOperationDossier(
     pickup_window_end: string; confirmation_reference: string | null;
   } | null;
   const activeEscalation = escalationMap.get(operation.id) ?? null;
+  const hasDurableHandoff = Boolean(activeEscalation?.handoff_status);
   const [changeRequestResult, escalationContextResult, recipientResult, transcriptResult] = await Promise.all([
     activeEscalation?.change_request_id
       ? client.from("change_requests").select("requested_pickup_window").eq("id", activeEscalation.change_request_id).maybeSingle()
       : Promise.resolve({ data: null, error: null }),
-    activeEscalation
+    activeEscalation && hasDurableHandoff
       ? client.from("escalation_contexts").select("agent_summary,requested_action").eq("escalation_id", activeEscalation.id).maybeSingle()
       : Promise.resolve({ data: null, error: null }),
-    activeEscalation?.handoff_recipient_id
+    activeEscalation?.handoff_recipient_id && hasDurableHandoff
       ? client.from("handoff_recipients").select("name,role").eq("id", activeEscalation.handoff_recipient_id).maybeSingle()
       : Promise.resolve({ data: null, error: null }),
-    activeEscalation
+    activeEscalation && hasDurableHandoff
       ? client.from("call_transcript_segments").select("id,speaker,content,recorded_at")
         .eq("call_id", activeEscalation.source_call_id).order("recorded_at", { ascending: true })
       : Promise.resolve({ data: [], error: null }),
@@ -876,13 +896,13 @@ export async function getDashboardOperationDossier(
       id: activeEscalation.id,
       counterpartyName: counterpartyName(calls.get(activeEscalation.source_call_id), names),
       reason: activeEscalation.reason,
-      trigger: activeEscalation.trigger,
+      trigger: activeEscalation.trigger ?? null,
       summary: typeof escalationContextResult.data?.agent_summary === "string"
         ? escalationContextResult.data.agent_summary : activeEscalation.reason,
       requestedAction: typeof escalationContextResult.data?.requested_action === "string"
         ? escalationContextResult.data.requested_action : "Human review is required.",
-      handoffStatus: activeEscalation.handoff_status,
-      handoffStatusDetail: activeEscalation.handoff_status_detail,
+      handoffStatus: activeEscalation.handoff_status ?? "pending",
+      handoffStatusDetail: activeEscalation.handoff_status_detail ?? null,
       recipient: recipientResult.data && (recipientResult.data.role === "supervisor" || recipientResult.data.role === "operator")
         ? { name: recipientResult.data.name, role: recipientResult.data.role }
         : null,
