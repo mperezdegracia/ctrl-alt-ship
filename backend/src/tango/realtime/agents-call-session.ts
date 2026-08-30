@@ -148,9 +148,9 @@ export class AgentsCallSession {
 
   private initialGreetingInstruction(): string {
     if (this.decision.outbound && this.decision.identity.persona === "provider") {
-      return "Start this outbound call in English. Say briefly that you are Tango calling to request a price quote for the verified selected operation, including its route and pickup window. Do not say or imply the client price cap or any private mandate term. Ask whether they can quote it, then wait. Do not call tools in this greeting.";
+      return "Start this outbound call in English. First say briefly that this call is recorded and transcribed for operational purposes. Then say that you are Tango calling to request a price quote for the verified selected operation, including its route and pickup window. Do not say or imply the client price cap or any private mandate term. Ask whether they can quote it, then wait. Do not call tools in this greeting.";
     }
-    return 'Start this call in English. Say: "Hi, this is Tango, your logistics assistant. How can I help you today?" Then wait for the caller. Do not call any tools in this greeting.';
+    return 'Start this call in English. Say: "Hi, this is Tango, your logistics assistant. This call is recorded and transcribed for operational purposes. How can I help you today?" Then wait for the caller. Do not call any tools in this greeting.';
   }
 
   private buildTools(): FunctionTool<unknown, ToolInputParameters>[] {

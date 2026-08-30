@@ -41,6 +41,7 @@ import { extractOutboundCallRecordId, routeOutboundCall } from "./tango/telephon
 import { PreviewEmailGateway, SmtpEmailGateway } from "./tango/services/email-gateway";
 import { EmailOutboxWorker, SupabaseEmailOutboxRepository } from "./tango/workers/email-outbox-worker";
 import { OutboundSourcingLoop } from "./tango/workers/outbound-sourcing-loop";
+import { CallEvidenceRetentionWorker } from "./tango/workers/call-evidence-retention-worker";
 import { AgentsSourcingJudge } from "./tango/agents/sourcing-judge";
 import { SourcingReviewService } from "./tango/services/sourcing-review-service";
 
@@ -271,9 +272,13 @@ app.post("/twilio/recording-status", (req, res) => {
     logger.warn("twilio.callback_rejected", { route: "recording-status", base_url_configured: Boolean(baseUrl) });
     return res.sendStatus(403);
   }
-  const body = req.body as { CallSid?: string; RecordingUrl?: string };
-  logger.info("twilio.recording_status_received", { twilio_call_sid: body.CallSid, recording_available: Boolean(body.RecordingUrl) });
-  if (body.CallSid && body.RecordingUrl) void supabaseAdmin.from("calls").update({ recording_url: body.RecordingUrl }).eq("twilio_call_sid", body.CallSid);
+  const body = req.body as { CallSid?: string; RecordingSid?: string; RecordingStatus?: string };
+  const status = body.RecordingStatus === "completed" ? "completed" : body.RecordingStatus === "absent" ? "absent" : "failed";
+  logger.info("twilio.recording_status_received", { twilio_call_sid: body.CallSid, recording_sid: body.RecordingSid, status });
+  if (body.CallSid) void supabaseAdmin.from("calls").update({
+    recording_sid: body.RecordingSid ?? null, recording_status: status,
+    recording_completed_at: status === "completed" ? new Date().toISOString() : null,
+  }).eq("twilio_call_sid", body.CallSid);
   return res.sendStatus(204);
 });
 
@@ -680,6 +685,7 @@ app.post("/openai/webhook", express.raw({ type: "*/*" }), async (req, res) => {
 
 const PORT = environment.PORT;
 const outboundSourcingLoop = new OutboundSourcingLoop(runOutboundSourcingWorker, logger);
+const evidenceRetentionWorker = new CallEvidenceRetentionWorker(supabaseAdmin, { accountSid: environment.TWILIO_ACCOUNT_SID, authToken: environment.TWILIO_AUTH_TOKEN }, logger);
 
 app.listen(PORT, () => {
   logger.info("server.started", {
@@ -699,4 +705,5 @@ app.listen(PORT, () => {
     emailWorker.start(environment.EMAIL_WORKER_POLL_INTERVAL_MS);
   }
   void outboundSourcingLoop.start();
+  evidenceRetentionWorker.start();
 });
