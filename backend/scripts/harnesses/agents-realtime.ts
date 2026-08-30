@@ -7,6 +7,7 @@ import type { AcceptedRoutingDecision } from "../../src/tango/agents/routing-ins
 import { AgentsCallSession } from "../../src/tango/realtime/agents-call-session";
 import { CallToolFactory } from "../../src/tango/tools/call-tool-factory";
 import { EscalationControlTool, MockEscalationTool } from "../../src/tango/tools/mock-escalation-tool";
+import { EscalationHandoffCoordinator } from "../../src/tango/telephony/escalation-handoff-coordinator";
 
 class FakeSocket extends EventTarget {
   readyState = 1;
@@ -169,9 +170,16 @@ async function main(): Promise<void> {
   await handoffTools.refresh();
   const handoffSocket = new FakeSocket();
   let farewells = 0;
+  let transfers = 0;
+  const coordinator = new EscalationHandoffCoordinator({ refer: async () => {
+    transfers++;
+    return { status: 200, requestId: "refer-confirmed" };
+  } });
+  await coordinator.prepare({ realtimeCallId: "rtc-test", supervisorTargetUri: "tel:+5491100000000" });
   const handoffCall = new AgentsCallSession(decision, handoffTools, logger, { onEscalationReady: () => {
     assert.ok(handoffSocket.output("confirm-transfer"));
     farewells++;
+    coordinator.beginFarewell();
     handoffCall.transport.requestResponse({ instructions: "Supervisor farewell" });
   } }, { skipOpenEventListeners: true, createWebSocket: async () => handoffSocket as unknown as WebSocket });
   await handoffCall.connect("rtc-test", "fixture-key");
@@ -208,6 +216,33 @@ async function main(): Promise<void> {
   invoke(handoffSocket, "confirm_escalation", {}, "confirm-transfer");
   await until(() => handoffSocket.output("confirm-transfer"));
   assert.equal(farewells, 1, "Only explicit confirmation may request the controlled farewell");
+  const protectedUpdate = handoffSocket.sent.filter((event) => event.type === "session.update").at(-1)!;
+  assert.deepEqual(protectedUpdate.session.tools, []);
+  assert.equal(protectedUpdate.session.tool_choice, "none");
+  assert.deepEqual(protectedUpdate.session.audio.input.turn_detection,
+    { type: "server_vad", create_response: false, interrupt_response: false });
+  const farewellRequest = handoffSocket.sent.find((event) => event.type === "response.create" && event.response?.instructions === "Supervisor farewell")!;
+  assert.ok(handoffSocket.sent.indexOf(protectedUpdate) < handoffSocket.sent.indexOf(farewellRequest));
+  handoffSocket.receive({ type: "session.updated", session: protectedUpdate.session });
+  handoffSocket.receive({ type: "response.created", response: { id: "farewell", status: "in_progress", output: [] } });
+  coordinator.observeResponseCreated("farewell");
+  handoffSocket.receive({ type: "response.output_item.added", response_id: "farewell", output_index: 0,
+    item: { id: "farewell-item", type: "message", role: "assistant", status: "in_progress", content: [] } });
+  handoffSocket.receive({ type: "response.output_audio.delta", response_id: "farewell", item_id: "farewell-item",
+    output_index: 0, content_index: 0, delta: "AAAA" });
+  const beforeSpeech = handoffSocket.sent.length;
+  for (let i = 0; i < 3; i++) {
+    coordinator.onCallerSpeechStarted();
+    handoffSocket.receive({ type: "input_audio_buffer.speech_started", audio_start_ms: i * 1000, item_id: `caller-${i}` });
+    handoffSocket.receive({ type: "input_audio_buffer.speech_stopped", audio_end_ms: i * 1000 + 200, item_id: `caller-${i}` });
+  }
+  assert.equal(handoffSocket.sent.slice(beforeSpeech).filter((event) =>
+    ["response.cancel", "conversation.item.truncate", "response.create"].includes(event.type)).length, 0,
+  "Speech must not interrupt the farewell locally or request another response");
+  assert.equal(transfers, 0);
+  await coordinator.onAudioStopped("farewell");
+  await coordinator.onAudioStopped("farewell");
+  assert.equal(transfers, 1, "Transfer once after audio playback, despite repeated speech events");
   handoffCall.session.close();
 
   // A committed command must retain its success result if reloading the next

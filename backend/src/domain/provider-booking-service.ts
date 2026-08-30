@@ -10,7 +10,7 @@ import type {
 } from "./provider-call-state";
 import { ToolError } from "./tool-error";
 
-export type ProviderBookingToolName = "reschedule_booking" | "cancel_booking";
+export type ProviderBookingToolName = "reschedule_booking" | "cancel_booking" | "decline_reschedule_alternatives";
 export type { ProviderBookingSelectionName, ProviderBookingSelectionResult } from "./provider-call-state";
 export type { ProviderBooking, ProviderBookingResult, ProviderBookingTarget, ProviderOperation } from "./provider-call-state";
 export interface ProviderBookingRepository {
@@ -46,14 +46,18 @@ export class ProviderBookingService {
     this.authorize();
     if (typeof id !== "string" || !id.trim()) this.invalid();
     this.object(args);
-    const keys = name === "reschedule_booking" ? ["operation_reference", "reason", "proposed_pickup_window"] : ["operation_reference", "reason"];
+    const keys = name === "reschedule_booking" ? ["operation_reference", "reason", "proposed_pickup_window", "proposed_pickup_local_window"] : ["operation_reference", "reason"];
     if (Object.keys(args).some((key) => !keys.includes(key)) || typeof args.reason !== "string" || !args.reason.trim()
       || ("operation_reference" in args && (typeof args.operation_reference !== "string" || !/^OP-[0-9]{6,}$/.test(args.operation_reference)))) this.invalid();
     if (name === "reschedule_booking") {
-      const window = args.proposed_pickup_window;
+      const local = "proposed_pickup_local_window" in args;
+      if (local === ("proposed_pickup_window" in args)) this.invalid();
+      const window = local ? args.proposed_pickup_local_window : args.proposed_pickup_window;
       this.object(window);
-      if (Object.keys(window).length !== 2 || !this.timestamp(window.start_at) || !this.timestamp(window.end_at)
-        || Date.parse(window.start_at) >= Date.parse(window.end_at)) this.invalid();
+      const start = local ? this.localTimestamp(window.start_at) : window.start_at;
+      const end = local ? this.localTimestamp(window.end_at) : window.end_at;
+      if (Object.keys(window).length !== 2 || !this.timestamp(start) || !this.timestamp(end)
+        || Date.parse(start) >= Date.parse(end)) this.invalid();
     }
     const selectedReference = this.state?.selectedBooking?.operation.operation_reference;
     const reference = typeof args.operation_reference === "string" ? args.operation_reference : selectedReference;
@@ -76,8 +80,12 @@ export class ProviderBookingService {
       || !Number.isFinite(Date.parse(value))) return false;
     return new Date(`${value.slice(0, 10)}T00:00:00Z`).toISOString().slice(0, 10) === value.slice(0, 10);
   }
+  private localTimestamp(value: unknown): string | undefined {
+    return typeof value === "string" && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?$/.test(value)
+      ? `${value}Z` : undefined;
+  }
   private invalid(): never {
-    throw new ToolError("invalid_arguments", "Provide an exact operation reference when selecting, a nonempty reason, and for rescheduling an ordered pickup window with timezone. Do not supply IDs, price changes, mandate terms or evidence.");
+    throw new ToolError("invalid_arguments", "Provide an exact operation reference when selecting, a nonempty reason, and for rescheduling one ordered proposed_pickup_local_window with local clock times and no timezone. The server resolves the saved pickup offset. Do not supply IDs, price changes, mandate terms or evidence.");
   }
 
   private authorize(): void {

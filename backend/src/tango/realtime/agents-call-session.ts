@@ -29,8 +29,16 @@ function isHandoffReady(result: unknown): boolean {
 
 /** SDK SIP transport with diagnostics and an explicit empty-tools compatibility fix. */
 class ObservedSIPTransport extends OpenAIRealtimeSIP {
-  constructor(options: OpenAIRealtimeWebSocketOptions, private readonly observe: (event: RealtimeClientMessage) => RealtimeClientMessage) {
+  constructor(options: OpenAIRealtimeWebSocketOptions,
+    private readonly observe: (event: RealtimeClientMessage) => RealtimeClientMessage,
+    private readonly handoffConfirmed: () => boolean) {
     super(options);
+  }
+
+  override interrupt(cancelOngoingResponse = true): void {
+    // The WebSocket SDK also interrupts locally on speech_started, even when
+    // server interrupt_response is false. Protect both sides of the SIP call.
+    if (!this.handoffConfirmed()) super.interrupt(cancelOngoingResponse);
   }
 
   override sendEvent(event: RealtimeClientMessage): void {
@@ -41,6 +49,13 @@ class ObservedSIPTransport extends OpenAIRealtimeSIP {
     const payload = super.buildSessionPayload(config);
     // SDK 0.17 omits tools for []; omission leaves previous server tools active.
     if (config.tools?.length === 0) payload.tools = [];
+    if (this.handoffConfirmed()) {
+      payload.tools = [];
+      payload.tool_choice = "none";
+      payload.audio = { ...payload.audio, input: { ...payload.audio?.input,
+        turn_detection: { type: "server_vad", create_response: false, interrupt_response: false },
+      } };
+    }
     return payload;
   }
 }
@@ -59,6 +74,7 @@ export class AgentsCallSession {
   private readonly factory = new RealtimeSessionFactory();
   private updateToolCallId = "sdk_connect";
   private escalationReady = false;
+  private handoffConfirmed = false;
 
   constructor(
     private readonly decision: AcceptedRoutingDecision,
@@ -77,7 +93,7 @@ export class AgentsCallSession {
         operation: provider.flow === "provider_inbound" ? provider.selectedBooking?.operation ?? null : provider.operation,
       } : undefined);
       return this.diagnostics.prepareUpdate(event as SessionUpdateEvent, state, this.updateToolCallId);
-    });
+    }, () => this.handoffConfirmed);
     this.agent = new RealtimeAgent({
       name: `Tango ${decision.identity.persona}`, voice: initial.audio.output.voice,
       instructions: initial.instructions, tools: this.buildTools(),
@@ -209,6 +225,9 @@ export class AgentsCallSession {
     let result: unknown;
     let succeeded = false;
     try {
+      if (this.handoffConfirmed) {
+        throw new ToolError("invalid_transition", "The caller already confirmed the live transfer. No further actions are available in Tango.");
+      }
       result = await this.tools.execute(name, args, { toolCallId, evidenceSegmentId });
       succeeded = true;
       if (name !== "escalate") this.hooks.onProgress?.();
@@ -237,17 +256,20 @@ export class AgentsCallSession {
     // The SDK may emit agent_tool_end while updateAgent is flushing the tool
     // result. Arm the one-shot callback before that await, not after it.
     this.escalationReady = escalation;
+    if (escalation) this.handoffConfirmed = true;
     // While review is pending only its confirm/cancel controls are available.
     // Cancellation refreshes the original domain profile, never an old snapshot
     // of permissions or operational data.
-    this.agent.tools = refreshFailed ? [] : this.buildTools();
-    this.agent.instructions = refreshFailed
+    this.agent.tools = refreshFailed || this.handoffConfirmed ? [] : this.buildTools();
+    this.agent.instructions = this.handoffConfirmed
+      ? "The caller confirmed the live transfer. Say only the requested short farewell in the caller's language, then remain silent. Do not ask for confirmation again, offer to return to Tango, or claim a human has answered. The server will request the transfer after the farewell audio finishes."
+      : refreshFailed
       ? "No further actions are available. Explain the actual tool result briefly in the caller's language and close the conversation. A successful write remains committed; do not claim it was rolled back or retry it. Do not claim a human transfer unless the result explicitly says handoff_ready."
       : this.tools.escalationPending
         ? `You are Tango. Continue in the caller's active language. A human review is pending. No operation changes are authorized in this step. Never reveal private client mandate limits or another provider's prices. Do not invent approvals or claim an out-of-mandate request was accepted.
 Ask whether they want the human transfer now or prefer to go back and continue with Tango, then WAIT for their answer. Never call confirm_escalation in the same turn as escalate.
 If the caller says "volver atrás", "seguir con vos", "cancel the transfer", changes their mind or asks to return, call cancel_escalation. This cancels only the handoff, never the shipment or booking. After success resume the previous flow using the preserved conversation and verified state; do not ask for already recorded information. Returning does not authorize requests outside the mandate.
-Only after an explicit yes to the transfer call confirm_escalation. If they interrupt the farewell, listen and reconfirm before calling confirm_escalation again; do not assume the transfer happened.
+Only after an explicit yes to the transfer call confirm_escalation. This commits the live transfer: the short farewell is protected from voice interruptions and no second confirmation is needed. Before confirmation the caller may still cancel and return to Tango. Never claim a human has answered merely because the transfer was confirmed.
 If handoff_ready is false, explain that no live transfer is available: the review remains open for follow-up, or they may cancel it and continue with Tango. If cancellation fails, do not claim it succeeded.`
         : this.factory.create(this.decision, [], this.tools.flowState, this.tools.providerFlowState).instructions;
     this.updateToolCallId = toolCallId;

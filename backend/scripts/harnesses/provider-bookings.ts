@@ -10,6 +10,7 @@ import { ToolError, publicToolError } from "../../src/domain/tool-error";
 import { SupabaseProviderBookingRepository } from "../../src/tango/supabase/provider-booking-repository";
 import { CallToolFactory } from "../../src/tango/tools/call-tool-factory";
 import { MockEscalationTool } from "../../src/tango/tools/mock-escalation-tool";
+import { ProviderInboundInstructions } from "../../src/tango/agents/provider-inbound-instructions";
 
 const scope: ToolCallScope = {
   callId: "private-call", realtimeCallId: "rtc-booking", persona: "provider", counterpartyId: "private-provider",
@@ -50,6 +51,12 @@ class RpcFixture {
 }
 
 async function main(): Promise<void> {
+  const context = new ProviderInboundInstructions({ ...rescheduleState(), selectedBooking: { ...selected,
+    pickup_utc_offset: "-06:00", pickup_window: { start_at: "2026-09-03T06:00:00Z", end_at: "2026-09-04T05:59:59Z" },
+  } }).context();
+  assert.match(context, /"pickup_local_window":\{"start_at":"2026-09-03T00:00:00","end_at":"2026-09-03T23:59:59"\}/,
+    "The current full local day must not be read as two UTC dates");
+  assert.doesNotMatch(context, /price_cap|private-mandate|action_windows/);
   const rpc = new RpcFixture();
   const tools = rpc.create();
   assert.equal(tools.definitions.length, 0);
@@ -69,6 +76,41 @@ async function main(): Promise<void> {
   }
   assert.deepEqual(await tools.execute("reschedule_booking", request, { toolCallId: "change-1" }), rpc.result);
   assert.deepEqual(rpc.requests.at(-1)?.args.p_context, target);
+  const localRequest = { operation_reference: operation.operation_reference, reason: "Any time that day",
+    proposed_pickup_local_window: { start_at: "2026-09-04T00:00:00", end_at: "2026-09-04T23:59:59" } };
+  assert.deepEqual(await tools.execute("reschedule_booking", localRequest, { toolCallId: "local-change" }), rpc.result);
+  assert.deepEqual(rpc.requests.at(-1)?.args.p_arguments, localRequest, "Local times reach SQL unchanged; the model supplies no offset");
+  for (const bad of [
+    { ...localRequest, proposed_pickup_window: revised },
+    { ...localRequest, proposed_pickup_local_window: { start_at: "2026-09-04T00:00:00-05:00", end_at: "2026-09-04T23:59:59-05:00" } },
+    { ...localRequest, proposed_pickup_local_window: { start_at: "2026-02-30T00:00:00", end_at: "2026-03-01T23:59:59" } },
+    { ...localRequest, proposed_pickup_local_window: { start_at: "2026-09-04T00:00:00", end_at: "2026-09-04T00:00:00" } },
+  ]) await assert.rejects(tools.execute("reschedule_booking", bad, { toolCallId: "bad-local" }), { code: "invalid_arguments" });
+  const schema = tools.definitions.find((tool) => tool.name === "reschedule_booking")!.parameters;
+  assert.match(JSON.stringify(schema), /proposed_pickup_local_window/);
+  assert.doesNotMatch(JSON.stringify(schema), /proposed_pickup_window/);
+
+  const alternatives: ProviderBookingResult = { status: "alternatives_available", reason_code: "outside_action_window",
+    commitment_created: false, available_pickup_local_windows: [
+      { start_at: "2026-09-04T00:00:00", end_at: "2026-09-04T23:59:59" },
+    ] };
+  rpc.result = alternatives;
+  rpc.state = { ...rescheduleState(), profile: "provider_reschedule_alternatives", lastResult: alternatives };
+  await tools.refresh();
+  assert.deepEqual(tools.definitions.map((tool) => tool.name), ["reschedule_booking", "decline_reschedule_alternatives"]);
+  assert.deepEqual(tools.providerFlowState?.flow === "provider_inbound" && tools.providerFlowState.lastResult, alternatives);
+  await assert.rejects(tools.execute("escalate", { reason: "Skip options" }, { toolCallId: "skip-options" }), { code: "tool_unavailable" });
+  const optionsPrompt = new ProviderInboundInstructions(rpc.state).build();
+  assert.match(optionsPrompt, /¿Podés en alguno de estos\?/);
+  assert.match(optionsPrompt, /WAIT for the caller's next turn/);
+  assert.match(optionsPrompt, /decline_reschedule_alternatives/);
+  assert.match(new ProviderInboundInstructions(rpc.state).context(), /available_pickup_local_windows/);
+  rpc.result = { status: "requires_escalation", reason_code: "alternatives_declined", commitment_created: false };
+  assert.deepEqual(await tools.execute("decline_reschedule_alternatives", { reason: "None of those times work" }, { toolCallId: "decline-options" }), rpc.result);
+  rpc.state = { ...rescheduleState(), profile: "provider_booking_escalation", lastResult: rpc.result };
+  await tools.refresh();
+  assert.deepEqual(tools.definitions.map((tool) => tool.name), ["escalate"]);
+  rpc.result = { status: "applied", reason_code: null, commitment_created: false };
 
   rpc.state = { ...rescheduleState(), profile: "terminal", commandTarget: null, selectedBooking: null };
   await tools.refresh();

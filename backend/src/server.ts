@@ -603,7 +603,6 @@ app.post("/openai/webhook", express.raw({ type: "*/*" }), async (req, res) => {
             break;
 
           case "input_audio_buffer.speech_stopped":
-            handoffCoordinator.onCallerSpeechStopped();
             callLogger.info("audio.speech_stopped");
             break;
 

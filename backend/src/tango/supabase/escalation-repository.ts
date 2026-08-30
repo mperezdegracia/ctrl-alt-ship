@@ -13,6 +13,7 @@ const errors: Record<string, [ToolErrorCode, string]> = {
   idempotency_conflict: ["idempotency_conflict", "This escalation request was already used with different details."],
   invalid_transition: ["invalid_transition", "This escalation can no longer be cancelled or reused. The transfer may have started."],
   stale_operation: ["stale_operation", "This call changed. Refresh its current state before continuing."],
+  booking_alternatives_pending: ["invalid_transition", "First offer the available pickup windows and wait for the caller. Record a clear refusal of all options with decline_reschedule_alternatives before escalating."],
 };
 
 type EscalationResult = {

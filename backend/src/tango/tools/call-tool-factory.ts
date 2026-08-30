@@ -7,7 +7,7 @@ import type { RealtimeTool } from "./realtime-tool";
 import { ProviderQuoteService, type ProviderQuoteRepository } from "../../domain/provider-quote-service";
 import { CreateQuoteTool, DeclineQuoteRequestTool, RecordProviderOfferTool } from "./provider-quote-tool";
 import { ProviderBookingService, type ProviderBookingRepository } from "../../domain/provider-booking-service";
-import { CancelBookingTool, RescheduleBookingTool, SelectBookingForCancellationTool, SelectBookingForRescheduleTool } from "./provider-booking-tool";
+import { CancelBookingTool, DeclineRescheduleAlternativesTool, RescheduleBookingTool, SelectBookingForCancellationTool, SelectBookingForRescheduleTool } from "./provider-booking-tool";
 import type { StructuredLogger } from "../../observability/logger";
 
 export class CallToolFactory {
@@ -46,6 +46,7 @@ export class CallToolFactory {
     );
     if (bookingService) tools.push(
       new RescheduleBookingTool(bookingService), new CancelBookingTool(bookingService),
+      new DeclineRescheduleAlternativesTool(bookingService),
       new SelectBookingForRescheduleTool(bookingService), new SelectBookingForCancellationTool(bookingService),
     );
     return new CallToolSession(tools, clientService, providerService, bookingService, this.logger?.child({

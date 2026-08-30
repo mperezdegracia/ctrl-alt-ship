@@ -72,9 +72,7 @@ async function verifyReturnBeforeTransfer(): Promise<void> {
   coordinator.beginFarewell();
   coordinator.observeResponseCreated("interrupted-farewell");
   coordinator.onCallerSpeechStarted();
-  assert.equal(await coordinator.onAudioStopped("interrupted-farewell"), undefined);
-  coordinator.onCallerSpeechStopped();
-  assert.equal(transfers, 0, "Barge-in must disarm the transfer before interpreting speech");
+  assert.equal(transfers, 0, "Speech alone must not transfer before the farewell finishes");
   let releaseCancel!: () => void;
   const cancellation = coordinator.cancel(() => new Promise<void>((resolve) => { releaseCancel = resolve; }));
   assert.equal(coordinator.canReturn, false);
@@ -238,8 +236,11 @@ async function verifyFarewellOrdering(): Promise<void> {
 
   await coordinator.prepare(handoff);
   assert.deepEqual(actions, []);
+  coordinator.onCallerSpeechStarted();
   coordinator.beginFarewell();
+  coordinator.onCallerSpeechStarted();
   assert.equal(coordinator.observeResponseCreated("resp-farewell"), true);
+  coordinator.onCallerSpeechStarted();
   assert.equal(coordinator.observeResponseCreated("resp-duplicate"), false);
   assert.equal(await coordinator.onAudioStopped("resp-other"), undefined);
   assert.deepEqual(await coordinator.onAudioStopped("resp-farewell"), {

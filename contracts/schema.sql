@@ -452,6 +452,7 @@ CREATE TABLE tool_command_receipts (
     'create_quote', 'decline_quote_request', 'reschedule_booking', 'cancel_booking',
     'record_provider_quote', -- Historical receipts; this legacy RPC is revoked.
     'select_booking_for_reschedule', 'select_booking_for_cancellation', 'record_provider_offer',
+    'decline_reschedule_alternatives',
     'escalate'
   )),
   arguments jsonb NOT NULL CHECK (jsonb_typeof(arguments) = 'object'),

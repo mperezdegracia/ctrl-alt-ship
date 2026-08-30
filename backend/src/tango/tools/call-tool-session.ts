@@ -31,6 +31,7 @@ export class CallToolSession extends RealtimeToolRegistry {
       const names = this.providerState?.profile === "terminal" ? []
         : this.providerState?.flow === "provider_outbound" && this.providerState.profile === "provider_quote" ? ["record_provider_offer", "create_quote", "decline_quote_request", "escalate"]
         : this.providerState?.profile === "provider_booking_escalation" ? ["escalate"]
+        : this.providerState?.profile === "provider_reschedule_alternatives" ? ["reschedule_booking", "decline_reschedule_alternatives"]
         : this.providerState?.profile === "provider_reschedule" ? ["reschedule_booking", "escalate"]
         : this.providerState?.profile === "provider_cancel_booking" ? ["cancel_booking", "escalate"]
         : this.providerState?.profile === "provider_inbound_entry" ? ["list_provider_operations",
@@ -107,7 +108,7 @@ export class CallToolSession extends RealtimeToolRegistry {
     if (this.providerService && ["create_quote", "decline_quote_request", "record_provider_offer"].includes(name)) {
       return super.execute(name, args, invocation);
     }
-    if (this.bookingService && ["reschedule_booking", "cancel_booking", "select_booking_for_reschedule", "select_booking_for_cancellation"].includes(name)) {
+    if (this.bookingService && ["reschedule_booking", "cancel_booking", "decline_reschedule_alternatives", "select_booking_for_reschedule", "select_booking_for_cancellation"].includes(name)) {
       return super.execute(name, args, invocation);
     }
     if (this.clientService && ["create_operation", "update_operation", "confirm_mandate", "cancel_operation"].includes(name)) {

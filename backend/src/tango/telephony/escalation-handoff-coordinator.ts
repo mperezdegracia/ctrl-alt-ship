@@ -22,7 +22,6 @@ export class EscalationHandoffCoordinator {
   private referred = false;
   private transferStarted = false;
   private cancelling = false;
-  private callerSpeaking = false;
 
   constructor(private readonly realtime: SipReferPort, private readonly logger?: DiagnosticLogger) {}
 
@@ -30,18 +29,19 @@ export class EscalationHandoffCoordinator {
   get referAccepted(): boolean { return this.referred; }
   get canReturn(): boolean { return !this.transferStarted && !this.cancelling; }
 
-  /** Disarm synchronously before awaiting persistence or processing barge-in. */
+  /** Disarm only for explicit cancellation, never for voice activity. */
   interruptFarewell(): void {
     this.awaitingFarewellResponse = false;
     this.farewellResponseId = undefined;
   }
 
   onCallerSpeechStarted(): void {
-    this.callerSpeaking = true;
-    this.interruptFarewell();
+    if (this.awaitingFarewellResponse || this.farewellResponseId) {
+      this.logger?.info("escalation.speech_ignored_after_confirmation", {
+        farewell_response_id: this.farewellResponseId,
+      });
+    }
   }
-
-  onCallerSpeechStopped(): void { this.callerSpeaking = false; }
 
   async cancel(persist: () => Promise<void>): Promise<void> {
     if (!this.canReturn) throw new Error("The transfer has already started or cancellation is in progress");
@@ -70,7 +70,7 @@ export class EscalationHandoffCoordinator {
     if (!this.handoff) throw new Error("Escalation handoff is not prepared");
     if (!this.canReturn) throw new Error("The transfer has already started");
     this.interruptFarewell();
-    this.awaitingFarewellResponse = !this.callerSpeaking;
+    this.awaitingFarewellResponse = true;
   }
 
   observeResponseCreated(responseId: string): boolean {

@@ -14,6 +14,7 @@ export type ProviderBookingSummary = {
 };
 export type ProviderBooking = {
   operation: ProviderOperation; pickup_window: PickupWindow;
+  pickup_utc_offset?: string | null;
   confirmed_price: number; currency: string; payment_term_days: number | null;
   requires_reconfirmation: boolean;
 };
@@ -31,6 +32,8 @@ export type ProviderBookingSelectionResult = {
 };
 export type ProviderBookingResult =
   | { status: "applied" | "requires_escalation"; reason_code: string | null; commitment_created: false }
+  | { status: "alternatives_available"; reason_code: "outside_action_window"; commitment_created: false;
+      available_pickup_local_windows: PickupWindow[] }
   | { booking_status: "cancelled"; operation_status: "sourcing" | "needs_follow_up";
       commitment_created: false; client_email_queued: false };
 /** Event-only transition IDs. Never accept these from the model or project them into tool outputs. */
@@ -53,7 +56,7 @@ export type ProviderOfferResult = { status: "recorded" };
 export type ProviderInboundState = {
   flow: "provider_inbound";
   profile: "provider_inbound_entry" | "provider_reschedule" | "provider_cancel_booking"
-    | "provider_booking_escalation" | "provider_unavailable" | "terminal";
+    | "provider_reschedule_alternatives" | "provider_booking_escalation" | "provider_unavailable" | "terminal";
   intent: "undecided" | "reschedule" | "cancel_booking";
   bookings: ProviderBookingSummary[];
   selectedBooking: ProviderBooking | null;

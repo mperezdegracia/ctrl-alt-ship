@@ -21,6 +21,7 @@
     "harness:tools:client": "node --require tsx/cjs scripts/harnesses/client-tools.ts",
     "harness:tools:provider": "node --require tsx/cjs scripts/harnesses/provider-tools.ts",
     "harness:tools:bookings": "node --require tsx/cjs scripts/harnesses/provider-bookings.ts",
+    "harness:bookings:windows:sql": "node --require tsx/cjs scripts/harnesses/booking-windows-sql.ts",
     "harness:quotes:above-budget": "node --require tsx/cjs scripts/harnesses/above-budget-quotes.ts",
     "harness:quotes:legacy-evidence:sql": "node --require tsx/cjs scripts/harnesses/above-budget-quotes-sql.ts --legacy-evidence",
     "harness:quotes:above-budget:sql": "node --require tsx/cjs scripts/harnesses/above-budget-quotes-sql.ts",

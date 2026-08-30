@@ -16,7 +16,8 @@ import { ToolError, type ToolErrorCode } from "../../domain/tool-error";
 
 const errors: Record<string, [ToolErrorCode, string]> = {
   not_authorized: ["not_authorized", "The provider or call is no longer authorized."],
-  invalid_arguments: ["invalid_arguments", "Check the reference, reason and exact zoned pickup window. Unchanged windows are not a reschedule."],
+  invalid_arguments: ["invalid_arguments", "Check the reference, reason and ordered local pickup window. Send local clock times without an offset. Unchanged windows are not a reschedule."],
+  pickup_timezone_unavailable: ["invalid_arguments", "The saved pickup windows do not have one verified UTC offset. Do not guess a timezone or claim the booking changed; explain that the pickup time needs clarification."],
   operation_reference_required: ["invalid_arguments", "Select the exact operation reference for this provider's confirmed booking."],
   operation_not_available: ["operation_not_available", "No confirmed booking for this operation is available to this provider."],
   intent_locked: ["intent_locked", "This call is locked to another operation or path."],
@@ -27,7 +28,7 @@ const errors: Record<string, [ToolErrorCode, string]> = {
 
 const inboundProfiles = new Set([
   "provider_inbound_entry", "provider_reschedule", "provider_cancel_booking",
-  "provider_booking_escalation", "provider_unavailable", "terminal",
+  "provider_reschedule_alternatives", "provider_booking_escalation", "provider_unavailable", "terminal",
 ]);
 
 function record(value: unknown): Record<string, unknown> {
@@ -116,6 +117,7 @@ function booking(value: unknown): ProviderBooking {
   if (typeof requiresReconfirmation !== "boolean") throw new Error("Invalid provider tool response: selectedBooking.requires_reconfirmation");
   return {
     operation: operation(input.operation), pickup_window: window,
+    pickup_utc_offset: nullableString(input.pickup_utc_offset ?? null, "selectedBooking.pickup_utc_offset"),
     confirmed_price: finiteNumber(input.confirmed_price, "selectedBooking.confirmed_price"),
     currency: stringValue(input.currency, "selectedBooking.currency"),
     payment_term_days: payment,
@@ -134,6 +136,14 @@ function target(value: unknown): ProviderBookingTarget {
 
 function result(value: unknown): ProviderBookingResult {
   const input = record(value);
+  if (input.status === "alternatives_available") {
+    if (input.reason_code !== "outside_action_window" || input.commitment_created !== false
+      || !Array.isArray(input.available_pickup_local_windows) || input.available_pickup_local_windows.length === 0) {
+      throw new Error("Invalid provider booking alternatives");
+    }
+    return { status: "alternatives_available", reason_code: "outside_action_window", commitment_created: false,
+      available_pickup_local_windows: input.available_pickup_local_windows.map((window) => strictWindow(window, "available_pickup_local_windows")) };
+  }
   if (input.status === "applied" || input.status === "requires_escalation") {
     if (input.commitment_created !== false) throw new Error("Invalid provider booking result");
     return { status: input.status, reason_code: nullableString(input.reason_code, "result.reason_code"), commitment_created: false };
@@ -167,13 +177,18 @@ function inboundState(value: unknown): ProviderInboundState {
   if (!(input.lastResult === null || typeof input.lastResult === "object")) throw new Error("Invalid provider inbound tool state: lastResult");
   const selectedBooking = input.selectedBooking === null ? null : booking(input.selectedBooking);
   const commandTarget = input.commandTarget === null ? null : target(input.commandTarget);
-  if ((input.profile === "provider_reschedule" || input.profile === "provider_cancel_booking" || input.profile === "provider_booking_escalation")
+  const lastResult = input.lastResult === null ? null : result(input.lastResult);
+  if (input.profile === "provider_reschedule_alternatives"
+    && (!lastResult || !("status" in lastResult) || lastResult.status !== "alternatives_available")) {
+    throw new Error("Missing provider booking alternatives");
+  }
+  if ((input.profile === "provider_reschedule" || input.profile === "provider_reschedule_alternatives" || input.profile === "provider_cancel_booking" || input.profile === "provider_booking_escalation")
     && (selectedBooking === null || commandTarget === null)) throw new Error("Invalid provider inbound tool state: selected booking required");
   return {
     flow: "provider_inbound", profile: input.profile,
     intent: input.intent, bookings: input.bookings.map(bookingSummary),
     selectedBooking, commandTarget,
-    lastResult: input.lastResult === null ? null : result(input.lastResult),
+    lastResult,
   };
 }
 export class SupabaseProviderBookingRepository implements ProviderBookingRepository {
