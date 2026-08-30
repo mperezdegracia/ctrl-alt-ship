@@ -184,6 +184,14 @@
     {
       "file": "20260830233000_accept_above_budget_quotes.sql",
       "sha256": "0c974201700be81fc6b0f87691176881f30b23268b21ff51e9e4fb3b71e11f93"
+    },
+    {
+      "file": "20260830234000_local_booking_reschedule_windows.sql",
+      "sha256": "2767ca4927a2c42a04c61ee7e45a5e211e1eba759ab709156549940b5150507b"
+    },
+    {
+      "file": "20260830235000_offer_booking_windows_before_escalation.sql",
+      "sha256": "54b16743f84c4b079ac51f5276e14ebe38db4d2b74af340e682ac10be430c81c"
     }
   ]
 }
