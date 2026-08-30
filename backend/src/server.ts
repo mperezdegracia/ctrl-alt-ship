@@ -43,7 +43,11 @@ import { EmailOutboxWorker, SupabaseEmailOutboxRepository } from "./tango/worker
 import { OutboundSourcingLoop } from "./tango/workers/outbound-sourcing-loop";
 import { AgentsSourcingJudge } from "./tango/agents/sourcing-judge";
 import { SourcingReviewService } from "./tango/services/sourcing-review-service";
-import type { ToolCallScope } from "./domain/call-flow";
+import { isProviderOutboundPurpose } from "./domain/call-flow";
+import { resolveCallScope } from "./tango/telephony/call-scope";
+import { SupabaseProviderContactRepository } from "./tango/supabase/provider-contact-repository";
+import { ProviderContactWorker } from "./tango/workers/provider-contact-worker";
+import { ProviderCallStatusHandler, ProviderCallStatusHttpError } from "./tango/telephony/provider-call-status-handler";
 
 const app = express();
 
@@ -88,6 +92,9 @@ app.use((req, res, next) => {
   jsonBodyParser(req, res, next);
 });
 
+// Twilio signs form-encoded callback fields; keep OpenAI's raw webhook untouched.
+app.use("/twilio", express.urlencoded({ extended: false }));
+
 const OPENAI_API_KEY = environment.OPENAI_API_KEY;
 const logger = new StructuredLogger("tango-backend");
 const sourcingDiagnostics = new StateTransitionLog(logger);
@@ -120,96 +127,52 @@ const emailWorker = new EmailOutboxWorker(
   emailGateway,
   logger.child({ worker: "email_outbox" }),
 );
-let outboundWorkerRunning = false;
-
-type ClaimedProviderContact = {
-  outbox_id: string;
-  operation_id: string;
-  quote_request_id: string;
-  provider_id: string;
-  provider_phone: string;
-  purpose: "quote_request" | "renegotiation";
-};
-
 function providerPhoneType(capabilities: unknown): "mobile" | "landline" | undefined {
   if (!capabilities || typeof capabilities !== "object" || Array.isArray(capabilities)) return undefined;
   const type = (capabilities as Record<string, unknown>).phone_type;
   return type === "mobile" || type === "landline" ? type : undefined;
 }
 
-/**
- * Claim at most one persisted contact per iteration. The loop waits five
- * seconds between iterations, but never waits for a conversation to finish.
- * Each sourcing cycle selects two providers; this is not a global call limit.
- */
+const providerContactRepository = new SupabaseProviderContactRepository(supabaseAdmin);
+const providerContactWorker = new ProviderContactWorker({
+  repository: providerContactRepository,
+  logger,
+  dial: async (job) => {
+    const provider = await supabaseAdmin.from("providers").select("capabilities,active")
+      .eq("id", job.provider_id).single();
+    if (provider.error || !provider.data?.active) throw provider.error ?? new Error("Provider unavailable");
+    return createTwilioOutboundCall({
+      to: job.provider_phone, phoneType: providerPhoneType(provider.data.capabilities),
+      callRecordId: job.call_id, purpose: job.purpose,
+    });
+  },
+});
+const providerCallStatusHandler = new ProviderCallStatusHandler({
+  repository: providerContactRepository,
+  expectedAccountSid: environment.TWILIO_ACCOUNT_SID ?? "",
+});
+
+/** The existing loop polls once; all dial/retry ownership and slots are durable in SQL. */
 async function runOutboundSourcingWorker(): Promise<void> {
-  if (outboundWorkerRunning) return;
-  outboundWorkerRunning = true;
-  try {
-    const { data, error } = await supabaseAdmin.rpc("claim_next_provider_contact");
-    if (error) throw error;
-    const job = (data?.[0] ?? null) as ClaimedProviderContact | null;
-    if (job) {
-      const jobStarted = Date.now();
-      const jobLogger = logger.child({ outbox_id: job.outbox_id, operation_id: job.operation_id,
-        quote_request_id: job.quote_request_id, provider_id: job.provider_id });
-      jobLogger.info("sourcing.contact_claimed", { purpose: job.purpose, destination_phone_suffix: job.provider_phone.slice(-4) });
-      const inserted = await supabaseAdmin.from("calls").insert({
-        operation_id: job.operation_id, provider_id: job.provider_id,
-        provider_intent: "quote", persona: "provider", direction: "outbound", outcome: "active",
-      }).select("id").single();
-      if (inserted.error || !inserted.data) throw inserted.error ?? new Error("Could not persist provider call");
-      jobLogger.info("sourcing.call_record_created", { call_record_id: inserted.data.id });
-      try {
-        const provider = await supabaseAdmin.from("providers").select("capabilities").eq("id", job.provider_id).single();
-        if (provider.error || !provider.data) throw provider.error ?? new Error("Provider phone type unavailable");
-        jobLogger.info("sourcing.dial_requested", { call_record_id: inserted.data.id,
-          phone_type: providerPhoneType(provider.data.capabilities) ?? "unspecified" });
-        const twilio = await createTwilioOutboundCall({
-          to: job.provider_phone, phoneType: providerPhoneType(provider.data.capabilities),
-          callRecordId: inserted.data.id, purpose: job.purpose,
-        });
-        jobLogger.info("sourcing.dial_accepted", { call_record_id: inserted.data.id, twilio_call_sid: twilio.sid,
-          duration_ms: Date.now() - jobStarted, human_answer_confirmed: false });
-        const { error: updateError } = await supabaseAdmin.from("calls")
-          .update({ twilio_call_sid: twilio.sid }).eq("id", inserted.data.id);
-        if (updateError) throw updateError;
-        const { error: finishedError } = await supabaseAdmin.rpc("finish_provider_contact", {
-          p_outbox_id: job.outbox_id, p_call_id: inserted.data.id, p_twilio_call_sid: twilio.sid,
-        });
-        if (finishedError) throw finishedError;
-        logger.info("sourcing.provider_call_started", { operation_id: job.operation_id, quote_request_id: job.quote_request_id, call_id: inserted.data.id });
-      } catch (error) {
-        const { error: persistError } = await supabaseAdmin.from("calls").update({ outcome: "failed", ended_at: new Date().toISOString() }).eq("id", inserted.data.id);
-        if (persistError) jobLogger.error("sourcing.call_failure_persist_failed", { error: persistError, call_record_id: inserted.data.id });
-        const { error: finishError } = await supabaseAdmin.rpc("finish_provider_contact", {
-          p_outbox_id: job.outbox_id, p_call_id: inserted.data.id, p_twilio_call_sid: null,
-          p_error: error instanceof Error ? error.message.slice(0, 500) : "outbound_call_failed",
-        });
-        if (finishError) logger.error("sourcing.provider_call_retry_failed", { error: finishError, outbox_id: job.outbox_id });
-        else jobLogger.info("sourcing.contact_failure_recorded", { call_record_id: inserted.data.id, duration_ms: Date.now() - jobStarted });
-        logger.error("sourcing.provider_call_failed", { error, operation_id: job.operation_id, quote_request_id: job.quote_request_id });
-      }
-    }
-    const { data: sourcing, error: sourcingError } = await supabaseAdmin.from("operations").select("id").in("status", ["sourcing", "quotes_received"]);
-    if (sourcingError) throw sourcingError;
-    sourcingDiagnostics.retain(["worker", ...(sourcing ?? []).map(({ id }) => id)]);
-    sourcingDiagnostics.observe("worker", "sourcing.worker_heartbeat", { active_operations: sourcing?.length ?? 0 });
-    await Promise.all((sourcing ?? []).map(async ({ id }) => {
-      try {
-        const decision = await sourcingReview.finalize(id);
-        sourcingDiagnostics.observe(id, "sourcing.decision", { operation_id: id,
-          finalized: decision?.finalized ?? false, reason: decision?.reason ?? null,
-          booking_id: decision?.booking_id ?? null, review_id: decision?.review_id ?? null });
-      } catch (error) {
-        logger.error("sourcing.finalize_failed", { error, operation_id: id });
-      }
-    }));
-  } catch (error) {
-    logger.error("sourcing.worker_failed", { error });
-  } finally {
-    outboundWorkerRunning = false;
-  }
+  try { await providerContactWorker.runOnce(); }
+  catch (error) { logger.error("sourcing.dispatch_failed", { error }); }
+  // Rounds must advance even when no job can be claimed (e.g. all candidates ended).
+  const { data: operations, error } = await supabaseAdmin.from("operations")
+    .select("id").in("status", ["sourcing", "quotes_received"]);
+  if (error) throw error;
+  sourcingDiagnostics.retain(["worker", ...(operations ?? []).map(({ id }) => id)]);
+  sourcingDiagnostics.observe("worker", "sourcing.worker_heartbeat", { active_operations: operations?.length ?? 0 });
+  await Promise.all((operations ?? []).map(async ({ id }) => {
+    try {
+      const round = await providerContactRepository.advance(id);
+      const decision = await sourcingReview.finalize(id);
+      sourcingDiagnostics.observe(id, "sourcing.decision", {
+        operation_id: id, round_id: round.round_id, round_status: round.status,
+        operation_status: round.operation_status, reason: decision.reason ?? round.reason,
+        finalized: decision.finalized ?? false, booking_id: decision.booking_id ?? null,
+      });
+    } catch (error) { logger.error("sourcing.finalize_failed", { error, operation_id: id }); }
+  }));
 }
 
 async function rejectRealtimeCall(callId: string): Promise<void> {
@@ -239,30 +202,44 @@ app.get("/health", async (_req, res) => {
 
 app.post("/calls/outbound", async (req, res) => {
   if (!environment.OUTBOUND_CALLS_TOKEN || req.header("authorization") !== `Bearer ${environment.OUTBOUND_CALLS_TOKEN}`) {
-    logger.warn("outbound_call.unauthorized");
     return res.sendStatus(401);
   }
-  const body = req.body as { operation_id?: string; provider_id?: string; purpose?: "quote_request" | "renegotiation" };
-  if (!body.operation_id || !body.provider_id || !body.purpose) return res.status(400).json({ error: "invalid_outbound_call" });
-  logger.info("outbound_call.requested", { operation_id: body.operation_id, provider_id: body.provider_id, purpose: body.purpose });
-  const provider = await supabaseAdmin.from("providers").select("phone,active,capabilities").eq("id", body.provider_id).single();
-  if (provider.error || !provider.data?.active) return res.status(404).json({ error: "active_provider_not_found" });
-  const call = await supabaseAdmin.from("calls").insert({ operation_id: body.operation_id, provider_id: body.provider_id, provider_intent: "quote", persona: "provider", direction: "outbound", outcome: "active" }).select("id").single();
-  if (call.error || !call.data) return res.status(502).json({ error: "outbound_call_persist_failed" });
+  const body: unknown = req.body;
+  if (!body || typeof body !== "object" || Array.isArray(body)) return res.sendStatus(400);
+  const input = body as Record<string, unknown>;
+  const keys = ["operation_id", "provider_id", "quote_request_id", "round_id", "purpose"];
+  if (Object.keys(input).some((key) => !keys.includes(key))
+    || keys.some((key) => typeof input[key] !== "string" || !input[key])
+    || keys.filter((key) => key !== "purpose").some((key) =>
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(input[key])))
+    || !isProviderOutboundPurpose(input.purpose)) return res.status(400).json({ error: "durable_outbound_context_required" });
   try {
-    const twilio = await createTwilioOutboundCall({
-      to: provider.data.phone, phoneType: providerPhoneType(provider.data.capabilities),
-      callRecordId: call.data.id, purpose: body.purpose,
-    });
-    await supabaseAdmin.from("calls").update({ twilio_call_sid: twilio.sid }).eq("id", call.data.id);
-    return res.status(202).json({ call_id: call.data.id, twilio_call_sid: twilio.sid });
+    const { data: request, error } = await supabaseAdmin.from("quote_requests")
+      .select("id,operation_id,provider_id,round_id,status")
+      .eq("id", input.quote_request_id).eq("operation_id", input.operation_id)
+      .eq("provider_id", input.provider_id).eq("round_id", input.round_id).maybeSingle();
+    if (error) throw error;
+    if (!request || !["queued", "contacted", "pending", "responded"].includes(request.status)) {
+      return res.status(409).json({ error: "outbound_request_not_available" });
+    }
+    const [round, job] = await Promise.all([
+      supabaseAdmin.from("sourcing_rounds").select("id,kind,status")
+        .eq("id", request.round_id).eq("operation_id", request.operation_id).maybeSingle(),
+      supabaseAdmin.from("outbox").select("id,status")
+        .eq("quote_request_id", request.id).eq("job_type", "contact_provider")
+        .in("status", ["pending", "processing"]).limit(1).maybeSingle(),
+    ]);
+    if (round.error || job.error) throw round.error ?? job.error;
+    const expectedKind = input.purpose === "booking_replacement" ? "replacement"
+      : input.purpose === "renegotiation" ? "renegotiation" : "initial";
+    if (round.data?.status !== "active" || round.data.kind !== expectedKind || !job.data) {
+      return res.status(409).json({ error: "durable_outbound_job_not_available" });
+    }
+    // Informational acceptance only. The existing worker owns claim, attempts, and POST.
+    return res.status(202).json({ outbox_id: job.data.id, quote_request_id: request.id, status: "queued" });
   } catch (error) {
-    await supabaseAdmin.from("calls").update({ outcome: "failed", ended_at: new Date().toISOString() }).eq("id", call.data.id);
-    logger.error("outbound_call.failed", { error });
-    return res.status(502).json({
-      error: "twilio_outbound_call_failed",
-      detail: error instanceof Error ? error.message : "unknown_twilio_error",
-    });
+    logger.error("outbound_call.queue_lookup_failed", { error });
+    return res.status(503).json({ error: "outbound_queue_unavailable" });
   }
 });
 
@@ -278,19 +255,31 @@ app.post("/twilio/recording-status", (req, res) => {
   return res.sendStatus(204);
 });
 
-app.post("/twilio/call-status", (req, res) => {
+app.post("/twilio/call-status", async (req, res) => {
   const baseUrl = environment.PUBLIC_BASE_URL?.replace(/\/$/, "");
-  if (!baseUrl || !verifyTwilioSignature(`${baseUrl}${req.originalUrl}`, req.body as Record<string, string>, req.header("x-twilio-signature") ?? undefined)) {
-    logger.warn("twilio.callback_rejected", { route: "call-status", base_url_configured: Boolean(baseUrl) });
-    return res.sendStatus(403);
+  if (!baseUrl) return res.sendStatus(503);
+  const body: unknown = req.body;
+  if (!body || typeof body !== "object" || Array.isArray(body)
+    || Object.values(body).some((value) => typeof value !== "string")) return res.sendStatus(400);
+  const fields = body as Record<string, string>;
+  try {
+    const result = await providerCallStatusHandler.handle({
+      url: `${baseUrl}${req.originalUrl}`,
+      signature: req.header("x-twilio-signature") ?? undefined,
+      accountSid: fields.AccountSid,
+      callRecordId: typeof req.query.call_record_id === "string" ? req.query.call_record_id : undefined,
+      body: fields,
+    });
+    logger.info("twilio.call_status_persisted", {
+      call_record_id: req.query.call_record_id, status: fields.CallStatus,
+      accepted: result.accepted, retry_scheduled: result.retry_scheduled, next_attempt: result.next_attempt,
+    });
+    return res.sendStatus(204);
+  } catch (error) {
+    const status = error instanceof ProviderCallStatusHttpError ? error.statusCode : 500;
+    logger.warn("twilio.call_status_rejected", { status });
+    return res.sendStatus(status);
   }
-  const body = req.body as { CallSid?: string; CallStatus?: string };
-  logger.info("twilio.call_status_received", { twilio_call_sid: body.CallSid, status: body.CallStatus });
-  if (body.CallSid && body.CallStatus) {
-    const outcome = body.CallStatus === "completed" ? "completed" : "failed";
-    void supabaseAdmin.from("calls").update({ outcome, ended_at: new Date().toISOString() }).eq("twilio_call_sid", body.CallSid);
-  }
-  return res.sendStatus(204);
 });
 
 // Temporary protected endpoint. It proves the dashboard auth boundary before
@@ -403,16 +392,7 @@ app.post("/openai/webhook", express.raw({ type: "*/*" }), async (req, res) => {
       return;
     }
 
-    const identity = routingDecision.identity;
-    const scopeIdentity = { callId: persistedCallId, realtimeCallId: callId };
-    const toolScope: ToolCallScope = identity.persona === "client"
-      ? { ...scopeIdentity, persona: "client", counterpartyId: identity.contactId,
-          direction: "inbound", purpose: "operation_management" }
-      : routingDecision.outbound
-        ? { ...scopeIdentity, persona: "provider", counterpartyId: identity.providerId,
-            direction: "outbound", purpose: routingDecision.purpose }
-        : { ...scopeIdentity, persona: "provider", counterpartyId: identity.providerId,
-            direction: "inbound", purpose: "booking_management" };
+    const toolScope = resolveCallScope(routingDecision, persistedCallId);
     const handoffCoordinator = new EscalationHandoffCoordinator(realtimeGateway, callLogger);
     let activeEscalation: CreatedEscalation | undefined;
     const prepareHandoff = async (escalation: CreatedEscalation): Promise<boolean> => {

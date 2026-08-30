@@ -29,21 +29,29 @@ export async function routeOutboundCall(callRecordId: string, callId: string, si
   }
   const [provider, operation, request] = await Promise.all([
     supabaseAdmin.from("providers").select("id,name,phone,email,active").eq("id", c.provider_id).single(),
-    supabaseAdmin.from("operations").select("id,current_mandate_id,status").eq("id", c.operation_id).single(),
-    supabaseAdmin.from("quote_requests").select("id,operation_id,provider_id,round_id,mandate_id,status")
+    supabaseAdmin.from("operations").select("id,current_mandate_id,status,mandate_confirmation_required").eq("id", c.operation_id).single(),
+    supabaseAdmin.from("quote_requests").select("id,operation_id,provider_id,round_id,mandate_id,status,expires_at")
       .eq("id", c.quote_request_id).single(),
   ]);
   const p = provider.data, o = operation.data, r = request.data;
-  if (provider.error || operation.error || request.error || !p?.active || !o || !r?.round_id
+  const expiresAt = r?.expires_at;
+  const validExpiry = typeof expiresAt === "string" && (expiresAt === "infinity"
+    || (Number.isFinite(Date.parse(expiresAt)) && Date.parse(expiresAt) > Date.now()));
+  if (provider.error || operation.error || request.error || !p?.active || !o || o.mandate_confirmation_required || !r?.round_id
     || r.operation_id !== o.id || r.provider_id !== p.id || r.mandate_id !== o.current_mandate_id
     || !["pending", "queued", "contacted", "responded"].includes(r.status)
+    || !validExpiry
     || !["sourcing", "quotes_received"].includes(o.status)) {
     throw provider.error ?? operation.error ?? request.error ?? new Error("Outbound context unavailable");
   }
-  const round = await supabaseAdmin.from("sourcing_rounds").select("id,operation_id,mandate_id,status")
+  const round = await supabaseAdmin.from("sourcing_rounds").select("id,operation_id,mandate_id,status,kind")
     .eq("id", r.round_id).single();
+  const expectedKind = c.purpose === "quote_request" ? "initial"
+    : c.purpose === "renegotiation" ? "renegotiation" : "replacement";
   if (round.error || round.data?.status !== "active" || round.data.operation_id !== o.id
-    || round.data.mandate_id !== o.current_mandate_id) throw round.error ?? new Error("Outbound round is closed");
+    || round.data.mandate_id !== o.current_mandate_id || round.data.kind !== expectedKind) {
+    throw round.error ?? new Error("Outbound round does not match persisted purpose");
+  }
   if (!c.realtime_call_id) {
     const linked = await supabaseAdmin.from("calls").update({ realtime_call_id: callId })
       .eq("id", callRecordId).is("realtime_call_id", null).eq("outcome", "active")
