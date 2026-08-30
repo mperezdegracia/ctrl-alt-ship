@@ -94,8 +94,13 @@ export class AgentsCallSession {
     this.session.on("agent_tool_end", (_context, _agent, invokedTool) => {
       // backgroundResult makes the SDK send the result without an automatic
       // response; only then ask for the existing supervisor farewell.
+      this.logger.info("realtime.agent_tool_ended", {
+        tool_name: invokedTool.name,
+        escalation_ready: this.escalationReady,
+      });
       if (invokedTool.name === "escalate" && this.escalationReady) {
         this.escalationReady = false;
+        this.logger.info("escalation.farewell_requested");
         this.hooks.onEscalationReady?.();
       }
     });
@@ -180,6 +185,9 @@ export class AgentsCallSession {
       this.logger.error("tool.profile_refresh_failed", { error });
     }
     const escalation = succeeded && name === "escalate" && Boolean(this.hooks.onEscalationReady);
+    // The SDK may emit agent_tool_end while updateAgent is flushing the tool
+    // result. Arm the one-shot callback before that await, not after it.
+    this.escalationReady = escalation;
     this.agent.tools = escalation ? [] : this.buildTools();
     this.agent.instructions = this.factory.create(this.decision, [], this.tools.flowState).instructions;
     this.updateToolCallId = toolCallId;
@@ -188,12 +196,12 @@ export class AgentsCallSession {
       // Await local configuration before the SDK sends the result/next response.
       await this.session.updateAgent(this.agent);
     } catch (error) {
+      this.escalationReady = false;
       this.logger.error("tool.session_update_failed", { tool_call_id: toolCallId, error });
       // Cannot safely continue with stale tools after a committed mutation.
       this.session.close();
       return backgroundResult(result);
     }
-    this.escalationReady = escalation;
     return escalation ? backgroundResult(result) : result;
   }
 }

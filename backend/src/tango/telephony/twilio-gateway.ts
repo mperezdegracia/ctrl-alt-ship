@@ -2,7 +2,13 @@ export type TwilioGatewayOptions = Readonly<{
   accountSid: string;
   authToken: string;
   fromNumber: string;
+  logger?: TwilioGatewayLogger;
   fetch?: typeof fetch;
+}>;
+
+export type TwilioGatewayLogger = Readonly<{
+  info: (event: string, fields: Record<string, unknown>) => void;
+  error: (event: string, fields: Record<string, unknown>) => void;
 }>;
 
 export type ConferenceMove = Readonly<{
@@ -28,7 +34,11 @@ export class TwilioGateway {
   }
 
   async moveCallToConference(move: ConferenceMove): Promise<void> {
-    await this.post(`/Calls/${encodeURIComponent(move.callSid)}.json`, { Twiml: conferenceTwiml(move.conferenceName) });
+    await this.post(`/Calls/${encodeURIComponent(move.callSid)}.json`, { Twiml: conferenceTwiml(move.conferenceName) }, {
+      operation: "conference.move_caller",
+      conference_name: move.conferenceName,
+      call_sid_suffix: move.callSid.slice(-6),
+    });
   }
 
   async callSupervisorToConference(supervisor: SupervisorCall): Promise<void> {
@@ -36,19 +46,51 @@ export class TwilioGateway {
       To: supervisor.to,
       From: this.options.fromNumber,
       Twiml: conferenceTwiml(supervisor.conferenceName),
+    }, {
+      operation: "conference.dial_supervisor",
+      conference_name: supervisor.conferenceName,
+      destination_phone_suffix: supervisor.to.slice(-4),
     });
   }
 
-  private async post(path: string, body: Record<string, string>): Promise<void> {
-    const response = await this.fetchImplementation(`${this.apiBaseUrl}${path}`, {
-      method: "POST",
-      headers: {
-        authorization: this.authorization,
-        "content-type": "application/x-www-form-urlencoded",
-      },
-      body: new URLSearchParams(body),
-    });
-    if (!response.ok) throw new Error(`Twilio request failed with status ${response.status}`);
+  private async post(path: string, body: Record<string, string>, details: Record<string, unknown>): Promise<void> {
+    this.options.logger?.info("twilio.request_started", details);
+    let response: Response;
+    try {
+      response = await this.fetchImplementation(`${this.apiBaseUrl}${path}`, {
+        method: "POST",
+        headers: {
+          authorization: this.authorization,
+          "content-type": "application/x-www-form-urlencoded",
+        },
+        body: new URLSearchParams(body),
+      });
+    } catch (error) {
+      this.options.logger?.error("twilio.request_failed", { ...details, failure_kind: "network", error });
+      throw error;
+    }
+
+    if (!response.ok) {
+      const twilioErrorCode = await errorCode(response);
+      this.options.logger?.error("twilio.request_failed", {
+        ...details,
+        failure_kind: "http",
+        http_status: response.status,
+        ...(twilioErrorCode === undefined ? {} : { twilio_error_code: twilioErrorCode }),
+      });
+      throw new Error(`Twilio ${details.operation} failed with status ${response.status}${twilioErrorCode === undefined ? "" : ` (code ${twilioErrorCode})`}`);
+    }
+
+    this.options.logger?.info("twilio.request_succeeded", { ...details, http_status: response.status });
+  }
+}
+
+async function errorCode(response: Response): Promise<number | undefined> {
+  try {
+    const payload = await response.json() as { code?: unknown };
+    return typeof payload.code === "number" ? payload.code : undefined;
+  } catch {
+    return undefined;
   }
 }
 

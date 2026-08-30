@@ -101,11 +101,18 @@ const emailWorker = new EmailOutboxWorker(
 // Temporary trial-by-fire destination. Replace with SUPERVISOR_PHONE when the
 // durable escalation service is enabled.
 const MOCK_SUPERVISOR_PHONE = "+5491132555829";
-const twilioGateway = new TwilioGateway({
-  accountSid: environment.TWILIO_ACCOUNT_SID!,
-  authToken: environment.TWILIO_AUTH_TOKEN!,
-  fromNumber: environment.TWILIO_FROM_NUMBER!,
-});
+
+function createTwilioGateway(callLogger: StructuredLogger): TwilioGateway {
+  return new TwilioGateway({
+    accountSid: environment.TWILIO_ACCOUNT_SID!,
+    authToken: environment.TWILIO_AUTH_TOKEN!,
+    fromNumber: environment.TWILIO_FROM_NUMBER!,
+    logger: {
+      info: (event, fields) => callLogger.info(event, fields),
+      error: (event, fields) => callLogger.error(event, fields),
+    },
+  });
+}
 
 async function rejectRealtimeCall(callId: string): Promise<void> {
   await realtimeGateway.reject(callId);
@@ -262,8 +269,8 @@ app.post("/openai/webhook", express.raw({ type: "*/*" }), async (req, res) => {
       return;
     }
 
-    const handoffCoordinator = twilioGateway && routingDecision.identity.persona === "provider"
-      ? new EscalationHandoffCoordinator(twilioGateway) : undefined;
+    const handoffCoordinator = routingDecision.identity.persona === "provider"
+      ? new EscalationHandoffCoordinator(createTwilioGateway(callLogger)) : undefined;
     const stallTracker = handoffCoordinator
       ? new NegotiationStallTracker(environment.ESCALATION_STALLED_TURNS) : undefined;
     let stalledEscalationPending = false;

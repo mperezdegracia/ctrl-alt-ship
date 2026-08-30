@@ -19,10 +19,15 @@ const fetchStub: typeof fetch = async (url, init) => {
 };
 
 async function main(): Promise<void> {
+  const logs: Array<{ level: "info" | "error"; event: string; fields: Record<string, unknown> }> = [];
   const gateway = new TwilioGateway({
     accountSid: "AC123",
     authToken: "token",
     fromNumber: "+14155550100",
+    logger: {
+      info: (event, fields) => logs.push({ level: "info", event, fields }),
+      error: (event, fields) => logs.push({ level: "error", event, fields }),
+    },
     fetch: fetchStub,
   });
 
@@ -47,11 +52,61 @@ async function main(): Promise<void> {
   });
   const supervisorTwiml = new URLSearchParams(String(requests[1]!.init.body)).get("Twiml");
   assert.equal(supervisorTwiml, conferenceTwiml);
+  assert.deepEqual(logs.map((entry) => [entry.level, entry.event, entry.fields.operation]), [
+    ["info", "twilio.request_started", "conference.move_caller"],
+    ["info", "twilio.request_succeeded", "conference.move_caller"],
+    ["info", "twilio.request_started", "conference.dial_supervisor"],
+    ["info", "twilio.request_succeeded", "conference.dial_supervisor"],
+  ]);
+
+  await verifyFailureLogging();
 
   await verifyFarewellOrdering();
   await verifyMockEscalationTool();
 
   console.log("Escalation Twilio gateway harness passed.");
+}
+
+async function verifyFailureLogging(): Promise<void> {
+  const logs: Array<{ level: "info" | "error"; event: string; fields: Record<string, unknown> }> = [];
+  const gateway = new TwilioGateway({
+    accountSid: "AC123",
+    authToken: "token",
+    fromNumber: "+14155550100",
+    logger: {
+      info: (event, fields) => logs.push({ level: "info", event, fields }),
+      error: (event, fields) => logs.push({ level: "error", event, fields }),
+    },
+    fetch: async () => new Response(JSON.stringify({ code: 21211 }), { status: 400 }),
+  });
+
+  await assert.rejects(
+    gateway.callSupervisorToConference({ conferenceName: "escalation-esc-1", to: "+5491100000000" }),
+    /Twilio conference\.dial_supervisor failed with status 400 \(code 21211\)/,
+  );
+  assert.deepEqual(logs, [
+    {
+      level: "info",
+      event: "twilio.request_started",
+      fields: {
+        operation: "conference.dial_supervisor",
+        conference_name: "escalation-esc-1",
+        destination_phone_suffix: "0000",
+      },
+    },
+    {
+      level: "error",
+      event: "twilio.request_failed",
+      fields: {
+        operation: "conference.dial_supervisor",
+        conference_name: "escalation-esc-1",
+        destination_phone_suffix: "0000",
+        failure_kind: "http",
+        http_status: 400,
+        twilio_error_code: 21211,
+      },
+    },
+  ]);
 }
 
 async function verifyMockEscalationTool(): Promise<void> {
