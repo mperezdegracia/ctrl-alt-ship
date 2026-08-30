@@ -42,6 +42,7 @@
     "harness:email": "tsx scripts/harnesses/email-outbox.ts",
     "harness:sms": "tsx scripts/harnesses/sms-outbox.ts",
     "db:seed": "tsx scripts/db/seed.ts",
+    "demo:deployment": "tsx scripts/harnesses/demo-deployment.ts",
     "auth:smoke": "tsx scripts/harnesses/auth-smoke.ts",
     "typecheck": "tsc --project tsconfig.json"
   },

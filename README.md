@@ -1,7 +1,8 @@
-# ctrl-alt-ship
+# Tango / ctrl-alt-ship
 
 Voice-driven freight coordination with a durable operation as the source of
-truth.
+truth. Tango can converse on a phone call; only the server can create an
+operational fact.
 
 ## Pitch and demo materials
 
@@ -9,8 +10,34 @@ The seven-minute English pitch, standalone architecture diagram, rehearsal
 guide and public-share instructions live in [docs/pitch](docs/pitch/README.md).
 The real implementation trade-offs are recorded in the [decision log](docs/decision-log.md).
 
+For a judge-facing sequence, including every deliberate failure mode, use the
+[clean-start and live-demo runbook](docs/demo-runbook.md). It points to the
+shareable [architecture PNG](docs/pitch/assets/tango-technology-architecture.png)
+and [PDF](docs/pitch/assets/tango-technology-architecture.pdf).
+
 The initial structure and boundaries between the backend, dashboard, and Tango
 are documented in [`docs/architecture.md`](docs/architecture.md).
+
+## Clean start: one command
+
+With the team's server-only values in `backend/.env` and browser-safe dashboard
+values in `frontend/.env.local`, run this from a fresh clone:
+
+```bash
+npm run demo:prepare
+```
+
+It installs from both lockfiles, runs the regression harnesses, builds the
+dashboard, checks the shared Supabase schema and idempotently prepares
+`OP-900001`. It is non-interactive: no dashboard click, SMS, email or phone
+call is made. See the [runbook](docs/demo-runbook.md) for the two phone-only
+proofs and the exact expected output.
+
+For a configuration-only seed validation without database access:
+
+```bash
+npm run demo:dry-run
+```
 
 ## Shared Supabase development
 
@@ -163,23 +190,19 @@ npm --prefix backend run harness:realtime:sdk
 ## Running locally
 
 Supabase remains hosted and shared; neither app starts a local database or Auth
-stack.
+stack. Create the local files without committing them:
 
 ```bash
-cd frontend
-cp .env.local.example .env.local
-npm install
-npm run dev
+cp backend/.env.example backend/.env
+cp frontend/.env.local.example frontend/.env.local
 ```
 
-The frontend runs at `http://localhost:3000` and uses the hosted Supabase
-project and Render API. `frontend/.env.local` contains only browser-safe
-values. Before the browser calls the API directly, include
-`http://localhost:3000` and the frontend's Render URL in the backend
-service's `DASHBOARD_ORIGINS` environment variable.
+The frontend uses only browser-safe values. Before the browser calls the API
+directly, include `http://localhost:3001` and the frontend's Render URL in the
+backend service's `DASHBOARD_ORIGINS` environment variable.
 
-To run the backend locally as well, start it in another terminal. It defaults
-to port 3000, so run the frontend on a different port in that case:
+To run both applications locally, start the backend and frontend in separate
+terminals. The backend defaults to port 3000, so the frontend uses 3001:
 
 At startup, the backend validates its runtime configuration with Zod before it
 opens its HTTP port. `SUPABASE_URL`, `SUPABASE_SECRET_KEY`,
@@ -194,7 +217,8 @@ npm --prefix backend run dev
 npm --prefix frontend run dev -- --port 3001
 ```
 
-`frontend/.env.local` contains only browser-safe Supabase settings and the
+The dashboard is at `http://localhost:3001`; a prepared operation can be opened
+directly at `/dashboard/operations/OP-900001` after authentication.
 
 ## Verification commands
 

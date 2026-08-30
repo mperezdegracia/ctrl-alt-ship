@@ -65,7 +65,11 @@ If there is one presenter, use the exact same order and pause after each sentenc
 
 ## One data story before the final run
 
-The challenge brief illustrates **Textiles Pacífico / Manzanillo → Guadalajara / MXN 9,000**, while the current repository seed describes **Textiles del Plata / Terminal 4 → González Catán / ARS 950,000**. Before practice, choose one story and align the seed, dashboard labels, spoken script and slides. Never show MXN in slides while the live dashboard shows ARS.
+Use the repository fixture: **Textiles del Plata / Terminal 4 → González Catán
+/ ARS 950,000**. The pitch deck stays generic and does not show a conflicting
+currency. If a judge asks about the challenge's Mexico/MXN illustration, frame
+it as an alternate scenario and keep the dashboard discussion on the Argentine
+fixture. Never show MXN next to the ARS live record.
 
 ## Judge questions worth rehearsing
 

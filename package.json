@@ -1,0 +1,14 @@
+{
+  "name": "ctrl-alt-ship",
+  "private": true,
+  "description": "One-command verification and demo preparation for Tango.",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "install:clean": "npm ci --prefix backend && npm ci --prefix frontend",
+    "demo:check": "npm --prefix backend run db:check && npm --prefix backend run typecheck && npm --prefix backend run harness:migrations && npm --prefix backend run harness:sourcing && npm --prefix backend run inbound:routing && npm --prefix backend run harness:tools && npm --prefix backend run harness:quotes:above-budget && npm --prefix backend run harness:escalation && npm --prefix backend run harness:escalation:triggers && npm --prefix backend run harness:realtime:agents && npm --prefix frontend run lint && npm --prefix frontend run build",
+    "demo:prepare": "npm run install:clean && npm run demo:check && npm --prefix backend run db:smoke && npm --prefix backend run db:seed && npm --prefix backend run demo:deployment",
+    "demo:dry-run": "npm --prefix backend run db:seed -- --dry-run"
+  }
+}

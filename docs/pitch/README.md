@@ -28,6 +28,13 @@ The preferred browser view is the static **Architecture Atlas**. The repository 
 
 It includes the technology architecture, all five flow maps, direct PDF downloads and the explicit trial-by-fire cases. Check that URL once in a private browser window after publishing.
 
+The same Pages deployment also exposes a browser-controlled slide deck at:
+
+<https://mperezdegracia.github.io/ctrl-alt-ship/pitch/presentation.html>
+
+Use the direct PDF below as the universal fallback: it is stable, printable and
+does not depend on a presentation-app login.
+
 After these files are merged to the public `main` branch, share this direct PDF URL and verify it once in a private browser window:
 
 <https://raw.githubusercontent.com/mperezdegracia/ctrl-alt-ship/main/docs/pitch/tango-pitch.pdf>
@@ -40,4 +47,7 @@ This is intentionally a direct file link: it does not require a Google account, 
 
 ## Before the final rehearsal
 
-The deck uses an intentionally generic shipment story. The challenge brief uses a Mexico/MXN example, while the repository seed currently uses an Argentina/ARS fixture. Pick one version and align the spoken script, seed data and dashboard before the event; see the rehearsal guide for the exact check.
+The repository's demo story is **Textiles del Plata / Terminal 4 → González
+Catán / ARS 950,000**. Keep the spoken script and dashboard on that story. If a
+judge references the challenge's Mexico/MXN illustration, describe it as an
+alternative scenario; do not mix its amounts with the live record.

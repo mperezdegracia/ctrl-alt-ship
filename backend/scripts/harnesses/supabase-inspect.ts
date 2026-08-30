@@ -15,7 +15,8 @@ const TABLES = [
   "bookings",
   "change_requests",
   "escalations",
-  "commitments",
+  "handoff_recipients",
+  "call_transcript_segments",
   "events",
   "outbox",
 ] as const;
