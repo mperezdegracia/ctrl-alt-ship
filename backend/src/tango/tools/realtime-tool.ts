@@ -14,7 +14,8 @@ export type RealtimeFunctionToolDefinition = {
   parameters: JsonSchema;
 };
 
-export type ToolInvocation = Readonly<{ toolCallId: string }>;
+/** Server-captured provenance only; it is never exposed in the model tool schema. */
+export type ToolInvocation = Readonly<{ toolCallId: string; evidenceSegmentId?: string }>;
 
 export abstract class RealtimeTool {
   abstract readonly definition: RealtimeFunctionToolDefinition;

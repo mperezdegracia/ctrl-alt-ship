@@ -54,6 +54,8 @@ export class AgentsCallSession {
   private readonly diagnostics: RealtimeSessionDiagnostics;
   private readonly sdkTools = new Map<string, FunctionTool<unknown, ToolInputParameters>>();
   private readonly responseByToolCall = new Map<string, string>();
+  private readonly evidenceByToolCall = new Map<string, string>();
+  private latestCallerTranscriptSegmentId: string | undefined;
   private readonly factory = new RealtimeSessionFactory();
   private updateToolCallId = "sdk_connect";
   private escalationReady = false;
@@ -129,6 +131,7 @@ export class AgentsCallSession {
       logger.info(`realtime.sideband_${status}`);
       if (status === "disconnected") {
         this.responseByToolCall.clear();
+        this.evidenceByToolCall.clear();
       }
     });
   }
@@ -149,6 +152,11 @@ export class AgentsCallSession {
       this.session.close();
       throw error;
     }
+  }
+
+  /** Associates the next provider quote command with its server-persisted caller utterance. */
+  recordCallerTranscriptSegment(segmentId: string): void {
+    this.latestCallerTranscriptSegmentId = segmentId;
   }
 
   private initialGreetingInstruction(): string {
@@ -186,16 +194,22 @@ export class AgentsCallSession {
 
   private async execute(name: string, args: unknown, toolCallId: string): Promise<unknown> {
     const responseId = this.responseByToolCall.get(toolCallId) ?? "";
+    let evidenceSegmentId: string | undefined;
+    if (name === "create_quote") {
+      evidenceSegmentId = this.evidenceByToolCall.get(toolCallId) ?? this.latestCallerTranscriptSegmentId;
+      if (evidenceSegmentId) this.evidenceByToolCall.set(toolCallId, evidenceSegmentId);
+    }
     this.logger.info("tool.requested", {
       tool_name: name, tool_call_id: toolCallId, response_id: responseId,
       profile: this.tools.profile,
       advertised_tools: this.tools.definitions.map((definition) => definition.name),
       server_tools: this.diagnostics.serverTools,
+      evidence_segment_present: Boolean(evidenceSegmentId),
     });
     let result: unknown;
     let succeeded = false;
     try {
-      result = await this.tools.execute(name, args, { toolCallId });
+      result = await this.tools.execute(name, args, { toolCallId, evidenceSegmentId });
       succeeded = true;
       if (name !== "escalate") this.hooks.onProgress?.();
       this.logger.info("tool.completed", {

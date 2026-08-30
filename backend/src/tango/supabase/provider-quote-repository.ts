@@ -31,7 +31,14 @@ export class SupabaseProviderQuoteRepository implements ProviderQuoteRepository 
     if (!z.object({ status: z.literal("recorded") }).safeParse(data).success) throw new Error("Provider offer result unavailable");
     return { status: "recorded" };
   }
-  async execute(scope: ToolCallScope, name: ProviderQuoteToolName, id: string, args: object, target: ProviderCommandTarget | null): Promise<ProviderQuoteResult> {
+  async execute(scope: ToolCallScope, name: ProviderQuoteToolName, id: string, args: object,
+    target: ProviderCommandTarget | null, evidenceSegmentId?: string): Promise<ProviderQuoteResult> {
+    if (evidenceSegmentId) {
+      const { error: evidenceError } = await this.client.rpc("stage_provider_quote_evidence", {
+        ...this.context(scope), p_tool_call_id: id, p_segment_id: evidenceSegmentId,
+      });
+      if (evidenceError) this.rethrow(evidenceError);
+    }
     const { data, error } = await this.client.rpc("execute_provider_quote_tool", {
       ...this.context(scope), p_tool_name: name, p_tool_call_id: id, p_arguments: args, p_context: target,
     });

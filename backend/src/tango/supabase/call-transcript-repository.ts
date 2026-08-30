@@ -10,7 +10,7 @@ export class SupabaseCallTranscriptRepository {
     content: string;
     realtimeItemId?: string;
     realtimeResponseId?: string;
-  }): Promise<void> {
+  }): Promise<string> {
     const { error } = await this.client.rpc("record_call_transcript_segment", {
       p_call_id: input.callId,
       p_realtime_call_id: input.realtimeCallId,
@@ -20,6 +20,15 @@ export class SupabaseCallTranscriptRepository {
       p_realtime_response_id: input.realtimeResponseId ?? null,
     });
     if (error) throw error;
+    const { data, error: readError } = await this.client.from("call_transcript_segments")
+      .select("id")
+      .eq("call_id", input.callId)
+      .eq(input.realtimeItemId ? "realtime_item_id" : "realtime_response_id",
+        input.realtimeItemId ?? input.realtimeResponseId ?? "")
+      .maybeSingle();
+    if (readError) throw readError;
+    if (!data || typeof data.id !== "string") throw new Error("Transcript segment persistence could not be verified");
+    return data.id;
   }
 }
 

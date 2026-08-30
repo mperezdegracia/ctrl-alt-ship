@@ -603,13 +603,14 @@ app.post("/openai/webhook", express.raw({ type: "*/*" }), async (req, res) => {
             callLogger.info("transcript.caller_completed", {
               item_id: itemId, character_count: transcript.length,
             });
-            await transcriptRepository.record({
+            const transcriptSegmentId = await transcriptRepository.record({
               callId: persistedCallId,
               realtimeCallId: callId,
               speaker: "caller",
               content: transcript,
               realtimeItemId: itemId,
             });
+            agentsCall.recordCallerTranscriptSegment(transcriptSegmentId);
             break;
           }
 

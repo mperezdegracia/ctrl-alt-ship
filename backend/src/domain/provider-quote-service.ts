@@ -18,7 +18,7 @@ export type ProviderQuoteResult = {
 export interface ProviderQuoteRepository {
   getState(scope: ToolCallScope): Promise<ProviderFlowState>;
   execute(scope: ToolCallScope, name: ProviderQuoteToolName, id: string, args: object,
-    target: ProviderCommandTarget | null): Promise<ProviderQuoteResult>;
+    target: ProviderCommandTarget | null, evidenceSegmentId?: string): Promise<ProviderQuoteResult>;
   recordOffer(scope: ToolCallScope, id: string, args: ProviderOfferArguments): Promise<ProviderOfferResult>;
 }
 
@@ -37,7 +37,7 @@ export class ProviderQuoteService {
     return this.state;
   }
 
-  async execute(name: ProviderQuoteToolName, args: unknown, id: string): Promise<ProviderQuoteResult> {
+  async execute(name: ProviderQuoteToolName, args: unknown, id: string, evidenceSegmentId?: string): Promise<ProviderQuoteResult> {
     this.authorize();
     if (typeof id !== "string" || !id.trim()) this.invalid();
     this.object(args);
@@ -54,7 +54,7 @@ export class ProviderQuoteService {
     // Replay must reach SQL even after terminal/refresh removes command targets.
     const target = reference && reference === this.state?.operation?.operation_reference
       ? this.state.commandTarget : null;
-    return this.repository.execute(this.scope, name, id, args, target);
+    return this.repository.execute(this.scope, name, id, args, target, evidenceSegmentId);
   }
 
   async recordOffer(args: unknown, id: string): Promise<ProviderOfferResult> {

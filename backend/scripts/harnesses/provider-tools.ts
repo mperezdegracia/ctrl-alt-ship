@@ -38,7 +38,7 @@ class RpcFixture {
       const name = String(input instanceof Request ? input.url : input).split("/").at(-1)!;
       const args = JSON.parse(String(init?.body));
       this.requests.push({ name, args });
-      assert.ok(["get_provider_tool_state", "execute_provider_quote_tool"].includes(name));
+      assert.ok(["get_provider_tool_state", "stage_provider_quote_evidence", "execute_provider_quote_tool"].includes(name));
       assert.equal(args.p_provider_id, scope.counterpartyId);
       assert.equal(args.p_call_id, scope.callId);
       assert.equal(args.p_realtime_call_id, scope.realtimeCallId);
@@ -184,8 +184,14 @@ async function main() {
     socket.receive({ type: "response.done", event_id: `f-${id}`, response: { id: `r-${id}`, status: "completed", output: [item] } });
   };
   rpc.state = { ...entry(), profile: "provider_quote", intent: "quote", operation };
+  call.recordCallerTranscriptSegment("evidence-segment-sdk-first");
   invoke("create_quote", proposal, "sdk-first");
   await until(() => socket.output("sdk-first"));
+  const stagedEvidence = rpc.requests.find((request) => request.name === "stage_provider_quote_evidence");
+  assert.deepEqual(stagedEvidence?.args, {
+    p_call_id: scope.callId, p_realtime_call_id: scope.realtimeCallId, p_provider_id: scope.counterpartyId,
+    p_tool_call_id: "sdk-first", p_segment_id: "evidence-segment-sdk-first",
+  });
   assert.equal(JSON.parse(socket.output("sdk-first").output).negotiation_rounds_remaining, 3);
   assert.deepEqual(socket.sent.filter((event) => event.type === "session.update" && "tools" in event.session).at(-1)!.session.tools.map((tool: { name: string }) => tool.name), ["create_quote", "decline_quote_request"]);
   rpc.result = { status: "declined", commitment_created: false };
@@ -219,6 +225,9 @@ async function main() {
   assert.match(server, /new SupabaseProviderQuoteRepository\(supabaseAdmin\),/);
   assert.match(server, /provider_quote_tools_enabled: true/);
   assert.doesNotMatch(server, /environment\.PROVIDER_QUOTE_TOOLS_ENABLED|NegotiationStallTracker|stalledEscalationPending/);
+  const evidenceMigration = readFileSync(resolve(__dirname, "../../../supabase/migrations/20260830232000_quote_transcript_evidence.sql"), "utf8");
+  assert.match(evidenceMigration, /stage_provider_quote_evidence/);
+  assert.match(evidenceMigration, /bookings_assign_quote_evidence/);
   console.log("Provider harness passed: validation, trusted RPC context, profiles, multi-round response handling, Tango prompt isolation, reconnect, SDK quote/decline and terminal state. Mocked RPC/socket and static SQL checks; no PostgreSQL, real calls or emails.");
 }
 main().catch((error: unknown) => { console.error(error); process.exitCode = 1; });

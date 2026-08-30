@@ -16,7 +16,7 @@ export class CreateQuoteTool extends RealtimeTool {
   };
   constructor(private readonly service: ProviderQuoteService) { super(); }
   execute(args: unknown, invocation?: ToolInvocation): Promise<unknown> {
-    return this.service.execute("create_quote", args, invocation?.toolCallId ?? "");
+    return this.service.execute("create_quote", args, invocation?.toolCallId ?? "", invocation?.evidenceSegmentId);
   }
 }
 
