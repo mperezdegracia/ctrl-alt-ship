@@ -13,7 +13,6 @@ export async function persistRejectedCall(
   const result = await client.from("events").insert({
     operation_id: null,
     call_id: null,
-    commitment_id: null,
     type: "call.rejected",
     schema_version: 1,
     payload: {
@@ -76,7 +75,6 @@ export async function persistRoutedCall(
     const eventInsert = await client.from("events").insert({
       operation_id: operationId ?? null,
       call_id: callId,
-      commitment_id: null,
       type: "call.routed",
       schema_version: 1,
       payload: {

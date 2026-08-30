@@ -102,7 +102,6 @@ export type DashboardOperationDossier = DashboardOperation & {
     confirmedPrice: number | null;
     currency: string | null;
     pickupWindow: DashboardWindow;
-    status: string;
   } | null;
   quotes: Array<{
     id: string;
@@ -136,22 +135,6 @@ export type DashboardOperationDossier = DashboardOperation & {
       recordedAt: string;
     }>;
   } | null;
-  commitments: Array<{
-    id: string;
-    kind: string;
-    occurredAt: string;
-    title: string;
-    summary: string;
-    call: {
-      label: string;
-      counterpartyName: string | null;
-      direction: "inbound" | "outbound";
-    };
-    transcriptExcerpt: string;
-    recordingCheckpoint: number;
-    recordingUrl: string | null;
-    supersedesCommitmentId: string | null;
-  }>;
   // The dashboard and API deploy independently. Keep this optional so an
   // already-deployed API can still render the durable dossier while it rolls
   // forward to the trace-capable response.

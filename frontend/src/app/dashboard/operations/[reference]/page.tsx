@@ -11,7 +11,6 @@ import {
   getDashboardHandoffs,
 } from "@/lib/dashboard-api";
 import { requireDashboardSession } from "@/lib/dashboard-session";
-import { CommitmentEvidence } from "@/features/operation/commitment-evidence";
 import { EscalationResolutionForm } from "@/features/operation/escalation-resolution-form";
 import { HandoffOverlay } from "@/features/operation/handoff-overlay";
 import { OperationCorrectionForm } from "@/features/operation/operation-correction-form";
@@ -55,7 +54,7 @@ export default async function OperationPage({ params }: { params: Promise<{ refe
           <div><span>Client</span><strong>{operation.clientName}</strong></div>
           <div><span>Next action</span><strong>{operation.nextStep}</strong></div>
           <div><span>Mandate</span><strong>{operation.mandate ? `Version ${operation.mandate.version}` : "Awaiting authorization"}</strong></div>
-          <div><span>Booking</span><strong>{operation.booking ? formatStatus(operation.booking.status) : "Not recorded"}</strong></div>
+          <div><span>Booking</span><strong>{operation.booking ? "Active" : "Not recorded"}</strong></div>
         </section>
 
         <OperationLiveUpdates reference={operation.reference} updatedAt={operation.updatedAt} />
@@ -121,7 +120,7 @@ export default async function OperationPage({ params }: { params: Promise<{ refe
         </div>
 
         <section className="detail-section booking-section">
-          <div className="section-heading-row"><h2>Current Booking</h2>{operation.booking && <p>{formatStatus(operation.booking.status)} · {operation.booking.reference ?? "Reference pending"}</p>}</div>
+          <div className="section-heading-row"><h2>Current Booking</h2>{operation.booking && <p>Active · {operation.booking.reference ?? "Reference pending"}</p>}</div>
           {operation.booking ? (
             <div className="booking-summary">
               <div><span>Provider</span><strong>{operation.booking.providerName ?? "Not recorded"}</strong></div>
@@ -152,14 +151,6 @@ export default async function OperationPage({ params }: { params: Promise<{ refe
 
         <OperationTrace trace={operation.trace} />
 
-        {operation.commitments.length > 0 ? (
-          <CommitmentEvidence commitments={operation.commitments} />
-        ) : (
-          <section className="detail-section dossier-pending">
-            <h2>No commitments yet.</h2>
-            <p>A commitment appears here only after Tango records a server-validated quote, booking or reschedule with its call evidence.</p>
-          </section>
-        )}
       </article>
     </main>
   );

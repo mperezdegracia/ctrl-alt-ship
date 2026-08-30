@@ -9,6 +9,7 @@ type OperationRow = {
   reference: string;
   contact_id: string;
   current_mandate_id: string | null;
+  current_booking_id: string | null;
   status: string;
   container_type: string | null;
   gross_weight_kg: number | string | null;
@@ -39,7 +40,6 @@ type EventRow = {
   type: string;
   payload: unknown;
   call_id: string | null;
-  commitment_id: string | null;
   recording_checkpoint: number | string | null;
   occurred_at: string;
 };
@@ -97,7 +97,6 @@ export type DashboardOperationDossier = DashboardOperation & {
     confirmedPrice: number | null;
     currency: string | null;
     pickupWindow: DashboardWindow;
-    status: string;
   } | null;
   quotes: Array<{
     id: string;
@@ -131,22 +130,6 @@ export type DashboardOperationDossier = DashboardOperation & {
       recordedAt: string;
     }>;
   } | null;
-  commitments: Array<{
-    id: string;
-    kind: string;
-    occurredAt: string;
-    title: string;
-    summary: string;
-    call: {
-      label: string;
-      counterpartyName: string | null;
-      direction: "inbound" | "outbound";
-    };
-    transcriptExcerpt: string;
-    recordingCheckpoint: number;
-    recordingUrl: string | null;
-    supersedesCommitmentId: string | null;
-  }>;
   trace: {
     lanes: Array<{
       id: string;
@@ -178,7 +161,7 @@ export type DashboardOperationDossier = DashboardOperation & {
 };
 
 const OPERATION_COLUMNS = [
-  "id", "reference", "contact_id", "current_mandate_id", "status", "container_type",
+  "id", "reference", "contact_id", "current_mandate_id", "current_booking_id", "status", "container_type",
   "gross_weight_kg", "pickup_location", "delivery_location", "empty_return_depot",
   "operational_constraints", "cargo_notes", "updated_at",
 ].join(",");
@@ -227,32 +210,6 @@ function nextStep(status: string, hasActiveEscalation: boolean): string {
   }
 }
 
-function commitmentTitle(kind: string): string {
-  const titles: Record<string, string> = {
-    quote: "Quote accepted",
-    booking: "Booking confirmed",
-    reschedule: "Pickup rescheduled",
-    cancellation: "Booking cancelled",
-  };
-  return titles[kind] ?? "Commitment recorded";
-}
-
-function commitmentSummary(kind: string, termsValue: unknown): string {
-  const terms = asRecord(termsValue);
-  const price = terms.confirmed_price ?? terms.price ?? terms.price_max;
-  const currency = terms.currency;
-  const pickup = asRecord(terms.pickup_window);
-  const startAt = pickup.start_at;
-
-  const priceText = (typeof price === "number" || typeof price === "string") && typeof currency === "string"
-    ? `${currency} ${price}`
-    : null;
-  const pickupText = typeof startAt === "string" ? `pickup from ${startAt}` : null;
-  const details = [priceText, pickupText].filter((value): value is string => Boolean(value));
-  if (details.length > 0) return details.join(" · ");
-
-  return `${commitmentTitle(kind)} recorded by the operation service.`;
-}
 
 async function namesFor(
   contactIds: string[],
@@ -779,22 +736,22 @@ export async function getDashboardOperationDossier(
   const [operationView] = await toDashboardOperations([operation], client);
   if (!operationView) return null;
 
-  const [mandateResult, requestsResult, bookingResult, commitmentsResult, selectionResult, escalationMap, operationCallsResult, eventsResult] = await Promise.all([
+  const [mandateResult, requestsResult, bookingResult, selectionResult, escalationMap, operationCallsResult, eventsResult] = await Promise.all([
     operation.current_mandate_id
       ? client.from("mandates").select("id,version,price_cap,currency,action_windows,minimum_payment_term_days").eq("id", operation.current_mandate_id).maybeSingle()
       : Promise.resolve({ data: null, error: null }),
     client.from("quote_requests").select("id,provider_id").eq("operation_id", operation.id),
-    client.from("bookings").select("id,quote_id,status,confirmed_price,pickup_window_start,pickup_window_end,confirmation_reference,created_at").eq("operation_id", operation.id).in("status", ["pending", "confirmed"]).order("created_at", { ascending: false }).limit(1).maybeSingle(),
-    client.from("commitments").select("id,type,terms,call_id,transcript_excerpt,recording_checkpoint,occurred_at,supersedes_commitment_id").eq("operation_id", operation.id).order("occurred_at", { ascending: false }),
+    operation.current_booking_id
+      ? client.from("bookings").select("id,quote_id,confirmed_price,pickup_window_start,pickup_window_end,confirmation_reference,created_at").eq("id", operation.current_booking_id).maybeSingle()
+      : Promise.resolve({ data: null, error: null }),
     client.from("events").select("payload").eq("operation_id", operation.id).eq("type", "quote.selected").order("occurred_at", { ascending: false }).limit(1).maybeSingle(),
     activeEscalationsFor([operation.id], client),
     client.from("calls").select("id,contact_id,provider_id,direction,outcome,started_at,ended_at,recording_url,twilio_call_sid").eq("operation_id", operation.id).order("started_at", { ascending: true }),
-    client.from("events").select("id,type,payload,call_id,commitment_id,recording_checkpoint,occurred_at").eq("operation_id", operation.id).order("occurred_at", { ascending: true }),
+    client.from("events").select("id,type,payload,call_id,recording_checkpoint,occurred_at").eq("operation_id", operation.id).order("occurred_at", { ascending: true }),
   ]);
   if (mandateResult.error) throw mandateResult.error;
   if (requestsResult.error) throw requestsResult.error;
   if (bookingResult.error) throw bookingResult.error;
-  if (commitmentsResult.error) throw commitmentsResult.error;
   if (selectionResult.error) throw selectionResult.error;
   if (operationCallsResult.error) throw operationCallsResult.error;
   if (eventsResult.error) throw eventsResult.error;
@@ -810,12 +767,8 @@ export async function getDashboardOperationDossier(
     id: string; quote_request_id: string; price_min: number | string; price_max: number | string; currency: string;
     verdict: string; status: string; valid_until: string | null;
   }>;
-  const commitments = (commitmentsResult.data ?? []) as Array<{
-    id: string; type: string; terms: unknown; call_id: string; transcript_excerpt: string; recording_checkpoint: number | string;
-    occurred_at: string; supersedes_commitment_id: string | null;
-  }>;
   const booking = bookingResult.data as {
-    id: string; quote_id: string; status: string; confirmed_price: number | string | null; pickup_window_start: string;
+    id: string; quote_id: string; confirmed_price: number | string | null; pickup_window_start: string;
     pickup_window_end: string; confirmation_reference: string | null;
   } | null;
   const activeEscalation = escalationMap.get(operation.id) ?? null;
@@ -878,7 +831,6 @@ export async function getDashboardOperationDossier(
       confirmedPrice: asNumber(booking.confirmed_price),
       currency: quotes.find((item) => item.id === booking.quote_id)?.currency ?? null,
       pickupWindow: { startAt: booking.pickup_window_start, endAt: booking.pickup_window_end },
-      status: booking.status,
     } : null,
     quotes: quotes.map((quote) => ({
       id: quote.id,
@@ -916,25 +868,6 @@ export async function getDashboardOperationDossier(
           : [];
       }),
     } : null,
-    commitments: commitments.map((commitment) => {
-      const call = calls.get(commitment.call_id);
-      return {
-        id: commitment.id,
-        kind: commitment.type,
-        occurredAt: commitment.occurred_at,
-        title: commitmentTitle(commitment.type),
-        summary: commitmentSummary(commitment.type, commitment.terms),
-        call: {
-          label: call?.twilio_call_sid ?? "Call reference unavailable",
-          counterpartyName: counterpartyName(call, names),
-          direction: call?.direction ?? "inbound",
-        },
-        transcriptExcerpt: commitment.transcript_excerpt,
-        recordingCheckpoint: asNumber(commitment.recording_checkpoint) ?? 0,
-        recordingUrl: call?.recording_url ?? null,
-        supersedesCommitmentId: commitment.supersedes_commitment_id,
-      };
-    }),
     trace: toOperationTrace(operationCalls, events, names),
   };
 }

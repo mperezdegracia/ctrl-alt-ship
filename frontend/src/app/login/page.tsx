@@ -13,7 +13,7 @@ export default function LoginPage() {
           <h1 id="tango-title">Every movement, under control.</h1>
           <p>
             Access Tango&apos;s operational record to supervise Operations,
-            Commitments, and Escalations with verified context.
+            Bookings, calls, and Escalations with verified context.
           </p>
         </div>
         <div className="route-sheet" aria-label="Operating principles">
@@ -23,7 +23,7 @@ export default function LoginPage() {
           <span className="route-node route-node-two" />
           <span className="route-node route-node-three" />
           <p>Validated mandate</p>
-          <p>Auditable commitments</p>
+          <p>Auditable bookings</p>
           <p>Visible escalations</p>
         </div>
         <p className="intro-footnote">Tango · Ground coordination</p>

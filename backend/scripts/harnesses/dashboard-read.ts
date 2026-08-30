@@ -33,7 +33,7 @@ async function main(): Promise<void> {
     reference: dossier.reference,
     status: dossier.status,
     quote_count: dossier.quotes.length,
-    commitment_count: dossier.commitments.length,
+    has_current_booking: Boolean(dossier.booking),
     trace_lane_count: dossier.trace.lanes.length,
     trace_node_count: dossier.trace.nodes.length,
     has_live_revision: Boolean(revision),
