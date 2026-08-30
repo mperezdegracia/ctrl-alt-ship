@@ -6,7 +6,7 @@ export type OutboundCallRequest = {
   to: string;
   phoneType?: "mobile" | "landline";
   callRecordId: string;
-  purpose: "quote_request" | "renegotiation";
+  purpose: "quote_request" | "renegotiation" | "booking_replacement";
 };
 
 /** Twilio requires Argentina's international mobile marker, but never for a fixed line. */
@@ -37,10 +37,16 @@ export function buildOutboundTwiml(callRecordId: string): string {
 
 export async function createTwilioOutboundCall(request: OutboundCallRequest): Promise<{ sid: string }> {
   const config = requiredTwilioConfig();
+  const statusCallback = new URL(`${config.baseUrl}/twilio/call-status`);
+  statusCallback.searchParams.set("call_record_id", request.callRecordId);
   const body = new URLSearchParams({
     To: formatOutboundVoiceDestination(request.to, request.phoneType), From: config.from, Twiml: buildOutboundTwiml(request.callRecordId),
-    StatusCallback: `${config.baseUrl}/twilio/call-status`, StatusCallbackEvent: "completed",
   });
+  body.append("StatusCallback", statusCallback.toString());
+  body.append("StatusCallbackEvent", "initiated");
+  body.append("StatusCallbackEvent", "ringing");
+  body.append("StatusCallbackEvent", "answered");
+  body.append("StatusCallbackEvent", "completed");
   const response = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${encodeURIComponent(config.accountSid)}/Calls.json`, {
     method: "POST",
     headers: { Authorization: `Basic ${Buffer.from(`${config.accountSid}:${config.authToken}`).toString("base64")}`, "Content-Type": "application/x-www-form-urlencoded" },
