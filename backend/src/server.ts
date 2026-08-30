@@ -49,6 +49,7 @@ import { resolveCallScope } from "./tango/telephony/call-scope";
 import { SupabaseProviderContactRepository } from "./tango/supabase/provider-contact-repository";
 import { ProviderContactWorker } from "./tango/workers/provider-contact-worker";
 import { ProviderCallStatusHandler, ProviderCallStatusHttpError } from "./tango/telephony/provider-call-status-handler";
+import { RecordingStatusHandler, RecordingStatusHttpError } from "./tango/telephony/recording-status-handler";
 
 const app = express();
 
@@ -152,6 +153,17 @@ const providerCallStatusHandler = new ProviderCallStatusHandler({
   repository: providerContactRepository,
   expectedAccountSid: environment.TWILIO_ACCOUNT_SID ?? "",
 });
+const recordingStatusHandler = new RecordingStatusHandler({
+  repository: {
+    async recordStatus(params) {
+      const { data, error } = await supabaseAdmin.rpc("record_call_recording_status", params);
+      if (error) throw error;
+      return data;
+    },
+  },
+  expectedAccountSid: environment.TWILIO_ACCOUNT_SID ?? "",
+  verifySignature: verifyTwilioSignature,
+});
 
 /** The existing loop polls once; all dial/retry ownership and slots are durable in SQL. */
 async function runOutboundSourcingWorker(): Promise<void> {
@@ -244,20 +256,23 @@ app.post("/calls/outbound", async (req, res) => {
   }
 });
 
-app.post("/twilio/recording-status", (req, res) => {
+app.post("/twilio/recording-status", async (req, res) => {
   const baseUrl = environment.PUBLIC_BASE_URL?.replace(/\/$/, "");
-  if (!baseUrl || !verifyTwilioSignature(`${baseUrl}${req.originalUrl}`, req.body as Record<string, string>, req.header("x-twilio-signature") ?? undefined)) {
-    logger.warn("twilio.callback_rejected", { route: "recording-status", base_url_configured: Boolean(baseUrl) });
-    return res.sendStatus(403);
+  if (!baseUrl || !environment.TWILIO_ACCOUNT_SID) {
+    return res.sendStatus(503);
   }
-  const body = req.body as { CallSid?: string; RecordingSid?: string; RecordingStatus?: string };
-  const status = body.RecordingStatus === "completed" ? "completed" : body.RecordingStatus === "absent" ? "absent" : "failed";
-  logger.info("twilio.recording_status_received", { twilio_call_sid: body.CallSid, recording_sid: body.RecordingSid, status });
-  if (body.CallSid) void supabaseAdmin.from("calls").update({
-    recording_sid: body.RecordingSid ?? null, recording_status: status,
-    recording_completed_at: status === "completed" ? new Date().toISOString() : null,
-  }).eq("twilio_call_sid", body.CallSid);
-  return res.sendStatus(204);
+  try {
+    await recordingStatusHandler.handle({
+      url: `${baseUrl}${req.originalUrl}`,
+      signature: req.header("x-twilio-signature") ?? undefined,
+      body: req.body,
+    });
+    return res.sendStatus(204);
+  } catch (error) {
+    const status = error instanceof RecordingStatusHttpError ? error.statusCode : 500;
+    logger.warn("twilio.recording_status_rejected", { status });
+    return res.sendStatus(status);
+  }
 });
 
 app.post("/twilio/call-status", async (req, res) => {

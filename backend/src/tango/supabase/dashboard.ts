@@ -798,7 +798,8 @@ export async function getDashboardOperationDossier(
       : Promise.resolve({ data: null, error: null }),
     activeEscalation && hasDurableHandoff
       ? client.from("call_transcript_segments").select("id,speaker,content,recorded_at")
-        .eq("call_id", activeEscalation.source_call_id).order("recorded_at", { ascending: true })
+        .eq("call_id", activeEscalation.source_call_id).not("content", "is", null)
+        .order("recorded_at", { ascending: true })
       : Promise.resolve({ data: [], error: null }),
   ]);
   if (changeRequestResult.error) throw changeRequestResult.error;
@@ -875,8 +876,8 @@ export async function getDashboardOperationDossier(
       actionWindow: mandateWindows[0] ?? null,
       startedAt: activeEscalation.started_at,
       transcript: (transcriptResult.data ?? []).flatMap((segment) => {
-        const value = segment as { id: string; speaker: string; content: string; recorded_at: string };
-        return value.speaker === "caller" || value.speaker === "tango"
+        const value = segment as { id: string; speaker: string; content: string | null; recorded_at: string };
+        return typeof value.content === "string" && (value.speaker === "caller" || value.speaker === "tango")
           ? [{ id: value.id, speaker: value.speaker, content: value.content, recordedAt: value.recorded_at }]
           : [];
       }),
