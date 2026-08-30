@@ -97,11 +97,13 @@ export async function findCounterpartyByCallerId(
       .from("contacts")
       .select("id,name,phone,email,authorized,active")
       .in("phone", phones)
+      .eq("active", true)
       .maybeSingle(),
     client
       .from("providers")
       .select("id,name,phone,email,active")
       .in("phone", phones)
+      .eq("active", true)
       .maybeSingle(),
   ]);
 

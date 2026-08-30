@@ -38,7 +38,9 @@ function database(contacts: Row[] = [], providers: Row[] = [], fail = false) {
         if (filter.startsWith("in.(")) phones = filter.slice(4, -1).split(",");
         else if (filter.startsWith("eq.")) phones = [filter.slice(3)];
         else throw new Error("Missing phone filter");
-        const rows = (table === "contacts" ? contacts : providers).filter((entry) => phones.includes(entry.phone));
+        const activeFilter = url.searchParams.get("active");
+        const rows = (table === "contacts" ? contacts : providers).filter((entry) =>
+          phones.includes(entry.phone) && (activeFilter === null || activeFilter === `eq.${entry.active}`));
         return new Response(JSON.stringify(rows), { headers: { "Content-Type": "application/json" } });
       },
     },
@@ -77,6 +79,15 @@ async function main() {
   for (const db of [database([first, second]), database([], [first, second]), database([first], [second])]) {
     for (const incoming of [withoutNine, withNine]) await assert.rejects(findCounterpartyByCallerId(incoming, db));
   }
+  for (const [active, inactive] of [[first, { ...second, active: false }], [second, { ...first, active: false }]]) {
+    for (const db of [database([active, inactive]), database([], [active, inactive]), database([active], [inactive]), database([inactive], [active])]) {
+      for (const incoming of [withoutNine, withNine]) {
+        const identity = await findCounterpartyByCallerId(incoming, db);
+        assert.ok(identity, "Inactive duplicates must not block the active identity");
+        assert.equal(identity.persona === "client" ? identity.contactId : identity.providerId, active.id);
+      }
+    }
+  }
   assert.equal(await findCounterpartyByCallerId(withoutNine, database()), null);
   await assert.rejects(findCounterpartyByCallerId(withoutNine, database([], [], true)));
   await assert.rejects(findCounterpartyByCallerId("1163718087", database()), /E.164/);
@@ -87,7 +98,7 @@ async function main() {
     assert.equal(await findCounterpartyByCallerId(incoming, database([], [row(other)])), null);
     assert.equal((await findCounterpartyByCallerId(incoming, database([], [row(incoming)])))?.phone, incoming);
   }
-  for (const [persona, reason] of [["client", "inactive_contact"], ["provider", "unknown_caller"], ["unauthorized", "unauthorized_contact"]]) {
+  for (const [persona, reason] of [["client", "unknown_caller"], ["provider", "unknown_caller"], ["unauthorized", "unauthorized_contact"]]) {
     const entry = { ...second, active: persona === "unauthorized", authorized: false };
     const db = persona === "provider" ? database([], [entry]) : database([entry]);
     const routed = await routeIncomingCall({ type: "realtime.call.incoming", data: {
