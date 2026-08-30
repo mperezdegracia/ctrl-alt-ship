@@ -90,7 +90,7 @@ transportista ni se crea un booking por esta prueba.
    es Terminal 4». Esa edición selecciona la operación existente. Completar los
    faltantes y confirmar como en la primera llamada; no debe duplicar el borrador.
 
-## Otra llamada — cancelar, sin emails
+## Otra llamada — cancelar, con confirmación SMS
 
 Usar únicamente la operación de prueba creada arriba; no cancelar pedidos reales.
 
@@ -100,18 +100,21 @@ Usar únicamente la operación de prueba creada arriba; no cancelar pedidos real
    `update_operation` ni `confirm_mandate` para esto.
 3. Primero responder «No, todavía no». No debe ejecutar `cancel_operation`.
 4. Pedir de nuevo la cancelación. Debe resumir referencia y motivo, aclarar que
-   cancela en el sistema sin avisar al transportista y pedir confirmación.
+   cancela en el sistema, encola un SMS de confirmación al cliente y, si había
+   Booking confirmado, un SMS operativo al transportista; debe pedir confirmación.
 5. En el turno siguiente: «Sí, confirmo cancelar esa operación».
 6. Esperado: `cancel_operation` devuelve `status: cancelled`,
-   `provider_email_queued: false`, `next_profile: terminal`. El agente confirma
-   solo el resultado en el sistema; no promete avisos ni pide otro mandato.
+   `client_sms_queued`, `provider_sms_queued`, `next_profile: terminal`. El
+   agente confirma el resultado y que el SMS fue encolado, sin prometer entrega
+   ni pedir otro mandato.
 7. Pedir otro cambio: no debe ejecutar mutaciones. En una nueva llamada, el OP
    cancelado ya no aparece entre las operaciones abiertas.
 
 En la base: operación cancelada, booking activo cancelado si existía, eventos
 `operation.cancelled` y opcionalmente `booking.cancelled`, llamada con intención
 `cancel` y marcador terminal, recibo de la tool. Ninguna nueva versión de mandato,
-ningún email ni job de email. Los mandatos/quotes/compromisos históricos permanecen.
+ningún email ni job de email. Sí hay un job SMS de cliente y, solo con Booking
+confirmado, uno de provider. Los mandatos/quotes/compromisos históricos permanecen.
 
 ## Controles adicionales
 

@@ -119,7 +119,7 @@ provider errors and stack traces stay in observability.
 | --- | --- | --- |
 | `operation.created` | `create_operation` creates the draft. | `operation_reference`, `status`, `provided_fields[]`, `missing_fields[]` |
 | `operation.updated` | `update_operation` changes at least one field. | `operation_reference`, `changes`, `mandate_confirmation_required` |
-| `operation.cancelled` | The client confirms `cancel_operation`. | `operation_reference`, `reason`, `provider_email_queued` |
+| `operation.cancelled` | The client confirms `cancel_operation`. | `operation_reference`, `reason`, `client_sms_queued`, `provider_sms_queued` |
 | `mandate.confirmed` | `confirm_mandate` creates an immutable version. | `operation_reference`, `mandate_id`, `mandate_version`, `supersedes_version?` |
 | `sourcing.started` | Provider sourcing starts or restarts. | `operation_reference`, `mandate_version`, `provider_count`, `reason` |
 
@@ -178,10 +178,12 @@ limit is included in quote tool results or counteroffer events.
 | `booking.declined` | The provider runs `decline_booking`. | `booking_id`, `reason`, `details?`, `operation_status` |
 | `booking.rescheduled` | `reschedule_booking` applies a window inside the mandate. | `booking_id`, `change_request_id`, `previous_window`, `new_window`, `reason` |
 | `booking.reschedule_declined` | The provider runs `decline_reschedule`. | `booking_id`, `change_request_id`, `requested_window`, `reason`, `details?` |
-| `booking.cancelled` | Client or provider cancellation ends an active booking. | `booking_id`, `change_request_id?`, `source`, `reason`, `operation_status`, `notification_email_queued` |
+| `booking.cancelled` | Client or provider cancellation ends an active booking. | `booking_id`, `change_request_id?`, `source`, `reason`, `operation_status`, `notification_sms_queued?` |
 
-`booking.cancelled.source` is `client` or `provider`. Cancellation clears the
-operation's current_booking_id without mutating the historical Booking.
+`booking.cancelled.source` is `client` or `provider`. Client cancellation sets
+`notification_sms_queued` only when the active booking was confirmed and its
+provider cancellation SMS was queued. Cancellation clears the operation's
+current_booking_id without mutating the historical Booking.
 `booking.rescheduled` v2 keeps the v1 payload and adds `previous_booking_id`;
 `booking_id` identifies the newly inserted successor. The pointer changes in
 the same transaction. `commitment_created:false` is a deprecated compatibility
@@ -219,10 +221,8 @@ window and reference because providers do not access the dashboard. Templates ar
 ```text
 booking_confirmation_client
 booking_confirmation_provider
-operation_cancellation_provider
-booking_cancellation_client
-booking_reschedule_client
-booking_reschedule_provider
+operation_cancellation_client
+booking_cancellation_provider
 ```
 
 ## Tool-to-event matrix
@@ -232,7 +232,7 @@ booking_reschedule_provider
 | `list_open_operations` | none |
 | `create_operation` | `operation.created`, `call.routed` |
 | `update_operation` | `operation.updated`, `call.routed` when selecting the operation |
-| `cancel_operation` | `operation.cancelled`, optional `booking.cancelled`, and `call.routed` when selecting the operation. No email events in the current rollout. |
+| `cancel_operation` | `operation.cancelled`, optional `booking.cancelled`, `call.routed`, and durable `sms.queued` events (client always; provider only for a confirmed booking). |
 | `confirm_mandate` | `mandate.confirmed`, `sourcing.started` |
 | `list_provider_operations` | none |
 | `create_quote` | `quote.received`; additionally `quote.counteroffer_requested` when applicable |
@@ -245,12 +245,16 @@ booking_reschedule_provider
 | `escalate` | `escalation.started`; telephony later emits joined, transferred, resolved or failed events |
 
 Server workflows additionally emit `quote.requested`, `quote.expired`,
-`quote.selected`, `booking.pending` and email delivery events.
+`quote.selected`, `booking.pending` and SMS delivery events.
 
-Client cancellation rollout (2026-08-30): email sending and enqueueing are disabled.
-`operation.cancelled.provider_email_queued` and
-`booking.cancelled.notification_email_queued` are always `false`. No `email.queued`
-or `email.sent` event is emitted by `cancel_operation`.
+Client cancellation rollout (2026-08-30): cancellation does not enqueue email.
+It atomically queues one `operation_cancellation_client` SMS. If the operation's
+current booking was confirmed, it also queues one
+`booking_cancellation_provider` SMS with the route, pickup window, confirmation
+reference and cancellation reason. `client_sms_queued` and `provider_sms_queued`
+mean a durable outbox job was created or already exists; they do not mean Twilio
+delivered it. No `email.queued` or `email.sent` event is emitted by
+`cancel_operation`.
 
 ## Idempotency
 
@@ -280,3 +284,11 @@ provider-side idempotency mechanism; the outbox remains the delivery authority.
 Once both confirmation jobs are processed,
 the worker moves an operation still in `booking_confirmed` to
 `notifications_sent`.
+
+## Client-cancellation dispatch
+
+`cancel_operation` uses deterministic keys
+`operation-cancellation-sms:<operation_id>:client` and, for a confirmed current
+booking, `booking-cancellation-sms:<booking_id>:provider`. The tool receipt and
+the outbox records commit in the same transaction, so a replay returns the same
+result without adding SMS jobs. A pending booking does not notify a provider.

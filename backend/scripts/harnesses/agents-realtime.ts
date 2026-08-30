@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import type WebSocket from "ws";
 import type { ClientFlowState, ClientOperationRepository } from "../../src/domain/client-operation-service";
+import type { ProviderBookingRepository } from "../../src/domain/provider-booking-service";
 import { ToolError } from "../../src/domain/tool-error";
 import type { AcceptedRoutingDecision } from "../../src/tango/agents/routing-instructions";
 import { AgentsCallSession } from "../../src/tango/realtime/agents-call-session";
@@ -19,11 +20,15 @@ class FakeSocket extends EventTarget {
 }
 let eventSequence = 0;
 const decision: AcceptedRoutingDecision = {
-  action: "accept", callId: "rtc-test", twilioCallSid: "CAfixture", callerPhone: "+541100000000",
+  action: "accept", outbound: false, direction: "inbound", purpose: "operation_management",
+  callId: "rtc-test", twilioCallSid: "CAfixture", callerPhone: "+541100000000",
   identity: { persona: "client", contactId: "trusted-client", name: "Lucas", phone: "+541100000000", email: null, authorized: true, active: true },
   operations: [],
 };
-const scope = { callId: "trusted-db-call", realtimeCallId: "rtc-test", counterpartyId: "trusted-client", persona: "client" as const };
+const scope = {
+  callId: "trusted-db-call", realtimeCallId: "rtc-test", counterpartyId: "trusted-client", persona: "client" as const,
+  direction: "inbound" as const, purpose: "operation_management" as const,
+};
 const reads = { isAuthorized: async () => true, listForClient: async () => [], listForProvider: async () => [] };
 const terms = { price_cap: 950000, currency: "ARS", minimum_payment_term_days: 30,
   action_windows: [{ start_at: "2026-09-01T10:00:00-03:00", end_at: "2026-09-01T14:00:00-03:00" }] };
@@ -146,9 +151,23 @@ async function main(): Promise<void> {
 
   // Provider scope and live escalation keep using the same SDK loop. The SDK
   // must send the result before a single supervisor farewell, without auto reply.
-  const providerDecision: AcceptedRoutingDecision = { ...decision,
-    identity: { persona: "provider", providerId: "provider-1", name: "Theo", phone: "+541100000001", email: null, active: true } };
-  const providerTools = new CallToolFactory(reads).create({ ...scope, persona: "provider", counterpartyId: "provider-1" }, new MockEscalationTool(async () => {}));
+  const providerDecision: AcceptedRoutingDecision = {
+    action: "accept", outbound: false, direction: "inbound", purpose: "booking_management",
+    callId: "rtc-provider", twilioCallSid: "CAprovider", callerPhone: "+541100000001",
+    identity: { persona: "provider", providerId: "provider-1", name: "Theo", phone: "+541100000001", email: null, active: true },
+    operations: [],
+  };
+  const providerBookingRepository: ProviderBookingRepository = {
+    getState: async () => ({ flow: "provider_inbound", profile: "provider_booking_escalation", intent: "cancel_booking",
+      bookings: [], selectedBooking: null, commandTarget: null, lastResult: null }),
+    select: async () => { throw new Error("not exercised"); },
+    execute: async () => { throw new Error("not exercised"); },
+  };
+  const providerTools = new CallToolFactory(reads, undefined, undefined, providerBookingRepository).create({
+    callId: scope.callId, realtimeCallId: scope.realtimeCallId, counterpartyId: "provider-1",
+    persona: "provider", direction: "inbound", purpose: "booking_management",
+  }, new MockEscalationTool(async () => {}));
+  await providerTools.refresh();
   const providerSocket = new FakeSocket();
   let farewells = 0;
   const provider = new AgentsCallSession(providerDecision, providerTools, logger, { onEscalationReady: () => {
@@ -156,7 +175,7 @@ async function main(): Promise<void> {
     farewells++;
     provider.transport.requestResponse({ instructions: "Supervisor farewell" });
   } }, { skipOpenEventListeners: true, createWebSocket: async () => providerSocket as unknown as WebSocket });
-  assert.deepEqual((await provider.initialConfiguration()).tools?.map((tool) => tool.type === "function" ? tool.name : "mcp"), ["list_provider_operations", "escalate"]);
+  assert.deepEqual((await provider.initialConfiguration()).tools?.map((tool) => tool.type === "function" ? tool.name : "mcp"), ["escalate"]);
   assert.deepEqual((await provider.initialConfiguration()).audio?.input?.noise_reduction, { type: "far_field" });
   await provider.connect("rtc-provider", "fixture-key");
   invoke(providerSocket, "escalate", { reason: "Please contact supervisor", trigger: "explicit_human_request" }, "escalation");
@@ -201,10 +220,10 @@ async function main(): Promise<void> {
   assert.equal(commands.at(-1)!.id, "incremental-confirm");
   incrementalCall.session.close();
   // Exercise the real SDK cancellation wrapper and removal of ALL remote tools
-  // before the success result is delivered. There is no notification adapter.
+  // before the success result is delivered. Delivery stays in the durable SMS outbox.
   let cancellationCount = 0;
   const cancelledResult = { operation_reference: "OP-000123", status: "cancelled" as const,
-    provider_email_queued: false as const, next_profile: "terminal" as const };
+    client_sms_queued: true, provider_sms_queued: false, next_profile: "terminal" as const };
   state = { profile: "client_entry", intent: "undecided", operation: null };
   const cancellationRepository: ClientOperationRepository = {
     getState: async () => structuredClone(state),
@@ -235,14 +254,14 @@ async function main(): Promise<void> {
   assert.deepEqual(JSON.parse(cancellationSocket.output("cancel-sdk").output), cancelledResult);
   const cancellationUpdate = cancellationSocket.sent.filter((event) => event.type === "session.update" && "tools" in event.session).at(-1)!;
   assert.deepEqual(cancellationUpdate.session.tools, []);
-  assert.match(cancellationUpdate.session.instructions, /carrier has not been notified/);
+  assert.match(cancellationUpdate.session.instructions, /SMS confirmation was queued/);
   assert.ok(cancellationSocket.sent.indexOf(cancellationUpdate)
     < cancellationSocket.sent.findIndex((event) => event.item?.call_id === "cancel-sdk"));
   cancellationSocket.receive(cancellationEvent);
   await until(() => cancellationSocket.sent.filter((event) => event.item?.call_id === "cancel-sdk").length === 2);
   assert.equal(cancellationCount, 1, "SDK replays the original cancellation result");
   cancellationCall.session.close();
-  console.log("Agents Realtime harness passed: SIP, SDK tools/results/history/replay, dynamic mandate visibility, cancellation without email, no approvals/evidence, terminal state and escalation. Mocked repository/socket; no PostgreSQL or live calls.");
+  console.log("Agents Realtime harness passed: SIP, SDK tools/results/history/replay, dynamic mandate visibility, durable cancellation SMS, no approvals/evidence, terminal state and escalation. Mocked repository/socket; no PostgreSQL or live calls.");
 }
 
 main().catch((error: unknown) => { console.error(error); process.exitCode = 1; });

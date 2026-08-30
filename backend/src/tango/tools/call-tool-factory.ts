@@ -33,14 +33,22 @@ export class CallToolFactory {
       ? new ProviderQuoteService(scope, this.providerMutations) : undefined;
     const bookingService = scope.persona === "provider" && scope.direction === "inbound" && this.providerBookings
       ? new ProviderBookingService(scope, this.providerBookings) : undefined;
-    return new CallToolSession([
-      ...(scope.persona === "client" ? [new ListOpenOperationsTool(service)]
-        : bookingService ? [new ListProviderOperationsTool(service, bookingService)] : []),
-      ...(clientService ? [new CreateOperationTool(clientService), new UpdateOperationTool(clientService), new CancelOperationTool(clientService), new ConfirmMandateTool(clientService)] : []),
-      ...(escalationTool ? [escalationTool] : []),
-      ...(providerService ? [new CreateQuoteTool(providerService), new DeclineQuoteRequestTool(providerService), new RecordProviderOfferTool(providerService)] : []),
-      ...(bookingService ? [new RescheduleBookingTool(bookingService), new CancelBookingTool(bookingService), new SelectBookingForRescheduleTool(bookingService), new SelectBookingForCancellationTool(bookingService)] : []),
-    ], clientService, providerService, bookingService, this.logger?.child({
+    const tools: RealtimeTool[] = [];
+    if (scope.persona === "client") tools.push(new ListOpenOperationsTool(service));
+    else if (bookingService) tools.push(new ListProviderOperationsTool(service, bookingService));
+    if (clientService) tools.push(
+      new CreateOperationTool(clientService), new UpdateOperationTool(clientService),
+      new CancelOperationTool(clientService), new ConfirmMandateTool(clientService),
+    );
+    if (escalationTool) tools.push(escalationTool);
+    if (providerService) tools.push(
+      new CreateQuoteTool(providerService), new DeclineQuoteRequestTool(providerService), new RecordProviderOfferTool(providerService),
+    );
+    if (bookingService) tools.push(
+      new RescheduleBookingTool(bookingService), new CancelBookingTool(bookingService),
+      new SelectBookingForRescheduleTool(bookingService), new SelectBookingForCancellationTool(bookingService),
+    );
+    return new CallToolSession(tools, clientService, providerService, bookingService, this.logger?.child({
       call_record_id: scope.callId, call_id: scope.realtimeCallId,
       persona: scope.persona, counterparty_id: scope.counterpartyId,
     }));

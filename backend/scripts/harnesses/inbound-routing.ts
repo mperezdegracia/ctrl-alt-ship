@@ -97,13 +97,14 @@ async function main(): Promise<void> {
       }).create({
         callId: "test-call", realtimeCallId: "rtc_client", persona: "client",
         counterpartyId: client.identity.persona === "client" ? client.identity.contactId : "",
+        direction: "inbound", purpose: "operation_management",
       }).definitions,
     );
     assert.deepEqual(session.tools.map((tool) => tool.name), ["list_open_operations"]);
     assert.equal(session.model, "gpt-realtime-2.1");
     assert.equal(session.reasoning.effort, "low");
     assert.equal(session.audio.output.voice, "cedar");
-    assert.equal(session.audio.output.speed, 1.05);
+    assert.equal(session.audio.output.speed, 1.2);
     assert.match(session.instructions, /# CREATE FLOW/);
     assert.match(session.instructions, /OP-900001 · Terminal 4 → González Catán/);
     assertLanguagePolicy(session);
@@ -115,11 +116,11 @@ async function main(): Promise<void> {
   assert.equal(provider.action, "accept");
   if (provider.action === "accept") {
     assert.equal(provider.identity.persona, "provider");
-    assert.equal(provider.operations[0]?.reference, "OP-900001");
+    assert.deepEqual(provider.operations, []);
 
     const session = new RealtimeSessionFactory().create(provider, []);
     assert.match(session.instructions, /# QUOTE AND NEGOTIATION FLOW/);
-    assert.match(session.instructions, /Never reveal the client's price cap/);
+    assert.match(session.instructions, /Never reveal the cap or calculation/);
     assert.doesNotMatch(session.instructions, new RegExp(providerPhone.replace("+", "\\+")));
     assert.doesNotMatch(session.instructions, /operaciones@transportesur\.example\.com/);
 
@@ -139,8 +140,8 @@ async function main(): Promise<void> {
 
 function assertLanguagePolicy(session: ReturnType<RealtimeSessionFactory["create"]>): void {
   assert.match(session.instructions, /After that opening greeting, always respond in the caller's language/);
-  assert.match(session.instructions, /For both clients and providers, start the call with this brief English greeting/);
-  assert.match(session.instructions, /switch immediately without requiring a separate language request/);
+  assert.match(session.instructions, /Every call begins with the runtime's brief, flow-specific English greeting/);
+  assert.match(session.instructions, /switch your very next response to it automatically/);
   assert.match(session.instructions, /Do not infer it from their phone number/);
   assert.doesNotMatch(session.instructions, /first spoken message must be in English|Continue in English unless|Begin the call now in English/);
   assert.deepEqual(session.audio.input.turn_detection, {

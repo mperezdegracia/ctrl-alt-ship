@@ -21,8 +21,8 @@ class Repository implements EscalationRepository {
 
 async function main(): Promise<void> {
   const repository = new Repository();
-  const clientScope: ToolCallScope = { callId: "call-client", realtimeCallId: "rtc-client", persona: "client", counterpartyId: "client-1" };
-  const providerScope: ToolCallScope = { callId: "call-provider", realtimeCallId: "rtc-provider", persona: "provider", counterpartyId: "provider-1" };
+  const clientScope: ToolCallScope = { callId: "call-client", realtimeCallId: "rtc-client", persona: "client", counterpartyId: "client-1", direction: "inbound", purpose: "operation_management" };
+  const providerScope: ToolCallScope = { callId: "call-provider", realtimeCallId: "rtc-provider", persona: "provider", counterpartyId: "provider-1", direction: "inbound", purpose: "booking_management" };
   const request = {
     operation_reference: "OP-900001",
     trigger: "explicit_human_request",

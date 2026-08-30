@@ -41,7 +41,7 @@ export type ClientMutationResult = {
   next_profile: "client_create" | "client_update" | "client_confirm";
   mandate_confirmation_required?: boolean;
 } | { operation_reference: string; mandate_version: number; status: "sourcing"; next_profile: "terminal" }
-  | { operation_reference: string; status: "cancelled"; provider_email_queued: false; next_profile: "terminal" };
+  | { operation_reference: string; status: "cancelled"; client_sms_queued: boolean; provider_sms_queued: boolean; next_profile: "terminal" };
 
 export interface ClientOperationRepository {
   getState(scope: ToolCallScope): Promise<ClientFlowState>;

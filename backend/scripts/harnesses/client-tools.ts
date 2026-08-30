@@ -52,10 +52,14 @@ class RpcFixture {
   }));
 }
 
-const scope: ToolCallScope = { callId: "db-call", realtimeCallId: "rtc-live", persona: "client", counterpartyId: "db-client" };
+const scope: ToolCallScope = {
+  callId: "db-call", realtimeCallId: "rtc-live", persona: "client", counterpartyId: "db-client",
+  direction: "inbound", purpose: "operation_management",
+};
 const reads = { isAuthorized: async () => true, listForClient: async () => [], listForProvider: async () => [] };
 const decision: AcceptedRoutingDecision = {
-  action: "accept", callId: "rtc-live", twilioCallSid: "CAtest", callerPhone: "+541100000000",
+  action: "accept", outbound: false, direction: "inbound", purpose: "operation_management",
+  callId: "rtc-live", twilioCallSid: "CAtest", callerPhone: "+541100000000",
   identity: { persona: "client", contactId: "db-client", name: "Test", phone: "+541100000000", email: null, authorized: true, active: true },
   operations: [],
 };
@@ -256,10 +260,10 @@ async function main(): Promise<void> {
   assert.equal(rpc.requests.length, beforeInvalidCancel);
   const cancelPrompt = factory.create(decision, session.definitions, session.flowState).instructions;
   assert.match(cancelPrompt, /WAIT for the caller's next turn/);
-  assert.match(cancelPrompt, /No email is sent or queued/);
+  assert.match(cancelPrompt, /SMS confirmation for the client/);
   assert.match(cancelPrompt, /If they decline, do not call cancel_operation/);
   assert.match(cancelPrompt, /do not seek provider approval/);
-  const cancelled: ClientMutationResult = { operation_reference: "OP-000123", status: "cancelled", provider_email_queued: false, next_profile: "terminal" };
+  const cancelled: ClientMutationResult = { operation_reference: "OP-000123", status: "cancelled", client_sms_queued: true, provider_sms_queued: false, next_profile: "terminal" };
   rpc.results.push(cancelled);
   assert.deepEqual(await session.execute("cancel_operation", cancelArgs, { toolCallId: "fn-cancel" }), cancelled);
   assert.deepEqual(rpc.requests.at(-1), { method: "execute_client_cancellation_tool", args: {
@@ -271,7 +275,7 @@ async function main(): Promise<void> {
   await session.refresh();
   assert.deepEqual(names(), []);
   const terminalPrompt = factory.create(decision, session.definitions, session.flowState).instructions;
-  assert.match(terminalPrompt, /No email was sent or queued and the carrier has not been notified/);
+  assert.match(terminalPrompt, /SMS confirmation was queued/);
   assert.doesNotMatch(terminalPrompt, /# CREATE FLOW|# UPDATE FLOW|# CANCEL FLOW|# MANDATE CONFIRMATION/);
   rpc.results.push(cancelled);
   assert.deepEqual(await session.execute("cancel_operation", cancelArgs, { toolCallId: "fn-cancel" }), cancelled);
@@ -281,31 +285,33 @@ async function main(): Promise<void> {
       (error) => error instanceof ToolError && error.code === code);
   }
   rpc.error = null;
-  const cancelMigration = readFileSync(resolve(__dirname, "../../../supabase/migrations/20260830040000_client_cancellation.sql"), "utf8");
+  const cancelMigration = readFileSync(resolve(__dirname, "../../../supabase/migrations/20260830232300_client_cancellation_sms_outbox.sql"), "utf8");
   assert.match(cancelMigration, /persona = 'client' AND outcome = 'active'\s+FOR UPDATE/);
   assert.match(cancelMigration, /active AND authorized FOR SHARE/);
   assert.match(cancelMigration, /contact_id = p_contact_id\s+FOR UPDATE/);
   assert.match(cancelMigration, /c.operation_intent <> 'undecided' OR c.operation_id IS NOT NULL/);
   assert.match(cancelMigration, /IF op.status IN \('cancelled', 'failed'\)/);
   assert.ok(cancelMigration.indexOf("RETURN receipt.result") < cancelMigration.indexOf("IF c.client_tools_completed_at"));
-  assert.match(cancelMigration, /UPDATE public.bookings SET status = 'cancelled', cancelled_at = cancelled_time/);
-  assert.match(cancelMigration, /'notification_email_queued', false/);
-  assert.match(cancelMigration, /'provider_email_queued', false/);
+  assert.match(cancelMigration, /CREATE OR REPLACE FUNCTION public\.enqueue_sms_outbox/);
+  assert.match(cancelMigration, /'operation-cancellation-sms:' \|\| op\.id \|\| ':client'/);
+  assert.match(cancelMigration, /'booking-cancellation-sms:' \|\| confirmed_booking\.id \|\| ':provider'/);
+  assert.match(cancelMigration, /'notification_sms_queued', provider_sms_outbox_id IS NOT NULL/);
+  assert.match(cancelMigration, /'client_sms_queued', client_sms_outbox_id IS NOT NULL/);
+  assert.match(cancelMigration, /'provider_sms_queued', provider_sms_outbox_id IS NOT NULL/);
   assert.match(cancelMigration, /'operation.cancelled'/);
   assert.match(cancelMigration, /'booking.cancelled'/);
   assert.match(cancelMigration, /skipped_reason/);
-  assert.match(cancelMigration, /GRANT EXECUTE ON FUNCTION public.execute_client_cancellation_tool[\s\S]*TO service_role/);
-  assert.doesNotMatch(cancelMigration, /INSERT INTO public\.(outbox|mandates|commitments)|DELETE FROM|email\.queued|email\.sent/);
+  assert.match(cancelMigration, /GRANT EXECUTE ON FUNCTION[\s\S]*public\.execute_client_cancellation_tool[\s\S]*TO service_role/);
+  assert.doesNotMatch(cancelMigration, /INSERT INTO public\.(mandates|commitments)|DELETE FROM|email\.queued|email\.sent/);
 
   rpc.failState = true;
   await assert.rejects(session.refresh());
   assert.deepEqual(names(), [], "State failures must remove tools");
   rpc.failState = false;
-  const provider = new CallToolFactory(reads, rpc.repository).create({ ...scope, persona: "provider" });
-  assert.deepEqual(provider.definitions.map((tool) => tool.name), ["list_provider_operations"]);
-  await assert.rejects(provider.execute("create_operation", {}, { toolCallId: "provider-attempt" }), /not available/);
-  await assert.rejects(provider.execute("confirm_mandate", terms, { toolCallId: "provider-attempt" }), /not available/);
-  await assert.rejects(provider.execute("cancel_operation", cancelArgs, { toolCallId: "provider-attempt" }), /not available/);
+  assert.throws(() => new CallToolFactory(reads, rpc.repository).create({
+    callId: scope.callId, realtimeCallId: scope.realtimeCallId, counterpartyId: "provider-1",
+    persona: "provider", direction: "inbound", purpose: "booking_management",
+  }), /Provider inbound booking repository is not configured/);
   const disabled = new CallToolFactory(reads).create(scope);
   assert.deepEqual(disabled.definitions.map((tool) => tool.name), ["list_open_operations"]);
   await assert.rejects(disabled.execute("confirm_mandate", terms, { toolCallId: "disabled-attempt" }), /not available/);

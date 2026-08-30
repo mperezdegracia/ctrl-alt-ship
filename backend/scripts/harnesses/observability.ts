@@ -25,11 +25,11 @@ async function main(): Promise<void> {
 
   const state: ClientFlowState = { profile: "client_entry", intent: "undecided", operation: null };
   let fail = false;
-  const service = new ClientOperationService({ persona: "client", callId: "call", realtimeCallId: "rtc", counterpartyId: "client" }, {
+  const service = new ClientOperationService({ persona: "client", callId: "call", realtimeCallId: "rtc", counterpartyId: "client", direction: "inbound", purpose: "operation_management" }, {
     getState: async () => { if (fail) throw new Error("fixture failure"); return state; },
     execute: async () => { throw new Error("Not expected"); },
   });
-  const session = new CallToolSession([], service, undefined, logger);
+  const session = new CallToolSession([], service, undefined, undefined, logger);
   await session.refresh();
   assert.equal(records.at(-1)?.event, "tool.state_refreshed");
   assert.equal(records.at(-1)?.fields?.profile, "client_entry");

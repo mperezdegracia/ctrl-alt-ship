@@ -1,6 +1,6 @@
 import { ProviderBookingService, type ProviderBookingSelectionName } from "../../domain/provider-booking-service";
 import { ToolError } from "../../domain/tool-error";
-import { RealtimeTool, type JsonSchema, type ToolInvocation } from "./realtime-tool";
+import { RealtimeTool, type JsonSchema, type RealtimeFunctionToolDefinition, type ToolInvocation } from "./realtime-tool";
 
 export class RescheduleBookingTool extends RealtimeTool {
   readonly definition = {
@@ -24,7 +24,7 @@ export class RescheduleBookingTool extends RealtimeTool {
 
 abstract class SelectBookingTool extends RealtimeTool {
   constructor(protected readonly service: ProviderBookingService, private readonly selection: ProviderBookingSelectionName) { super(); }
-  protected definitionFor(name: string, description: string) { return {
+  protected definitionFor(name: string, description: string): RealtimeFunctionToolDefinition { return {
     type: "function" as const, name, description,
     parameters: { type: "object" as const, properties: { operation_reference: { type: "string" as const, pattern: "^OP-[0-9]{6,}$" } }, required: ["operation_reference"], additionalProperties: false },
   }; }

@@ -1,7 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { SmsDeliveryError, type SmsGateway } from "../services/sms-gateway";
-import { prepareBookingSmsPayload, renderBookingSms } from "../services/sms-templates";
+import { prepareSmsPayload, renderSms } from "../services/sms-templates";
 
 export type SmsOutboxJob = {
   id: string;
@@ -104,8 +104,8 @@ export class SmsOutboxWorker {
       outbox_id: job.id, operation_id: job.operation_id, attempts: job.attempts, mode: this.gateway.mode,
     });
     try {
-      const payload = prepareBookingSmsPayload(job.payload);
-      const rendered = renderBookingSms(payload);
+      const payload = prepareSmsPayload(job.payload);
+      const rendered = renderSms(payload);
       const result = await this.gateway.deliver({
         ...rendered,
         to: payload.recipient_phone ?? "",

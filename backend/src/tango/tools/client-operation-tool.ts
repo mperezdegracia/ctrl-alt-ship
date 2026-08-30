@@ -45,7 +45,7 @@ export class CancelOperationTool extends RealtimeTool {
   readonly definition = {
     type: "function" as const,
     name: "cancel_operation",
-    description: "Cancels an operation only after the authenticated client explicitly confirms the cancellation. This is a terminal logical cancellation, never a database delete. No email is sent or queued.",
+    description: "Cancels an operation only after the authenticated client explicitly confirms the cancellation. This is a terminal logical cancellation, never a database delete. It queues an SMS confirmation for the client and, only for a confirmed booking, an operational cancellation SMS for its provider.",
     parameters: {
       type: "object", properties: {
         operation_reference: { type: "string", pattern: "^OP-[0-9]{6,}$" },

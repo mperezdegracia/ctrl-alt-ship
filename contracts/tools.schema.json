@@ -279,7 +279,7 @@
     {
       "type": "function",
       "name": "cancel_operation",
-      "description": "Cancels an operation only after the authenticated client explicitly confirms the cancellation. This is a terminal logical cancellation, never a database delete. No email is sent or queued.",
+      "description": "Cancels an operation only after the authenticated client explicitly confirms the cancellation. This is a terminal logical cancellation, never a database delete. It queues an SMS confirmation for the client and, only for a confirmed booking, an operational cancellation SMS for its provider.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -308,7 +308,10 @@
           "status": {
             "const": "cancelled"
           },
-          "provider_email_queued": {
+          "client_sms_queued": {
+            "type": "boolean"
+          },
+          "provider_sms_queued": {
             "type": "boolean"
           },
           "next_profile": {
@@ -318,7 +321,8 @@
         "required": [
           "operation_reference",
           "status",
-          "provider_email_queued",
+          "client_sms_queued",
+          "provider_sms_queued",
           "next_profile"
         ],
         "additionalProperties": false
@@ -570,7 +574,7 @@
     {
       "type": "function",
       "name": "decline_quote_request",
-      "description": "Records that the provider explicitly declined to quote. It creates no quote or booking.",
+      "description": "Records that the provider explicitly declined to quote. It creates no quote or commitment.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -1075,7 +1079,7 @@
     {
       "type": "function",
       "name": "record_provider_offer",
-      "description": "Records a clear provider price proposal immediately, including out-of-range offers. Does not approve, create a quote, consume counteroffers or book.",
+      "description": "Records the provider's observed price before negotiation; it does not approve or book the quote.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -1099,7 +1103,7 @@
           },
           "currency": {
             "type": "string",
-            "pattern": "^[A-Z]{3}$"
+            "minLength": 1
           }
         },
         "required": [

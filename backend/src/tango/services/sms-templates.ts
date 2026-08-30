@@ -8,6 +8,10 @@ export type BookingSmsPayload = BookingEmailPayload & {
   recipient_phone_type: "mobile" | "landline" | null;
 };
 
+export type SmsPayload = BookingSmsPayload & {
+  reason: string | null;
+};
+
 export type RenderedSms = { body: string };
 
 function text(value: unknown): string | null {
@@ -49,6 +53,14 @@ export function prepareBookingSmsPayload(value: unknown): BookingSmsPayload {
   };
 }
 
+/** Normalizes every durable SMS payload. Cancellation jobs share the booking
+ * shape so malformed historical data still renders to a bounded message. */
+export function prepareSmsPayload(value: unknown): SmsPayload {
+  const source = value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown> : {};
+  return { ...prepareBookingSmsPayload(value), reason: text(source.reason) };
+}
+
 /**
  * A self-contained, compact confirmation. Providers do not have dashboard
  * access, so the dispatch-critical booking details belong in the SMS itself.
@@ -80,4 +92,37 @@ export function renderBookingSms(payload: BookingSmsPayload): RenderedSms {
   // Keep a malformed or unusually long source field from turning a
   // confirmation into an unbounded SMS cost while preserving readable lines.
   return { body: limitBody(lines.join("\n")) };
+}
+
+function renderClientCancellationSms(payload: SmsPayload): RenderedSms {
+  const lines = [
+    "Tango: cancellation confirmed.",
+    payload.operation_reference ? `Reference: ${compact(payload.operation_reference, 64)}` : null,
+    payload.reason ? `Reason: ${compact(payload.reason, 120)}` : null,
+    "Your operation is cancelled. No further action is required.",
+  ].filter((line): line is string => Boolean(line));
+  return { body: limitBody(lines.join("\n")) };
+}
+
+function renderProviderCancellationSms(payload: SmsPayload): RenderedSms {
+  const booking = payload.booking;
+  const route = [booking.pickup_location, booking.delivery_location].filter(Boolean).join(" -> ");
+  const lines = [
+    "Tango: booking cancelled. Do not dispatch.",
+    payload.operation_reference ? `Reference: ${compact(payload.operation_reference, 64)}` : null,
+    booking.client_name ? `Client: ${compact(booking.client_name)}` : null,
+    route ? `Route: ${compact(route, 180)}` : null,
+    dateRange(booking.pickup_window_start, booking.pickup_window_end)
+      ? `Pickup: ${dateRange(booking.pickup_window_start, booking.pickup_window_end)}` : null,
+    booking.confirmation_reference ? `Confirmation: ${compact(booking.confirmation_reference, 64)}` : null,
+    payload.reason ? `Reason: ${compact(payload.reason, 120)}` : null,
+    "The client cancelled the operation.",
+  ].filter((line): line is string => Boolean(line));
+  return { body: limitBody(lines.join("\n")) };
+}
+
+export function renderSms(payload: SmsPayload): RenderedSms {
+  if (payload.template === "operation_cancellation_client") return renderClientCancellationSms(payload);
+  if (payload.template === "booking_cancellation_provider") return renderProviderCancellationSms(payload);
+  return renderBookingSms(payload);
 }

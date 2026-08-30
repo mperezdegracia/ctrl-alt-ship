@@ -7,7 +7,12 @@ import {
   type SmsDeliveryRequest,
   type SmsGateway,
 } from "../../src/tango/services/sms-gateway";
-import { prepareBookingSmsPayload, renderBookingSms } from "../../src/tango/services/sms-templates";
+import {
+  prepareBookingSmsPayload,
+  prepareSmsPayload,
+  renderBookingSms,
+  renderSms,
+} from "../../src/tango/services/sms-templates";
 import {
   SmsOutboxWorker,
   type SmsOutboxJob,
@@ -94,6 +99,34 @@ async function main(): Promise<void> {
   assert.match(renderedClient.body, /Provider: Transportes del Sur/);
   assert.match(renderedClient.body, /Keep this confirmation for your records\./);
 
+  const renderedCancellationClient = renderSms(prepareSmsPayload({
+    template: "operation_cancellation_client",
+    recipient_type: "client",
+    recipient_phone: "+5491132555829",
+    recipient_phone_type: "mobile",
+    operation_reference: "OP-900001",
+    reason: "The shipment is no longer needed",
+  }));
+  assert.match(renderedCancellationClient.body, /Tango: cancellation confirmed\./);
+  assert.match(renderedCancellationClient.body, /Reference: OP-900001/);
+  assert.match(renderedCancellationClient.body, /Reason: The shipment is no longer needed/);
+  assert.match(renderedCancellationClient.body, /No further action is required\./);
+
+  const renderedCancellationProvider = renderSms(prepareSmsPayload({
+    ...payload,
+    template: "booking_cancellation_provider",
+    reason: "The shipment is no longer needed",
+  }));
+  for (const detail of [
+    "Tango: booking cancelled. Do not dispatch.",
+    "Client: Lucas",
+    "Route: Terminal 4 -> Gonzalez Catan",
+    "Confirmation: CONF-900001",
+    "Reason: The shipment is no longer needed",
+    "The client cancelled the operation.",
+  ]) assert.match(renderedCancellationProvider.body, new RegExp(detail.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  assert.ok(renderedCancellationProvider.body.length <= 459);
+
   let twilioMessage: { to: string; from: string; body: string } | undefined;
   const twilioGateway = new TwilioSmsGateway(
     { accountSid: "AC123", authToken: "token", from: "+14155550100" },
@@ -167,7 +200,15 @@ async function main(): Promise<void> {
   assert.equal(delivered.length, 1);
   assert.match(delivered[0]!.body, /Use these terms for dispatch\./);
 
-  console.log("SMS outbox harness OK: complete provider context, Argentina mobile formatting, durable completion and failure handling.");
+  const cancellationRepository = new MemoryRepository([[job("cancellation-job", {
+    payload: { ...payload, template: "booking_cancellation_provider", reason: "The shipment is no longer needed" },
+    idempotency_key: "booking-cancellation-sms:e1ebfc8d-bfd7-afdb-3a9d028b55bf:provider",
+  })]]);
+  await new SmsOutboxWorker(cancellationRepository, informationGateway, silentLogger).runOnce();
+  assert.equal(delivered.length, 2);
+  assert.match(delivered[1]!.body, /booking cancelled\. Do not dispatch/);
+
+  console.log("SMS outbox harness OK: booking and cancellation context, Argentina mobile formatting, durable completion and failure handling.");
 }
 
 main().catch((error: unknown) => {

@@ -51,14 +51,14 @@ class ClientInstructions extends PersonaInstructions {
 
 # CANCEL FLOW
 1. Refresh the client's available operations with list_open_operations before proposing cancellation. Identify the exact operation_reference and collect a concise reason. Never guess the reference or reason, or use update_operation to select the cancellation target: that would lock the update path.
-2. Read back the reference and cancellation reason. Explain that cancellation closes this operation and any active booking in our system, preserves history, and does not notify the carrier. No email is sent or queued in this rollout.
+2. Read back the reference and cancellation reason. Explain that cancellation closes this operation and any active booking in our system and preserves history. It queues an SMS confirmation for the client; if there is a confirmed booking, it also queues an operational cancellation SMS for that provider. Never promise delivery or provider acceptance.
 3. Ask one explicit confirmation for that cancellation, then WAIT for the caller's next turn. Silence, a question, correction, interruption or earlier yes is not approval. If they decline, do not call cancel_operation. If they change the target or reason, summarize the revised cancellation and ask again.
 4. Only after an unambiguous yes to that exact cancellation, call cancel_operation with operation_reference and reason. Do not create or confirm a mandate and do not seek provider approval.
-5. Wait for the tool result. On success, say the operation is cancelled in our system and the carrier has not been notified. Cancellation is terminal for this call; do not offer more changes. On failure, do not claim success; clarify the current state and obtain fresh confirmation before a new attempt.`;
+5. Wait for the tool result. On success, say the operation is cancelled in our system and its SMS confirmation was queued. If provider_sms_queued is true, say its confirmed provider was also notified by SMS; otherwise do not claim a provider was notified. Cancellation is terminal for this call; do not offer more changes. On failure, do not claim success; clarify the current state and obtain fresh confirmation before a new attempt.`;
     if (!this.state || this.state.profile === "client_entry") return instructions;
     if (this.state.profile === "terminal") {
       return "# CLIENT FLOW COMPLETE\nNo further operation changes are available in this call. Explain the current result and close naturally."
-        + (this.state.intent === "cancel" ? " The operation is cancelled in our system. No email was sent or queued and the carrier has not been notified. Do not claim provider acceptance or create a mandate." : "");
+        + (this.state.intent === "cancel" ? " The operation is cancelled in our system and an SMS confirmation was queued. Do not claim SMS delivery, provider acceptance or create a mandate." : "");
     }
     const section = this.state.intent === "create"
       ? `# CREATE FLOW

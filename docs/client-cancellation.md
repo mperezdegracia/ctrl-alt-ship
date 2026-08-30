@@ -1,13 +1,14 @@
 # Cancelación de operaciones del cliente
 
 Decisión vigente: 2026-08-30. Implementada en código, pendiente de despliegue y
-validación en el entorno. **No enviar ni encolar emails todavía.**
+validación en el entorno. No envía emails: usa el outbox de SMS.
 
 ## Flujo
 
 1. El cliente lista sus operaciones y elige una referencia real `OP-…`.
 2. El agente obtiene el motivo, resume la cancelación y sus consecuencias:
-   se cierra en el sistema, sin notificar al transportista.
+   se cierra en el sistema, se encola una confirmación SMS al cliente y, si hay
+   un Booking confirmado, un aviso operativo SMS al transportista.
 3. Espera un sí explícito en el siguiente turno. Una negativa, pregunta,
    interrupción o cambio de objetivo no autoriza ejecutar la tool.
 4. Ejecuta `cancel_operation({ operation_reference, reason })`.
@@ -44,8 +45,16 @@ Se mantiene la decisión de no usar `needsApproval` ni tracking de audio.
   Rechaza change requests pending/escalated con `resolved_at`.
 - Retira trabajos `contact_provider` pendientes del outbox marcándolos processed
   con `skipped_reason: operation_cancelled`; processed no significa contacto enviado.
-- No inserta jobs de email ni eventos `email.*`. Tanto el resultado como los
-  eventos de cancelación devuelven el indicador de notificación en `false`.
+- Encola atómicamente `operation_cancellation_client` con la clave
+  `operation-cancellation-sms:<operation_id>:client`. El resultado devuelve
+  `client_sms_queued`; encolar no prueba entrega de Twilio.
+- Si el `current_booking_id` apunta a un Booking confirmado, también encola
+  `booking_cancellation_provider` con ruta, ventana de retiro, referencia de
+  confirmación y motivo. Su clave es
+  `booking-cancellation-sms:<booking_id>:provider`; `provider_sms_queued` queda
+  en `false` si no había Booking confirmado. Un Booking pendiente no avisa a
+  un transportista.
+- No inserta jobs ni eventos `email.*`.
 
 ## Límites
 
@@ -57,20 +66,22 @@ Se mantiene la decisión de no usar `needsApproval` ni tracking de audio.
 - No cuelga otras llamadas ni revoca contactos externos ya ejecutados. Workers
   futuros deben revalidar estado inmediatamente antes de contactar/confirmar;
   no se puede retirar una acción externa en curso solo cambiando la base.
-- El transportista no recibe aviso automático. La cancelación registrada en
-  el sistema no implica que esté enterado o haya aceptado nada.
+- El SMS del transportista solo se encola para un Booking confirmado. Una cola
+  exitosa no implica que el mensaje haya sido entregado ni que el transportista
+  haya aceptado la cancelación.
 - No implementa `cancel_booking` del proveedor (otro flujo: vuelve a sourcing).
 
 ## Despliegue y pruebas
 
-Aplicar `supabase/migrations/20260830040000_client_cancellation.sql` después de
-las migraciones anteriores, luego desplegar backend con
-`CLIENT_OPERATION_TOOLS_ENABLED=true`. No requiere nueva variable de entorno.
+Aplicar `supabase/migrations/20260830232300_client_cancellation_sms_outbox.sql`
+después de las migraciones de SMS, luego desplegar backend con
+`CLIENT_OPERATION_TOOLS_ENABLED=true`, `SMS_DELIVERY_MODE=twilio` y el worker de
+SMS habilitado. No requiere una variable de entorno nueva.
 
 Pruebas locales: typecheck, `harness:tools:client`, `harness:realtime:agents`.
 Cubren contrato, validación, RPC/contexto, errores públicos, replay, aislamiento,
 prompt y retiro de tools. Las aserciones SQL son estáticas: **no se ejecutó
 PostgreSQL ni se probó atomicidad/concurrencia**. No se cancelaron datos reales,
-no se llamó a OpenAI/Twilio ni se enviaron correos durante estas pruebas.
+no se llamó a OpenAI/Twilio ni se enviaron SMS durante estas pruebas.
 
 Validación manual pendiente con Lucas: [client-tools-lucas-test.md](client-tools-lucas-test.md).

@@ -90,5 +90,6 @@ obtención de un `CallSid` se reintentan.
   email. Si no cumple, se escala al Supervisor.
 - Si un Proveedor cancela, se cancela el Booking y se notifica al Cliente por
   email.
-- Si un Cliente cancela, se cancela lógicamente la Operación y se notifica al
-  Proveedor por email.
+- Si un Cliente cancela, se cancela lógicamente la Operación y recibe una
+  confirmación SMS. Si había un Booking confirmado, el Proveedor recibe además
+  un SMS operativo para no despachar.
