@@ -27,8 +27,21 @@ type CallRow = {
   contact_id: string | null;
   provider_id: string | null;
   direction: "inbound" | "outbound";
+  outcome: string;
+  started_at: string;
+  ended_at: string | null;
   recording_url: string | null;
   twilio_call_sid: string;
+};
+
+type EventRow = {
+  id: string;
+  type: string;
+  payload: unknown;
+  call_id: string | null;
+  commitment_id: string | null;
+  recording_checkpoint: number | string | null;
+  occurred_at: string;
 };
 
 export type DashboardWindow = { startAt: string; endAt: string };
@@ -103,6 +116,24 @@ export type DashboardOperationDossier = DashboardOperation & {
     recordingUrl: string | null;
     supersedesCommitmentId: string | null;
   }>;
+  trace: {
+    lanes: Array<{
+      id: string;
+      label: string;
+      description: string;
+      kind: "operation" | "call";
+    }>;
+    nodes: Array<{
+      id: string;
+      laneId: string;
+      kind: "event" | "call_started" | "call_ended";
+      occurredAt: string;
+      title: string;
+      detail: string | null;
+      branchDepth: number;
+      recordingCheckpoint: number | null;
+    }>;
+  };
 };
 
 const OPERATION_COLUMNS = [
@@ -211,10 +242,138 @@ async function callsFor(
   if (callIds.length === 0) return new Map();
   const result = await client
     .from("calls")
-    .select("id,contact_id,provider_id,direction,recording_url,twilio_call_sid")
+    .select("id,contact_id,provider_id,direction,outcome,started_at,ended_at,recording_url,twilio_call_sid")
     .in("id", callIds);
   if (result.error) throw result.error;
   return new Map((result.data as CallRow[]).map((row) => [row.id, row]));
+}
+
+const CALL_LIFECYCLE_EVENTS = new Set(["call.routed", "call.completed", "call.failed"]);
+const OPERATION_STATE_EVENTS = new Set([
+  "operation.created", "operation.updated", "operation.cancelled", "mandate.confirmed", "sourcing.started",
+  "quote.selected", "booking.pending", "booking.confirmed", "booking.declined", "booking.rescheduled",
+  "booking.reschedule_declined", "booking.cancelled", "escalation.started", "escalation.supervisor_joined",
+  "escalation.resolved", "escalation.failed", "email.queued", "email.sent", "email.failed",
+]);
+
+function traceEventTitle(type: string): string {
+  const titles: Record<string, string> = {
+    "operation.created": "Operation created",
+    "operation.updated": "Operation updated",
+    "operation.cancelled": "Operation cancelled",
+    "mandate.confirmed": "Mandate confirmed",
+    "sourcing.started": "Provider sourcing started",
+    "quote.requested": "Quote request issued",
+    "quote.received": "Quote received",
+    "quote.counteroffer_requested": "Counteroffer requested",
+    "quote.declined": "Quote declined",
+    "quote.expired": "Quote request expired",
+    "quote.selected": "Quote selected",
+    "booking.pending": "Booking confirmation requested",
+    "booking.confirmed": "Booking confirmed",
+    "booking.declined": "Booking declined",
+    "booking.rescheduled": "Booking rescheduled",
+    "booking.reschedule_declined": "Reschedule declined",
+    "booking.cancelled": "Booking cancelled",
+    "escalation.started": "Supervisor escalation started",
+    "escalation.supervisor_joined": "Supervisor joined",
+    "escalation.resolved": "Escalation resolved",
+    "escalation.failed": "Escalation follow-up required",
+    "email.queued": "Confirmation queued",
+    "email.sent": "Confirmation sent",
+    "email.failed": "Confirmation delivery failed",
+    "call.transferred": "Call transferred",
+  };
+  return titles[type] ?? type.replaceAll(".", " ").replaceAll("_", " ");
+}
+
+function traceEventDetail(payloadValue: unknown): string | null {
+  const payload = asRecord(payloadValue);
+  if (typeof payload.reason === "string" && payload.reason.trim()) return payload.reason;
+  if (typeof payload.selection_reason === "string" && payload.selection_reason.trim()) return payload.selection_reason;
+  if (typeof payload.provider_count === "number") {
+    return `${payload.provider_count} provider${payload.provider_count === 1 ? "" : "s"} in scope`;
+  }
+  return null;
+}
+
+function callLaneLabel(
+  call: CallRow,
+  names: { contacts: Map<string, string>; providers: Map<string, string> },
+): string {
+  return counterpartyName(call, names) ?? "Counterparty not recorded";
+}
+
+function toOperationTrace(
+  calls: CallRow[],
+  events: EventRow[],
+  names: { contacts: Map<string, string>; providers: Map<string, string> },
+): DashboardOperationDossier["trace"] {
+  const orderedCalls = [...calls].sort((left, right) => left.started_at.localeCompare(right.started_at));
+  const lanes: DashboardOperationDossier["trace"]["lanes"] = [
+    { id: "operation", label: "Operation record", description: "Durable state", kind: "operation" },
+    ...orderedCalls.map((call) => ({
+      id: `call:${call.id}`,
+      label: callLaneLabel(call, names),
+      description: `${call.direction === "outbound" ? "Outbound" : "Inbound"} call`,
+      kind: "call" as const,
+    })),
+  ];
+  const laneIndexById = new Map(lanes.map((lane, index) => [lane.id, index]));
+
+  const nodes: DashboardOperationDossier["trace"]["nodes"] = [
+    ...orderedCalls.flatMap((call) => {
+      const laneId = `call:${call.id}`;
+      const branchDepth = laneIndexById.get(laneId) ?? 0;
+      const counterparty = callLaneLabel(call, names);
+      const started = {
+        id: `${call.id}:started`,
+        laneId,
+        kind: "call_started" as const,
+        occurredAt: call.started_at,
+        title: `${call.direction === "outbound" ? "Outbound" : "Inbound"} call started`,
+        detail: counterparty === "Counterparty not recorded" ? null : counterparty,
+        branchDepth,
+        recordingCheckpoint: null,
+      };
+      const ended = call.ended_at ? [{
+        id: `${call.id}:ended`,
+        laneId,
+        kind: "call_ended" as const,
+        occurredAt: call.ended_at,
+        title: "Call ended",
+        detail: call.outcome.replaceAll("_", " "),
+        branchDepth,
+        recordingCheckpoint: null,
+      }] : [];
+      return [started, ...ended];
+    }),
+    ...events
+      .filter((event) => !CALL_LIFECYCLE_EVENTS.has(event.type))
+      .map((event) => {
+        const callLaneId = event.call_id ? `call:${event.call_id}` : null;
+        const laneId = !OPERATION_STATE_EVENTS.has(event.type) && callLaneId && laneIndexById.has(callLaneId)
+          ? callLaneId
+          : "operation";
+        return {
+          id: event.id,
+          laneId,
+          kind: "event" as const,
+          occurredAt: event.occurred_at,
+          title: traceEventTitle(event.type),
+          detail: traceEventDetail(event.payload),
+          branchDepth: laneIndexById.get(laneId) ?? 0,
+          recordingCheckpoint: asNumber(event.recording_checkpoint),
+        };
+      }),
+  ].sort((left, right) => {
+    const timeOrder = left.occurredAt.localeCompare(right.occurredAt);
+    if (timeOrder !== 0) return timeOrder;
+    const kindOrder = { call_started: 0, event: 1, call_ended: 2 } as const;
+    return kindOrder[left.kind] - kindOrder[right.kind];
+  });
+
+  return { lanes, nodes };
 }
 
 function counterpartyName(
@@ -319,7 +478,7 @@ export async function getDashboardOperationDossier(
   const [operationView] = await toDashboardOperations([operation], client);
   if (!operationView) return null;
 
-  const [mandateResult, requestsResult, bookingResult, commitmentsResult, selectionResult, escalationMap] = await Promise.all([
+  const [mandateResult, requestsResult, bookingResult, commitmentsResult, selectionResult, escalationMap, operationCallsResult, eventsResult] = await Promise.all([
     operation.current_mandate_id
       ? client.from("mandates").select("id,version,price_cap,currency,action_windows,minimum_payment_term_days").eq("id", operation.current_mandate_id).maybeSingle()
       : Promise.resolve({ data: null, error: null }),
@@ -328,12 +487,16 @@ export async function getDashboardOperationDossier(
     client.from("commitments").select("id,type,terms,call_id,transcript_excerpt,recording_checkpoint,occurred_at,supersedes_commitment_id").eq("operation_id", operation.id).order("occurred_at", { ascending: false }),
     client.from("events").select("payload").eq("operation_id", operation.id).eq("type", "quote.selected").order("occurred_at", { ascending: false }).limit(1).maybeSingle(),
     activeEscalationsFor([operation.id], client),
+    client.from("calls").select("id,contact_id,provider_id,direction,outcome,started_at,ended_at,recording_url,twilio_call_sid").eq("operation_id", operation.id).order("started_at", { ascending: true }),
+    client.from("events").select("id,type,payload,call_id,commitment_id,recording_checkpoint,occurred_at").eq("operation_id", operation.id).order("occurred_at", { ascending: true }),
   ]);
   if (mandateResult.error) throw mandateResult.error;
   if (requestsResult.error) throw requestsResult.error;
   if (bookingResult.error) throw bookingResult.error;
   if (commitmentsResult.error) throw commitmentsResult.error;
   if (selectionResult.error) throw selectionResult.error;
+  if (operationCallsResult.error) throw operationCallsResult.error;
+  if (eventsResult.error) throw eventsResult.error;
 
   const requests = (requestsResult.data ?? []) as Array<{ id: string; provider_id: string }>;
   const quoteResult = requests.length > 0
@@ -360,13 +523,12 @@ export async function getDashboardOperationDossier(
     : { data: null, error: null };
   if (changeRequestResult.error) throw changeRequestResult.error;
 
-  const calls = await callsFor([
-    ...commitments.map((commitment) => commitment.call_id),
-    ...(activeEscalation ? [activeEscalation.source_call_id] : []),
-  ], client);
+  const operationCalls = (operationCallsResult.data ?? []) as CallRow[];
+  const calls = new Map(operationCalls.map((call) => [call.id, call]));
+  const events = (eventsResult.data ?? []) as EventRow[];
   const names = await namesFor(
-    [operation.contact_id, ...[...calls.values()].flatMap((call) => call.contact_id ? [call.contact_id] : [])],
-    [...requests.map((request) => request.provider_id), ...[...calls.values()].flatMap((call) => call.provider_id ? [call.provider_id] : [])],
+    [operation.contact_id, ...operationCalls.flatMap((call) => call.contact_id ? [call.contact_id] : [])],
+    [...requests.map((request) => request.provider_id), ...operationCalls.flatMap((call) => call.provider_id ? [call.provider_id] : [])],
     client,
   );
   const mandate = mandateResult.data as {
@@ -439,5 +601,6 @@ export async function getDashboardOperationDossier(
         supersedesCommitmentId: commitment.supersedes_commitment_id,
       };
     }),
+    trace: toOperationTrace(operationCalls, events, names),
   };
 }

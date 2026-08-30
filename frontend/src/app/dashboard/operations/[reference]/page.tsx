@@ -12,6 +12,7 @@ import {
 import { isSupabaseConfigured } from "@/lib/supabase/config";
 import { createClient } from "@/lib/supabase/server";
 import { CommitmentEvidence } from "@/features/operation/commitment-evidence";
+import { OperationTrace } from "@/features/operation/operation-trace";
 import { DashboardHeader } from "../../dashboard-header";
 
 export const dynamic = "force-dynamic";
@@ -122,6 +123,8 @@ export default async function OperationPage({ params }: { params: Promise<{ refe
             </div>
           )}
         </section>
+
+        <OperationTrace trace={operation.trace} />
 
         {operation.commitments.length > 0 ? (
           <CommitmentEvidence commitments={operation.commitments} />

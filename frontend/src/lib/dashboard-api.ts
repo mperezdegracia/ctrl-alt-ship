@@ -70,6 +70,24 @@ export type DashboardOperationDossier = DashboardOperation & {
     recordingUrl: string | null;
     supersedesCommitmentId: string | null;
   }>;
+  trace: {
+    lanes: Array<{
+      id: string;
+      label: string;
+      description: string;
+      kind: "operation" | "call";
+    }>;
+    nodes: Array<{
+      id: string;
+      laneId: string;
+      kind: "event" | "call_started" | "call_ended";
+      occurredAt: string;
+      title: string;
+      detail: string | null;
+      branchDepth: number;
+      recordingCheckpoint: number | null;
+    }>;
+  };
 };
 
 export class DashboardApiError extends Error {
