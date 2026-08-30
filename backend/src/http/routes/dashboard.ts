@@ -12,14 +12,17 @@ import {
   DashboardConsoleError,
   correctDashboardOperation,
   createDirectoryEntry,
+  createHandoffRecipient,
   createSavedView,
   deleteSavedView,
   listDashboardEscalations,
   listDashboardHandoffs,
   listDirectoryEntries,
+  listHandoffRecipients,
   listSavedViews,
   resolveDashboardEscalation,
   updateDirectoryEntry,
+  updateHandoffRecipient,
 } from "../../tango/supabase/dashboard-console";
 import {
   requireDashboardAuth,
@@ -92,6 +95,18 @@ const counterpartyUpdateSchema = counterpartyBaseSchema.partial().extend({
   expectedUpdatedAt: z.string().min(1).max(100),
 }).refine((body) => Object.entries(body).some(([key, value]) => key !== "expectedUpdatedAt" && value !== undefined), {
   message: "At least one directory field is required.",
+});
+const handoffRecipientBaseSchema = z.object({
+  name: z.string().trim().min(1).max(240),
+  phone: z.string().regex(/^\+[1-9][0-9]{7,14}$/),
+  role: z.enum(["supervisor", "operator"]),
+  priority: z.number().int().min(1).max(32_767),
+});
+const handoffRecipientUpdateSchema = handoffRecipientBaseSchema.partial().extend({
+  active: z.boolean().optional(),
+  expectedUpdatedAt: z.string().min(1).max(100),
+}).refine((body) => Object.entries(body).some(([key, value]) => key !== "expectedUpdatedAt" && value !== undefined), {
+  message: "At least one handoff recipient field is required.",
 });
 const savedViewSchema = z.object({
   scope: z.enum(["operations", "escalations"]),
@@ -242,6 +257,61 @@ export function registerDashboardRoutes(app: Express, logger: StructuredLogger):
       res.json({ entry });
     } catch (error) {
       logger.error("dashboard.directory_update_failed", { user_id: req.dashboardUser?.id, kind, entry_id: id, error });
+      sendDashboardError(res, error);
+    }
+  });
+
+  app.get("/api/dashboard/handoff-recipients", requireDashboardAuth, async (req: DashboardRequest, res) => {
+    const query = directoryQuerySchema.safeParse(req.query);
+    if (!query.success) {
+      invalidRequest(res, "invalid_handoff_recipient_query");
+      return;
+    }
+    try {
+      const page = await listHandoffRecipients({
+        page: query.data.page, perPage: query.data.per_page, search: query.data.q,
+        active: query.data.active === undefined ? undefined : query.data.active === "true",
+      });
+      res.setHeader("Cache-Control", "no-store");
+      res.json({ recipients: page.items, pagination: {
+        page: page.page, perPage: page.perPage, total: page.total, totalPages: page.totalPages,
+      } });
+    } catch (error) {
+      logger.error("dashboard.handoff_recipients_list_failed", { user_id: req.dashboardUser?.id, error });
+      sendDashboardError(res, error);
+    }
+  });
+
+  app.post("/api/dashboard/handoff-recipients", requireDashboardAuth, async (req: DashboardRequest, res) => {
+    const body = handoffRecipientBaseSchema.safeParse(req.body);
+    if (!body.success) {
+      invalidRequest(res, "invalid_handoff_recipient");
+      return;
+    }
+    try {
+      const recipient = await createHandoffRecipient(body.data, req.dashboardUser!.id);
+      res.setHeader("Cache-Control", "no-store");
+      res.status(201).json({ recipient });
+    } catch (error) {
+      logger.error("dashboard.handoff_recipient_create_failed", { user_id: req.dashboardUser?.id, error });
+      sendDashboardError(res, error);
+    }
+  });
+
+  app.patch("/api/dashboard/handoff-recipients/:id", requireDashboardAuth, async (req: DashboardRequest, res) => {
+    const id = routeParameter(req.params.id);
+    const body = handoffRecipientUpdateSchema.safeParse(req.body);
+    if (!id || !uuidSchema.safeParse(id).success || !body.success) {
+      invalidRequest(res, "invalid_handoff_recipient_update");
+      return;
+    }
+    const { expectedUpdatedAt, ...fields } = body.data;
+    try {
+      const recipient = await updateHandoffRecipient(id, expectedUpdatedAt, fields, req.dashboardUser!.id);
+      res.setHeader("Cache-Control", "no-store");
+      res.json({ recipient });
+    } catch (error) {
+      logger.error("dashboard.handoff_recipient_update_failed", { user_id: req.dashboardUser?.id, recipient_id: id, error });
       sendDashboardError(res, error);
     }
   });

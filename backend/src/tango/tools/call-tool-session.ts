@@ -35,9 +35,9 @@ export class CallToolSession extends RealtimeToolRegistry {
     }
     if (!this.clientService) return definitions;
     const names = this.state?.profile === "client_entry"
-      ? ["list_open_operations", "create_operation", "update_operation", "cancel_operation"]
+      ? ["list_open_operations", "create_operation", "update_operation", "cancel_operation", "escalate"]
       : this.state?.profile === "terminal" ? []
-        : this.state?.operation ? ["update_operation", "confirm_mandate"] : [];
+        : this.state?.operation ? ["update_operation", "confirm_mandate", "escalate"] : ["escalate"];
     return definitions.filter((tool) => names.includes(tool.name));
   }
 

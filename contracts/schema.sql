@@ -36,7 +36,7 @@ CREATE TYPE domain_event_type AS ENUM (
   'booking.pending', 'booking.confirmed', 'booking.declined',
   'booking.rescheduled', 'booking.reschedule_declined', 'booking.cancelled',
   'escalation.started', 'escalation.supervisor_joined',
-  'escalation.resolved', 'escalation.failed',
+  'escalation.resolved', 'escalation.failed', 'escalation.handoff_requested', 'escalation.handoff_failed',
   'email.queued', 'email.sent', 'email.failed'
 );
 
@@ -190,6 +190,22 @@ CREATE TABLE providers (
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 
+-- Human escalation recipients are outbound routing records. They are kept
+-- independent from contacts and providers, which identify inbound callers.
+CREATE TABLE handoff_recipients (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  name text NOT NULL CHECK (btrim(name) <> ''),
+  phone text NOT NULL UNIQUE CHECK (phone ~ '^\+[1-9][0-9]{7,14}$'),
+  role text NOT NULL CHECK (role IN ('supervisor', 'operator')),
+  active boolean NOT NULL DEFAULT true,
+  priority smallint NOT NULL DEFAULT 100 CHECK (priority >= 1 AND priority <= 32767),
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX handoff_recipients_active_priority_idx ON handoff_recipients(priority, updated_at, id) WHERE active;
+CREATE TRIGGER handoff_recipients_touch_updated_at
+BEFORE UPDATE ON handoff_recipients FOR EACH ROW EXECUTE FUNCTION touch_updated_at();
+
 CREATE FUNCTION enforce_counterparty_phone_uniqueness()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -286,6 +302,23 @@ CREATE TABLE calls (
   ),
   CHECK (ended_at IS NULL OR ended_at >= started_at)
 );
+
+CREATE TABLE call_transcript_segments (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  call_id uuid NOT NULL REFERENCES calls(id),
+  speaker text NOT NULL CHECK (speaker IN ('caller', 'tango')),
+  content text NOT NULL CHECK (btrim(content) <> '' AND char_length(content) <= 10000),
+  realtime_item_id text,
+  realtime_response_id text,
+  recorded_at timestamptz NOT NULL DEFAULT now(),
+  created_at timestamptz NOT NULL DEFAULT now(),
+  CHECK (realtime_item_id IS NOT NULL OR realtime_response_id IS NOT NULL),
+  UNIQUE (call_id, realtime_item_id),
+  UNIQUE (call_id, realtime_response_id)
+);
+CREATE INDEX call_transcript_segments_call_recorded_idx ON call_transcript_segments(call_id, recorded_at, id);
+CREATE TRIGGER call_transcript_segments_append_only
+BEFORE UPDATE OR DELETE ON call_transcript_segments FOR EACH ROW EXECUTE FUNCTION reject_mutation();
 
 CREATE FUNCTION validate_call_context()
 RETURNS trigger
@@ -752,10 +785,14 @@ CREATE TABLE escalations (
   operation_id uuid NOT NULL REFERENCES operations(id),
   change_request_id uuid REFERENCES change_requests(id),
   source_call_id uuid NOT NULL REFERENCES calls(id),
-  mandate_id uuid NOT NULL REFERENCES mandates(id),
+  mandate_id uuid REFERENCES mandates(id),
   reason text NOT NULL CHECK (btrim(reason) <> ''),
+  trigger text CHECK (trigger IS NULL OR trigger IN ('explicit_human_request', 'outside_mandate', 'negotiation_stalled')),
   status escalation_status NOT NULL DEFAULT 'started',
   conference_sid text UNIQUE,
+  handoff_recipient_id uuid REFERENCES handoff_recipients(id),
+  handoff_status text NOT NULL DEFAULT 'pending' CHECK (handoff_status IN ('pending', 'transfer_requested', 'transfer_failed', 'not_configured')),
+  handoff_status_detail text,
   started_at timestamptz NOT NULL DEFAULT now(),
   resolved_at timestamptz,
   created_at timestamptz NOT NULL DEFAULT now(),
@@ -769,7 +806,9 @@ LANGUAGE plpgsql
 AS $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM calls WHERE id = NEW.source_call_id AND operation_id = NEW.operation_id)
-     OR NOT EXISTS (SELECT 1 FROM mandates WHERE id = NEW.mandate_id AND operation_id = NEW.operation_id)
+     OR (NEW.mandate_id IS NOT NULL AND NOT EXISTS (
+       SELECT 1 FROM mandates WHERE id = NEW.mandate_id AND operation_id = NEW.operation_id
+     ))
      OR (NEW.change_request_id IS NOT NULL AND NOT EXISTS (
        SELECT 1 FROM change_requests WHERE id = NEW.change_request_id AND operation_id = NEW.operation_id
      )) THEN
@@ -782,6 +821,18 @@ CREATE TRIGGER escalations_validate_context
 BEFORE INSERT OR UPDATE ON escalations FOR EACH ROW EXECUTE FUNCTION validate_escalation_context();
 CREATE TRIGGER escalations_touch_updated_at
 BEFORE UPDATE ON escalations FOR EACH ROW EXECUTE FUNCTION touch_updated_at();
+CREATE INDEX escalations_active_started_idx ON escalations(started_at DESC) WHERE status IN ('started', 'supervisor_joined');
+CREATE UNIQUE INDEX escalations_one_active_source_call_idx ON escalations(source_call_id) WHERE status IN ('started', 'supervisor_joined');
+
+CREATE TABLE escalation_contexts (
+  escalation_id uuid PRIMARY KEY REFERENCES escalations(id),
+  agent_summary text NOT NULL CHECK (btrim(agent_summary) <> '' AND char_length(agent_summary) <= 2000),
+  requested_action text NOT NULL CHECK (btrim(requested_action) <> '' AND char_length(requested_action) <= 500),
+  verified_snapshot jsonb NOT NULL CHECK (jsonb_typeof(verified_snapshot) = 'object'),
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TRIGGER escalation_contexts_append_only
+BEFORE UPDATE OR DELETE ON escalation_contexts FOR EACH ROW EXECUTE FUNCTION reject_mutation();
 
 CREATE TABLE commitments (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -956,12 +1007,14 @@ CREATE TABLE operator_actions (
   action text NOT NULL CHECK (action IN (
     'operation.corrected', 'escalation.resolved',
     'contact.created', 'contact.updated', 'contact.deactivated',
-    'provider.created', 'provider.updated', 'provider.deactivated'
+    'provider.created', 'provider.updated', 'provider.deactivated',
+    'handoff_recipient.created', 'handoff_recipient.updated', 'handoff_recipient.deactivated'
   )),
   operation_id uuid REFERENCES operations(id),
   escalation_id uuid REFERENCES escalations(id),
   contact_id uuid REFERENCES contacts(id),
   provider_id uuid REFERENCES providers(id),
+  handoff_recipient_id uuid REFERENCES handoff_recipients(id),
   before_state jsonb NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(before_state) = 'object'),
   after_state jsonb NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(after_state) = 'object'),
   note text,
@@ -969,10 +1022,12 @@ CREATE TABLE operator_actions (
   created_at timestamptz NOT NULL DEFAULT now(),
   CHECK (btrim(coalesce(note, '')) <> '' OR action <> 'escalation.resolved'),
   CHECK ((operation_id IS NOT NULL)::integer + (escalation_id IS NOT NULL)::integer
-    + (contact_id IS NOT NULL)::integer + (provider_id IS NOT NULL)::integer >= 1)
+    + (contact_id IS NOT NULL)::integer + (provider_id IS NOT NULL)::integer
+    + (handoff_recipient_id IS NOT NULL)::integer >= 1)
 );
 CREATE INDEX operator_actions_operation_occurred_idx ON operator_actions(operation_id, occurred_at DESC);
 CREATE INDEX operator_actions_escalation_occurred_idx ON operator_actions(escalation_id, occurred_at DESC);
+CREATE INDEX operator_actions_handoff_recipient_occurred_idx ON operator_actions(handoff_recipient_id, occurred_at DESC);
 CREATE TRIGGER operator_actions_append_only
 BEFORE UPDATE OR DELETE ON operator_actions FOR EACH ROW EXECUTE FUNCTION reject_mutation();
 

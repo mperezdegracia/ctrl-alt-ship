@@ -30,9 +30,12 @@ import { CallToolFactory } from "./tango/tools/call-tool-factory";
 import { SupabaseClientOperationRepository } from "./tango/supabase/client-operation-repository";
 import { SupabaseProviderQuoteRepository } from "./tango/supabase/provider-quote-repository";
 import { SupabaseProviderBookingRepository } from "./tango/supabase/provider-booking-repository";
+import { SupabaseEscalationRepository } from "./tango/supabase/escalation-repository";
+import { SupabaseCallTranscriptRepository, SupabaseEscalationHandoffRepository } from "./tango/supabase/call-transcript-repository";
 import { OpenAIRealtimeGateway } from "./tango/realtime/openai-realtime-gateway";
 import { EscalationHandoffCoordinator } from "./tango/telephony/escalation-handoff-coordinator";
-import { MockEscalationTool } from "./tango/tools/mock-escalation-tool";
+import { EscalationTool } from "./tango/tools/mock-escalation-tool";
+import { EscalationService, type CreatedEscalation } from "./domain/escalation-service";
 import { createTwilioOutboundCall, verifyTwilioSignature } from "./tango/telephony/twilio-outbound";
 import { extractOutboundCallRecordId, routeOutboundCall } from "./tango/telephony/outbound-routing";
 import { PreviewEmailGateway, SmtpEmailGateway } from "./tango/services/email-gateway";
@@ -95,6 +98,9 @@ const callToolFactory = new CallToolFactory(
   new SupabaseProviderBookingRepository(supabaseAdmin),
   logger,
 );
+const escalationRepository = new SupabaseEscalationRepository(supabaseAdmin);
+const transcriptRepository = new SupabaseCallTranscriptRepository(supabaseAdmin);
+const escalationHandoffRepository = new SupabaseEscalationHandoffRepository(supabaseAdmin);
 
 const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 const sourcingReview = new SourcingReviewService(supabaseAdmin, new AgentsSourcingJudge(OPENAI_API_KEY), logger);
@@ -113,10 +119,6 @@ const emailWorker = new EmailOutboxWorker(
   emailGateway,
   logger.child({ worker: "email_outbox" }),
 );
-// Demo human escalation goes to Theo. Keep this destination in code, not env.
-// This is an outbound destination; the inbound caller ID may omit the mobile 9.
-const MOCK_SUPERVISOR_PHONE = "+5491132555829";
-
 let outboundWorkerRunning = false;
 
 type ClaimedProviderContact = {
@@ -396,30 +398,49 @@ app.post("/openai/webhook", express.raw({ type: "*/*" }), async (req, res) => {
       return;
     }
 
-    const handoffCoordinator = routingDecision.identity.persona === "provider"
-      ? new EscalationHandoffCoordinator(realtimeGateway, callLogger) : undefined;
-    // Negotiation uses the persisted quote-round budget, not raw turn count.
-    const prepareMockHandoff = async (_request: { operationReference?: string; trigger: string; reason: string }) => {
-      if (!handoffCoordinator || handoffCoordinator.prepared) return;
-      callLogger.info("escalation.prepare_started", { operation_reference: _request.operationReference,
-        trigger: _request.trigger, target_phone_suffix: MOCK_SUPERVISOR_PHONE.slice(-4),
-        context_delivered: false });
-      await handoffCoordinator.prepare({
-        realtimeCallId: callId,
-        supervisorTargetUri: `tel:${MOCK_SUPERVISOR_PHONE}`,
-      });
-      callLogger.info("escalation.prepared", { awaiting: "farewell_audio", target_phone_suffix: MOCK_SUPERVISOR_PHONE.slice(-4) });
-    };
-    const escalationTool = handoffCoordinator
-      ? new MockEscalationTool(prepareMockHandoff) : undefined;
-    const realtimeTools = callToolFactory.create({
+    const toolScope = {
       callId: persistedCallId,
       realtimeCallId: callId,
       persona: routingDecision.identity.persona,
       counterpartyId: routingDecision.identity.persona === "client"
         ? routingDecision.identity.contactId
         : routingDecision.identity.providerId,
-    }, escalationTool);
+    } as const;
+    const handoffCoordinator = new EscalationHandoffCoordinator(realtimeGateway, callLogger);
+    let activeEscalation: CreatedEscalation | undefined;
+    const prepareHandoff = async (escalation: CreatedEscalation): Promise<boolean> => {
+      activeEscalation = escalation;
+      if (!escalation.recipient) {
+        callLogger.warn("escalation.handoff_not_configured", {
+          escalation_id: escalation.escalationId,
+          operation_reference: escalation.operationReference,
+        });
+        return false;
+      }
+      if (handoffCoordinator.prepared) return handoffCoordinator.referAccepted === false;
+      callLogger.info("escalation.prepare_started", {
+        escalation_id: escalation.escalationId,
+        operation_reference: escalation.operationReference,
+        recipient_role: escalation.recipient.role,
+        target_phone_suffix: escalation.recipient.phone.slice(-4),
+        context_delivered: true,
+      });
+      await handoffCoordinator.prepare({
+        realtimeCallId: callId,
+        supervisorTargetUri: `tel:${escalation.recipient.phone}`,
+      });
+      callLogger.info("escalation.prepared", {
+        escalation_id: escalation.escalationId,
+        awaiting: "farewell_audio",
+        target_phone_suffix: escalation.recipient.phone.slice(-4),
+      });
+      return true;
+    };
+    const escalationTool = new EscalationTool(
+      new EscalationService(toolScope, escalationRepository),
+      prepareHandoff,
+    );
+    const realtimeTools = callToolFactory.create(toolScope, escalationTool);
     try {
       await realtimeTools.refresh();
       callLogger.info("call.tools_configured", {
@@ -441,12 +462,12 @@ app.post("/openai/webhook", express.raw({ type: "*/*" }), async (req, res) => {
 
     const acceptStartedAt = Date.now();
     const agentsCall = new AgentsCallSession(routingDecision, realtimeTools, callLogger, {
-      onEscalationReady: handoffCoordinator ? () => {
+      onEscalationReady: () => {
         handoffCoordinator.beginFarewell();
         agentsCall.transport.requestResponse({
-          instructions: "In the caller's active language, say exactly: I will connect you with my supervisor now. I have shared the relevant context. Do not add any other sentence.",
+          instructions: "In the caller's active language, say in one short sentence that you will connect them with an operator now and that the relevant context has been shared. Do not add anything else.",
         });
-      } : undefined,
+      },
     });
     const initialConfiguration = await agentsCall.initialConfiguration();
 
@@ -504,8 +525,8 @@ app.post("/openai/webhook", express.raw({ type: "*/*" }), async (req, res) => {
            */
 
           case "input_audio_buffer.speech_started":
-            callLogger.info("audio.speech_started", { escalation_prepared: handoffCoordinator?.prepared ?? false,
-              refer_accepted: handoffCoordinator?.referAccepted ?? false });
+            callLogger.info("audio.speech_started", { escalation_prepared: handoffCoordinator.prepared,
+              refer_accepted: handoffCoordinator.referAccepted });
             break;
 
           case "input_audio_buffer.speech_stopped":
@@ -521,6 +542,13 @@ app.post("/openai/webhook", express.raw({ type: "*/*" }), async (req, res) => {
           case "conversation.item.input_audio_transcription.completed":
             callLogger.info("transcript.caller_completed", {
               item_id: message.item_id, character_count: message.transcript.length,
+            });
+            await transcriptRepository.record({
+              callId: persistedCallId,
+              realtimeCallId: callId,
+              speaker: "caller",
+              content: message.transcript,
+              realtimeItemId: message.item_id,
             });
             break;
 
@@ -543,43 +571,79 @@ app.post("/openai/webhook", express.raw({ type: "*/*" }), async (req, res) => {
 
           case "response.created":
             callLogger.info("realtime.response_started", { response_id: message.response.id,
-              refer_accepted: handoffCoordinator?.referAccepted ?? false });
-            if (handoffCoordinator?.referAccepted) callLogger.warn("escalation.response_after_refer", {
+              refer_accepted: handoffCoordinator.referAccepted });
+            if (handoffCoordinator.referAccepted) callLogger.warn("escalation.response_after_refer", {
               response_id: message.response.id, human_answer_confirmed: false });
-            if (message.response.id && handoffCoordinator?.observeResponseCreated(message.response.id)) {
+            if (message.response.id && handoffCoordinator.observeResponseCreated(message.response.id)) {
               callLogger.info("escalation.farewell_started", { response_id: message.response.id });
             }
             break;
 
-          case "output_audio_buffer.stopped":
+          case "output_audio_buffer.stopped": {
+            let escalationRefer;
             try {
-              const escalationRefer = await handoffCoordinator?.onAudioStopped(message.response_id);
-              if (escalationRefer) {
-                callLogger.info("escalation.refer_succeeded", {
-                  response_id: message.response_id,
-                  realtime_call_id: callId,
-                  target_uri_scheme: "tel",
-                  target_phone_suffix: MOCK_SUPERVISOR_PHONE.slice(-4),
-                  status: escalationRefer.status,
-                  request_id: escalationRefer.requestId,
-                  human_answer_confirmed: false,
-                });
-              }
+              escalationRefer = await handoffCoordinator.onAudioStopped(message.response_id);
             } catch (error) {
+              if (activeEscalation) {
+                try {
+                  await escalationHandoffRepository.mark({
+                    escalationId: activeEscalation.escalationId,
+                    sourceCallId: persistedCallId,
+                    status: "transfer_failed",
+                    detail: "The voice transfer request failed. The escalation remains open for manual review.",
+                  });
+                } catch (persistenceError) {
+                  callLogger.error("escalation.handoff_failure_persist_failed", { escalation_id: activeEscalation.escalationId, error: persistenceError });
+                }
+              }
               callLogger.error("escalation.refer_failed", {
                 realtime_call_id: callId,
                 target_uri_scheme: "tel",
-                target_phone_suffix: MOCK_SUPERVISOR_PHONE.slice(-4),
+                escalation_id: activeEscalation?.escalationId,
+                target_phone_suffix: activeEscalation?.recipient?.phone.slice(-4),
                 status: error instanceof OpenAI.APIError ? error.status : undefined,
                 request_id: error instanceof OpenAI.APIError ? error.requestID : undefined,
               });
               throw error;
             }
+            if (escalationRefer) {
+              if (!activeEscalation?.recipient) {
+                callLogger.error("escalation.handoff_recipient_missing_after_refer", { realtime_call_id: callId });
+                break;
+              }
+              try {
+                await escalationHandoffRepository.mark({
+                  escalationId: activeEscalation.escalationId,
+                  sourceCallId: persistedCallId,
+                  status: "transfer_requested",
+                });
+              } catch (error) {
+                callLogger.error("escalation.handoff_success_persist_failed", { escalation_id: activeEscalation.escalationId, error });
+              }
+              callLogger.info("escalation.refer_succeeded", {
+                response_id: message.response_id,
+                realtime_call_id: callId,
+                target_uri_scheme: "tel",
+                escalation_id: activeEscalation.escalationId,
+                target_phone_suffix: activeEscalation.recipient.phone.slice(-4),
+                status: escalationRefer.status,
+                request_id: escalationRefer.requestId,
+                human_answer_confirmed: false,
+              });
+            }
             break;
+          }
 
           case "response.output_audio_transcript.done":
             callLogger.info("transcript.tango_completed", {
               response_id: message.response_id, character_count: message.transcript.length,
+            });
+            await transcriptRepository.record({
+              callId: persistedCallId,
+              realtimeCallId: callId,
+              speaker: "tango",
+              content: message.transcript,
+              realtimeResponseId: message.response_id,
             });
             break;
 
@@ -593,7 +657,7 @@ app.post("/openai/webhook", express.raw({ type: "*/*" }), async (req, res) => {
             callLogger.info("realtime.response_completed", {
               response_id: message.response?.id,
               status: message.response?.status,
-              refer_accepted: handoffCoordinator?.referAccepted ?? false,
+              refer_accepted: handoffCoordinator.referAccepted,
             });
             break;
 
@@ -627,7 +691,7 @@ app.listen(PORT, () => {
     email_worker_enabled: environment.EMAIL_WORKER_ENABLED,
     provider_quote_tools_enabled: true,
     deploy_commit: process.env.RENDER_GIT_COMMIT ?? "local",
-    escalation_target_phone_suffix: MOCK_SUPERVISOR_PHONE.slice(-4),
+    escalation_routing: "database-managed",
     outbound_configuration_complete: Boolean(environment.TWILIO_ACCOUNT_SID && environment.TWILIO_AUTH_TOKEN
       && environment.TWILIO_FROM_NUMBER && environment.PUBLIC_BASE_URL && environment.OPENAI_PROJECT_ID),
   });

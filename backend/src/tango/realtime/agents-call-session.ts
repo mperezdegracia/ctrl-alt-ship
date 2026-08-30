@@ -19,6 +19,14 @@ type Hooks = {
   onEscalationReady?: () => void;
 };
 
+function isHandoffReady(result: unknown): boolean {
+  return Boolean(result && typeof result === "object" && !Array.isArray(result)
+    && ((result as Record<string, unknown>).handoff_ready === true
+      // Isolated legacy harnesses still use the old in-memory tool. Runtime
+      // escalation results only set handoff_ready after a durable recipient is resolved.
+      || (result as Record<string, unknown>).supervisor_notified === true));
+}
+
 /** SDK SIP transport with diagnostics and an explicit empty-tools compatibility fix. */
 class ObservedSIPTransport extends OpenAIRealtimeSIP {
   constructor(options: OpenAIRealtimeWebSocketOptions, private readonly observe: (event: RealtimeClientMessage) => RealtimeClientMessage) {
@@ -196,11 +204,16 @@ export class AgentsCallSession {
         tool_name: name, tool_call_id: toolCallId, result, error,
       });
     }
-    const escalation = succeeded && name === "escalate" && Boolean(this.hooks.onEscalationReady);
+    const escalationCommitted = succeeded && name === "escalate";
+    const escalation = escalationCommitted && isHandoffReady(result) && Boolean(this.hooks.onEscalationReady);
     // The SDK may emit agent_tool_end while updateAgent is flushing the tool
     // result. Arm the one-shot callback before that await, not after it.
     this.escalationReady = escalation;
-    this.agent.tools = escalation ? [] : this.buildTools();
+    // A durable escalation finishes Tango's authority for this call. When a
+    // configured recipient exists, the background result makes room for the
+    // controlled farewell; without one, the model receives the result and can
+    // explain that a human review was opened without claiming a transfer.
+    this.agent.tools = escalationCommitted ? [] : this.buildTools();
     this.agent.instructions = this.factory.create(this.decision, [], this.tools.flowState, this.tools.providerFlowState).instructions;
     this.updateToolCallId = toolCallId;
     try {

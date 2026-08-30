@@ -5,6 +5,7 @@ import type { DashboardPage } from "./dashboard";
 
 type JsonRecord = Record<string, unknown>;
 type DirectoryKind = "contacts" | "providers";
+type HandoffStatus = "pending" | "transfer_requested" | "transfer_failed" | "not_configured";
 
 export class DashboardConsoleError extends Error {
   constructor(readonly status: number, message: string) {
@@ -19,13 +20,31 @@ export type DashboardEscalation = {
   clientName: string;
   counterpartyName: string | null;
   reason: string;
+  trigger: string | null;
+  summary: string;
+  requestedAction: string;
+  handoffStatus: HandoffStatus;
+  handoffStatusDetail: string | null;
+  recipient: { name: string; role: "supervisor" | "operator" } | null;
   status: "started" | "supervisor_joined" | "resolved" | "failed";
   startedAt: string;
   resolvedAt: string | null;
 };
 
 export type DashboardHandoff = Pick<DashboardEscalation,
-  "id" | "operationReference" | "clientName" | "counterpartyName" | "reason" | "status" | "startedAt">;
+  "id" | "operationReference" | "clientName" | "counterpartyName" | "reason" | "summary" | "requestedAction"
+  | "handoffStatus" | "handoffStatusDetail" | "recipient" | "status" | "startedAt">;
+
+export type HandoffRecipient = {
+  id: string;
+  name: string;
+  phone: string;
+  role: "supervisor" | "operator";
+  active: boolean;
+  priority: number;
+  createdAt: string;
+  updatedAt: string;
+};
 
 export type DirectoryEntry = {
   id: string;
@@ -61,7 +80,7 @@ function normalizedSearch(value: string | undefined): string {
 
 function databaseError(error: unknown): never {
   const record = error && typeof error === "object" ? error as { code?: string; message?: string } : {};
-  if (record.code === "23505") throw new DashboardConsoleError(409, "This phone number is already assigned to another counterparty.");
+  if (record.code === "23505") throw new DashboardConsoleError(409, "This phone number is already assigned to another record of this kind.");
   throw new DashboardConsoleError(500, record.message ?? "The operations record could not be updated.");
 }
 
@@ -77,6 +96,7 @@ async function recordOperatorAction(
     escalationId?: string;
     contactId?: string;
     providerId?: string;
+    handoffRecipientId?: string;
     beforeState?: JsonRecord;
     afterState?: JsonRecord;
     note?: string;
@@ -90,6 +110,7 @@ async function recordOperatorAction(
     escalation_id: input.escalationId ?? null,
     contact_id: input.contactId ?? null,
     provider_id: input.providerId ?? null,
+    handoff_recipient_id: input.handoffRecipientId ?? null,
     before_state: input.beforeState ?? {},
     after_state: input.afterState ?? {},
     note: input.note ?? null,
@@ -113,7 +134,7 @@ export async function listDashboardEscalations(
 
   let query = client
     .from("escalations")
-    .select("id,operation_id,source_call_id,reason,status,started_at,resolved_at", { count: "exact" })
+    .select("id,operation_id,source_call_id,reason,trigger,status,started_at,resolved_at,handoff_recipient_id,handoff_status,handoff_status_detail", { count: "exact" })
     .order("started_at", { ascending: false });
   if (options.status) {
     query = options.status === "active"
@@ -129,21 +150,32 @@ export async function listDashboardEscalations(
   if (result.error) databaseError(result.error);
 
   const escalationRows = (result.data ?? []) as Array<{
-    id: string; operation_id: string; source_call_id: string; reason: string; status: DashboardEscalation["status"];
-    started_at: string; resolved_at: string | null;
+    id: string; operation_id: string; source_call_id: string; reason: string; trigger: string | null; status: DashboardEscalation["status"];
+    started_at: string; resolved_at: string | null; handoff_recipient_id: string | null; handoff_status: HandoffStatus;
+    handoff_status_detail: string | null;
   }>;
   const operationIdsForRows = [...new Set(escalationRows.map((row) => row.operation_id))];
   const callIds = [...new Set(escalationRows.map((row) => row.source_call_id))];
-  const [operationsResult, callsResult] = await Promise.all([
+  const recipientIds = [...new Set(escalationRows.flatMap((row) => row.handoff_recipient_id ? [row.handoff_recipient_id] : []))];
+  const escalationIds = escalationRows.map((row) => row.id);
+  const [operationsResult, callsResult, contextsResult, recipientsResult] = await Promise.all([
     operationIdsForRows.length > 0
       ? client.from("operations").select("id,reference,status,contact_id").in("id", operationIdsForRows)
       : Promise.resolve({ data: [], error: null }),
     callIds.length > 0
       ? client.from("calls").select("id,contact_id,provider_id").in("id", callIds)
       : Promise.resolve({ data: [], error: null }),
+    escalationIds.length > 0
+      ? client.from("escalation_contexts").select("escalation_id,agent_summary,requested_action").in("escalation_id", escalationIds)
+      : Promise.resolve({ data: [], error: null }),
+    recipientIds.length > 0
+      ? client.from("handoff_recipients").select("id,name,role").in("id", recipientIds)
+      : Promise.resolve({ data: [], error: null }),
   ]);
   if (operationsResult.error) databaseError(operationsResult.error);
   if (callsResult.error) databaseError(callsResult.error);
+  if (contextsResult.error) databaseError(contextsResult.error);
+  if (recipientsResult.error) databaseError(recipientsResult.error);
 
   const operations = (operationsResult.data ?? []) as Array<{ id: string; reference: string; status: string; contact_id: string }>;
   const calls = (callsResult.data ?? []) as Array<{ id: string; contact_id: string | null; provider_id: string | null }>;
@@ -169,6 +201,14 @@ export async function listDashboardEscalations(
     const provider = row as { id: string; name: string };
     return [provider.id, provider.name];
   }));
+  const contextsByEscalationId = new Map((contextsResult.data ?? []).map((row) => {
+    const context = row as { escalation_id: string; agent_summary: string; requested_action: string };
+    return [context.escalation_id, context];
+  }));
+  const recipientsById = new Map((recipientsResult.data ?? []).map((row) => {
+    const recipient = row as { id: string; name: string; role: "supervisor" | "operator" };
+    return [recipient.id, recipient];
+  }));
 
   return pageResult(escalationRows.flatMap((row) => {
     const operation = operationsById.get(row.operation_id);
@@ -177,6 +217,8 @@ export async function listDashboardEscalations(
     const counterpartyName = call?.provider_id
       ? providersById.get(call.provider_id) ?? null
       : call?.contact_id ? contactsById.get(call.contact_id) ?? null : null;
+    const context = contextsByEscalationId.get(row.id);
+    const recipient = row.handoff_recipient_id ? recipientsById.get(row.handoff_recipient_id) ?? null : null;
     return [{
       id: row.id,
       operationReference: operation.reference,
@@ -184,6 +226,12 @@ export async function listDashboardEscalations(
       clientName: contactsById.get(operation.contact_id) ?? "Unknown client",
       counterpartyName,
       reason: row.reason,
+      trigger: row.trigger,
+      summary: context?.agent_summary ?? row.reason,
+      requestedAction: context?.requested_action ?? "Human review is required.",
+      handoffStatus: row.handoff_status,
+      handoffStatusDetail: row.handoff_status_detail,
+      recipient,
       status: row.status,
       startedAt: row.started_at,
       resolvedAt: row.resolved_at,
@@ -195,8 +243,10 @@ export async function listDashboardHandoffs(
   client: SupabaseClient = supabaseAdmin,
 ): Promise<DashboardHandoff[]> {
   const page = await listDashboardEscalations({ page: 1, perPage: 25, status: "active" }, client);
-  return page.items.map(({ id, operationReference, clientName, counterpartyName, reason, status, startedAt }) => ({
-    id, operationReference, clientName, counterpartyName, reason, status, startedAt,
+  return page.items.map(({ id, operationReference, clientName, counterpartyName, reason, summary, requestedAction,
+    handoffStatus, handoffStatusDetail, recipient, status, startedAt }) => ({
+    id, operationReference, clientName, counterpartyName, reason, summary, requestedAction,
+    handoffStatus, handoffStatusDetail, recipient, status, startedAt,
   }));
 }
 
@@ -440,6 +490,95 @@ export async function updateDirectoryEntry(
     afterState: snapshot(after, allowedFields),
   }, client);
   return toDirectoryEntry(kind, after);
+}
+
+export type HandoffRecipientWriteInput = {
+  name?: string;
+  phone?: string;
+  role?: "supervisor" | "operator";
+  active?: boolean;
+  priority?: number;
+};
+
+const HANDOFF_RECIPIENT_FIELDS = "id,name,phone,role,active,priority,created_at,updated_at";
+
+function toHandoffRecipient(row: Record<string, unknown>): HandoffRecipient {
+  return {
+    id: row.id as string,
+    name: row.name as string,
+    phone: row.phone as string,
+    role: row.role as HandoffRecipient["role"],
+    active: Boolean(row.active),
+    priority: Number(row.priority),
+    createdAt: row.created_at as string,
+    updatedAt: row.updated_at as string,
+  };
+}
+
+export async function listHandoffRecipients(
+  options: PageOptions & { active?: boolean },
+  client: SupabaseClient = supabaseAdmin,
+): Promise<DashboardPage<HandoffRecipient>> {
+  const page = Math.max(1, options.page);
+  const perPage = Math.min(Math.max(1, options.perPage), 100);
+  const term = normalizedSearch(options.search);
+  let query = client.from("handoff_recipients").select(HANDOFF_RECIPIENT_FIELDS, { count: "exact" })
+    .order("priority", { ascending: true }).order("name", { ascending: true });
+  if (options.active !== undefined) query = query.eq("active", options.active);
+  if (term) query = query.or(`name.ilike.*${term}*,phone.ilike.*${term}*,role.ilike.*${term}*`);
+  const from = (page - 1) * perPage;
+  const result = await query.range(from, from + perPage - 1);
+  if (result.error) databaseError(result.error);
+  return pageResult((result.data ?? []).map((row) => toHandoffRecipient(row as Record<string, unknown>)), page, perPage, result.count ?? 0);
+}
+
+export async function createHandoffRecipient(
+  input: Required<Pick<HandoffRecipientWriteInput, "name" | "phone" | "role" | "priority">>,
+  actorUserId: string,
+  client: SupabaseClient = supabaseAdmin,
+): Promise<HandoffRecipient> {
+  const result = await client.from("handoff_recipients")
+    .insert({ ...input, active: true }).select(HANDOFF_RECIPIENT_FIELDS).single();
+  if (result.error) databaseError(result.error);
+  const recipient = toHandoffRecipient(result.data as Record<string, unknown>);
+  await recordOperatorAction({
+    actorUserId,
+    action: "handoff_recipient.created",
+    handoffRecipientId: recipient.id,
+    afterState: snapshot(result.data as Record<string, unknown>, ["name", "phone", "role", "active", "priority"]),
+  }, client);
+  return recipient;
+}
+
+export async function updateHandoffRecipient(
+  id: string,
+  expectedUpdatedAt: string,
+  input: HandoffRecipientWriteInput,
+  actorUserId: string,
+  client: SupabaseClient = supabaseAdmin,
+): Promise<HandoffRecipient> {
+  const beforeResult = await client.from("handoff_recipients").select(HANDOFF_RECIPIENT_FIELDS).eq("id", id).maybeSingle();
+  if (beforeResult.error) databaseError(beforeResult.error);
+  const before = beforeResult.data as Record<string, unknown> | null;
+  if (!before) throw new DashboardConsoleError(404, "This handoff recipient no longer exists.");
+  if (before.updated_at !== expectedUpdatedAt) throw new DashboardConsoleError(409, "This handoff recipient changed while you were reviewing it. Refresh before saving.");
+  const allowedFields = ["name", "phone", "role", "active", "priority"];
+  const changes = Object.fromEntries(Object.entries(input).filter(([key, value]) => allowedFields.includes(key) && value !== undefined));
+  if (Object.keys(changes).length === 0) return toHandoffRecipient(before);
+  const result = await client.from("handoff_recipients").update(changes).eq("id", id).eq("updated_at", expectedUpdatedAt)
+    .select(HANDOFF_RECIPIENT_FIELDS).maybeSingle();
+  if (result.error) databaseError(result.error);
+  if (!result.data) throw new DashboardConsoleError(409, "This handoff recipient changed while you were reviewing it. Refresh before saving.");
+  const after = result.data as Record<string, unknown>;
+  const deactivated = before.active === true && after.active === false;
+  await recordOperatorAction({
+    actorUserId,
+    action: deactivated ? "handoff_recipient.deactivated" : "handoff_recipient.updated",
+    handoffRecipientId: id,
+    beforeState: snapshot(before, allowedFields),
+    afterState: snapshot(after, allowedFields),
+  }, client);
+  return toHandoffRecipient(after);
 }
 
 export async function listSavedViews(

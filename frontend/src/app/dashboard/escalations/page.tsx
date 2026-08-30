@@ -32,7 +32,7 @@ export default async function EscalationsPage({ searchParams }: { searchParams: 
       <DashboardHeader email={email} activeView="escalations" />
       <HandoffOverlay handoffs={handoffs} />
       <section className="dashboard-main dispatch-spine">
-        <header className="dashboard-title-row"><div><h1>Escalations</h1><p>Transferred conversations and their explicit, audited outcomes.</p></div><Link className="refresh-link" href="/dashboard/escalations">Reset ledger</Link></header>
+        <header className="dashboard-title-row"><div><h1>Escalations</h1><p>Human reviews and their explicit, audited outcomes.</p></div><Link className="refresh-link" href="/dashboard/escalations">Reset ledger</Link></header>
         <DashboardLiveUpdates updatedAt={escalations.items[0]?.startedAt} />
         <section className="ledger-section" aria-labelledby="escalation-ledger-heading">
           <div className="operations-heading"><div><h2 id="escalation-ledger-heading">Escalation ledger <span>{escalations.pagination.total}</span></h2><p>Closing an escalation records a human decision; it does not alter call connection state.</p></div></div>
@@ -43,9 +43,9 @@ export default async function EscalationsPage({ searchParams }: { searchParams: 
           <SavedViewControls scope="escalations" views={views} configuration={configuration} pathname="/dashboard/escalations" />
           {escalations.items.length > 0 ? <div className="escalation-ledger">
             {escalations.items.map((escalation) => (
-              <article key={escalation.id} className={`escalation-ledger-row is-${escalation.status}`}>
+              <article key={escalation.id} className={`escalation-ledger-row is-${escalation.status} is-handoff-${escalation.handoffStatus}`}>
                 <header><span className={`status-mark status-${escalation.status.replaceAll("_", "-")}`}>{formatStatus(escalation.status)}</span><Link href={`/dashboard/operations/${escalation.operationReference}`}>{escalation.operationReference}</Link><time dateTime={escalation.startedAt}>{formatDateTime(escalation.startedAt)}</time></header>
-                <div><h2>{escalation.clientName}</h2><p>{escalation.reason}</p><dl><div><dt>Counterparty</dt><dd>{escalation.counterpartyName ?? "Not recorded"}</dd></div><div><dt>Operation state</dt><dd>{formatStatus(escalation.operationStatus)}</dd></div>{escalation.resolvedAt && <div><dt>Closed</dt><dd>{formatDateTime(escalation.resolvedAt)}</dd></div>}</dl></div>
+                <div><h2>{escalation.requestedAction}</h2><p>{escalation.summary}</p><dl><div><dt>Counterparty</dt><dd>{escalation.counterpartyName ?? "Not recorded"}</dd></div><div><dt>Reason</dt><dd>{escalation.reason}</dd></div><div><dt>Handoff</dt><dd>{formatStatus(escalation.handoffStatus)}</dd></div><div><dt>Recipient</dt><dd>{escalation.recipient ? `${escalation.recipient.name} · ${formatStatus(escalation.recipient.role)}` : "Not configured"}</dd></div><div><dt>Operation state</dt><dd>{formatStatus(escalation.operationStatus)}</dd></div>{escalation.resolvedAt && <div><dt>Closed</dt><dd>{formatDateTime(escalation.resolvedAt)}</dd></div>}</dl>{escalation.handoffStatusDetail && <p className="escalation-handoff-note">{escalation.handoffStatusDetail}</p>}</div>
                 {(escalation.status === "started" || escalation.status === "supervisor_joined") && <EscalationResolutionForm escalationId={escalation.id} />}
               </article>
             ))}

@@ -115,9 +115,21 @@ export type DashboardOperationDossier = DashboardOperation & {
     id: string;
     counterpartyName: string | null;
     reason: string;
+    trigger: string | null;
+    summary: string;
+    requestedAction: string;
+    handoffStatus: "pending" | "transfer_requested" | "transfer_failed" | "not_configured";
+    handoffStatusDetail: string | null;
+    recipient: { name: string; role: "supervisor" | "operator" } | null;
     requestedPickupWindow: DashboardWindow | null;
     actionWindow: DashboardWindow | null;
     startedAt: string;
+    transcript: Array<{
+      id: string;
+      speaker: "caller" | "tango";
+      content: string;
+      recordedAt: string;
+    }>;
   } | null;
   commitments: Array<{
     id: string;
@@ -491,6 +503,10 @@ type EscalationRow = {
   change_request_id: string | null;
   source_call_id: string;
   reason: string;
+  trigger: string | null;
+  handoff_recipient_id: string | null;
+  handoff_status: "pending" | "transfer_requested" | "transfer_failed" | "not_configured";
+  handoff_status_detail: string | null;
   started_at: string;
 };
 
@@ -501,7 +517,7 @@ async function activeEscalationsFor(
   if (operationIds.length === 0) return new Map();
   const result = await client
     .from("escalations")
-    .select("id,operation_id,change_request_id,source_call_id,reason,started_at")
+    .select("id,operation_id,change_request_id,source_call_id,reason,trigger,handoff_recipient_id,handoff_status,handoff_status_detail,started_at")
     .in("operation_id", operationIds)
     .in("status", ["started", "supervisor_joined"])
     .order("started_at", { ascending: false });
@@ -784,10 +800,25 @@ export async function getDashboardOperationDossier(
     pickup_window_end: string; confirmation_reference: string | null;
   } | null;
   const activeEscalation = escalationMap.get(operation.id) ?? null;
-  const changeRequestResult = activeEscalation?.change_request_id
-    ? await client.from("change_requests").select("requested_pickup_window").eq("id", activeEscalation.change_request_id).maybeSingle()
-    : { data: null, error: null };
+  const [changeRequestResult, escalationContextResult, recipientResult, transcriptResult] = await Promise.all([
+    activeEscalation?.change_request_id
+      ? client.from("change_requests").select("requested_pickup_window").eq("id", activeEscalation.change_request_id).maybeSingle()
+      : Promise.resolve({ data: null, error: null }),
+    activeEscalation
+      ? client.from("escalation_contexts").select("agent_summary,requested_action").eq("escalation_id", activeEscalation.id).maybeSingle()
+      : Promise.resolve({ data: null, error: null }),
+    activeEscalation?.handoff_recipient_id
+      ? client.from("handoff_recipients").select("name,role").eq("id", activeEscalation.handoff_recipient_id).maybeSingle()
+      : Promise.resolve({ data: null, error: null }),
+    activeEscalation
+      ? client.from("call_transcript_segments").select("id,speaker,content,recorded_at")
+        .eq("call_id", activeEscalation.source_call_id).order("recorded_at", { ascending: true })
+      : Promise.resolve({ data: [], error: null }),
+  ]);
   if (changeRequestResult.error) throw changeRequestResult.error;
+  if (escalationContextResult.error) throw escalationContextResult.error;
+  if (recipientResult.error) throw recipientResult.error;
+  if (transcriptResult.error) throw transcriptResult.error;
 
   const operationCalls = (operationCallsResult.data ?? []) as CallRow[];
   const calls = new Map(operationCalls.map((call) => [call.id, call]));
@@ -845,9 +876,25 @@ export async function getDashboardOperationDossier(
       id: activeEscalation.id,
       counterpartyName: counterpartyName(calls.get(activeEscalation.source_call_id), names),
       reason: activeEscalation.reason,
+      trigger: activeEscalation.trigger,
+      summary: typeof escalationContextResult.data?.agent_summary === "string"
+        ? escalationContextResult.data.agent_summary : activeEscalation.reason,
+      requestedAction: typeof escalationContextResult.data?.requested_action === "string"
+        ? escalationContextResult.data.requested_action : "Human review is required.",
+      handoffStatus: activeEscalation.handoff_status,
+      handoffStatusDetail: activeEscalation.handoff_status_detail,
+      recipient: recipientResult.data && (recipientResult.data.role === "supervisor" || recipientResult.data.role === "operator")
+        ? { name: recipientResult.data.name, role: recipientResult.data.role }
+        : null,
       requestedPickupWindow: readWindow(changeRequestResult.data?.requested_pickup_window),
       actionWindow: mandateWindows[0] ?? null,
       startedAt: activeEscalation.started_at,
+      transcript: (transcriptResult.data ?? []).flatMap((segment) => {
+        const value = segment as { id: string; speaker: string; content: string; recorded_at: string };
+        return value.speaker === "caller" || value.speaker === "tango"
+          ? [{ id: value.id, speaker: value.speaker, content: value.content, recordedAt: value.recorded_at }]
+          : [];
+      }),
     } : null,
     commitments: commitments.map((commitment) => {
       const call = calls.get(commitment.call_id);

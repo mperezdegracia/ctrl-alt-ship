@@ -1,6 +1,6 @@
 import Link from "next/link";
 
-import { getDashboardHandoffs, getDashboardOperations } from "@/lib/dashboard-api";
+import { formatStatus, getDashboardHandoffs, getDashboardOperations } from "@/lib/dashboard-api";
 import { requireDashboardSession } from "@/lib/dashboard-session";
 import { HandoffOverlay } from "@/features/operation/handoff-overlay";
 import { LedgerPagination } from "@/features/operation/ledger-pagination";
@@ -41,7 +41,7 @@ export default async function ControlRoomPage({ searchParams }: { searchParams: 
       <HandoffOverlay handoffs={handoffs} />
       <section className="dashboard-main dispatch-spine">
         <header className="dashboard-title-row">
-          <div><h1>Control room</h1><p>Live transfers and the records that need operator attention.</p></div>
+          <div><h1>Control room</h1><p>Live human reviews and the records that need operator attention.</p></div>
           <Link className="refresh-link" href={clearHref}>Refresh record</Link>
         </header>
 
@@ -49,9 +49,9 @@ export default async function ControlRoomPage({ searchParams }: { searchParams: 
 
         {handoffs.length > 0 && (
           <section className="handoff-register" aria-labelledby="handoff-register-heading">
-            <div className="section-heading-row"><div><h2 id="handoff-register-heading">Transferred calls</h2><p>Calls move automatically; open their verified context without controlling the connection.</p></div></div>
+            <div className="section-heading-row"><div><h2 id="handoff-register-heading">Open human reviews</h2><p>Each factual brief is saved before a voice transfer is attempted. Open the operation to inspect the attached transcript evidence.</p></div></div>
             <ol>
-              {handoffs.map((handoff) => <li key={handoff.id}><span><i aria-hidden="true" />{handoff.operationReference}</span><strong>{handoff.clientName}</strong><p>{handoff.reason}</p><Link href={`/dashboard/operations/${handoff.operationReference}`}>Open operation</Link></li>)}
+              {handoffs.map((handoff) => <li key={handoff.id}><span><i aria-hidden="true" />{formatStatus(handoff.handoffStatus)} · {handoff.operationReference}</span><strong>{handoff.requestedAction}</strong><p>{handoff.summary}</p><Link href={`/dashboard/operations/${handoff.operationReference}`}>Open operation</Link></li>)}
             </ol>
           </section>
         )}

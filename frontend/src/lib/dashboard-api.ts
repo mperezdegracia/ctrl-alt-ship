@@ -38,12 +38,18 @@ export type DashboardHandoff = {
   clientName: string;
   counterpartyName: string | null;
   reason: string;
+  summary: string;
+  requestedAction: string;
+  handoffStatus: "pending" | "transfer_requested" | "transfer_failed" | "not_configured";
+  handoffStatusDetail: string | null;
+  recipient: { name: string; role: "supervisor" | "operator" } | null;
   status: "started" | "supervisor_joined";
   startedAt: string;
 };
 
 export type DashboardEscalation = DashboardHandoff & {
   operationStatus: string;
+  trigger: string | null;
   status: "started" | "supervisor_joined" | "resolved" | "failed";
   resolvedAt: string | null;
 };
@@ -57,6 +63,17 @@ export type DirectoryEntry = {
   authorized: boolean | null;
   active: boolean;
   capabilities: Record<string, unknown> | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type HandoffRecipient = {
+  id: string;
+  name: string;
+  phone: string;
+  role: "supervisor" | "operator";
+  active: boolean;
+  priority: number;
   createdAt: string;
   updatedAt: string;
 };
@@ -103,9 +120,21 @@ export type DashboardOperationDossier = DashboardOperation & {
     id: string;
     counterpartyName: string | null;
     reason: string;
+    trigger: string | null;
+    summary: string;
+    requestedAction: string;
+    handoffStatus: "pending" | "transfer_requested" | "transfer_failed" | "not_configured";
+    handoffStatusDetail: string | null;
+    recipient: { name: string; role: "supervisor" | "operator" } | null;
     requestedPickupWindow: DashboardWindow | null;
     actionWindow: DashboardWindow | null;
     startedAt: string;
+    transcript: Array<{
+      id: string;
+      speaker: "caller" | "tango";
+      content: string;
+      recordedAt: string;
+    }>;
   } | null;
   commitments: Array<{
     id: string;
@@ -248,6 +277,17 @@ export async function getDirectoryEntries(
     accessToken,
   );
   return { items: result.entries, pagination: result.pagination };
+}
+
+export async function getHandoffRecipients(
+  accessToken: string,
+  options: { page?: number; perPage?: number; q?: string; active?: boolean } = {},
+): Promise<DashboardPage<HandoffRecipient>> {
+  const result = await dashboardRequest<{ recipients: HandoffRecipient[]; pagination: DashboardPagination }>(
+    `/api/dashboard/handoff-recipients${queryString({ page: options.page, per_page: options.perPage, q: options.q, active: options.active })}`,
+    accessToken,
+  );
+  return { items: result.recipients, pagination: result.pagination };
 }
 
 export async function getSavedViews(accessToken: string, scope: "operations" | "escalations"): Promise<SavedView[]> {

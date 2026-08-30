@@ -62,18 +62,32 @@ export default async function OperationPage({ params }: { params: Promise<{ refe
 
         {operation.activeEscalation && (
           <section className="detail-escalation" aria-labelledby="live-decision-title">
-            <div><span className="live-dot" aria-hidden="true" /> Live call · {operation.activeEscalation.counterpartyName ?? "Counterparty not recorded"}</div>
+            <div><span className="live-dot" aria-hidden="true" /> Human review · {formatStatus(operation.activeEscalation.handoffStatus)}</div>
             <div className="escalation-grid">
               <div>
-                <h2 id="live-decision-title">Supervisor review is required.</h2>
-                <p>{operation.activeEscalation.reason}</p>
+                <h2 id="live-decision-title">{operation.activeEscalation.requestedAction}</h2>
+                <p>{operation.activeEscalation.summary}</p>
               </div>
               <dl>
+                <div><dt>Counterparty</dt><dd>{operation.activeEscalation.counterpartyName ?? "Not recorded"}</dd></div>
+                <div><dt>Reason</dt><dd>{operation.activeEscalation.reason}</dd></div>
+                <div><dt>Recipient</dt><dd>{operation.activeEscalation.recipient ? `${operation.activeEscalation.recipient.name} · ${formatStatus(operation.activeEscalation.recipient.role)}` : "Not configured"}</dd></div>
                 <div><dt>Requested pickup</dt><dd>{formatWindow(operation.activeEscalation.requestedPickupWindow)}</dd></div>
                 <div><dt>Action Window</dt><dd>{formatWindow(operation.activeEscalation.actionWindow)}</dd></div>
                 <div><dt>Escalated</dt><dd>{formatDateTime(operation.activeEscalation.startedAt)}</dd></div>
               </dl>
             </div>
+            {operation.activeEscalation.handoffStatusDetail && <p className="detail-escalation-status">{operation.activeEscalation.handoffStatusDetail}</p>}
+            <details className="escalation-transcript">
+              <summary>Conversation evidence <span>{operation.activeEscalation.transcript.length} recorded segment{operation.activeEscalation.transcript.length === 1 ? "" : "s"}</span></summary>
+              {operation.activeEscalation.transcript.length > 0 ? <ol>
+                {operation.activeEscalation.transcript.map((segment) => <li key={segment.id}>
+                  <time dateTime={segment.recordedAt}>{formatDateTime(segment.recordedAt)}</time>
+                  <strong>{segment.speaker === "caller" ? "Caller" : "Tango"}</strong>
+                  <p>{segment.content}</p>
+                </li>)}
+              </ol> : <p>No completed transcript segments have been stored yet. The verified brief above remains the primary handoff record.</p>}
+            </details>
             <EscalationResolutionForm escalationId={operation.activeEscalation.id} />
           </section>
         )}

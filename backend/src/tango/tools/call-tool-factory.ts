@@ -19,7 +19,7 @@ export class CallToolFactory {
     private readonly logger?: StructuredLogger,
   ) {}
 
-  create(scope: ToolCallScope, providerExtension?: RealtimeTool): CallToolSession {
+  create(scope: ToolCallScope, escalationTool?: RealtimeTool): CallToolSession {
     const service = new OperationReadService(scope, this.repository);
     const clientService = scope.persona === "client" && this.mutations
       ? new ClientOperationService(scope, this.mutations) : undefined;
@@ -32,7 +32,7 @@ export class CallToolFactory {
         ? new ListOpenOperationsTool(service)
         : new ListProviderOperationsTool(service),
       ...(clientService ? [new CreateOperationTool(clientService), new UpdateOperationTool(clientService), new CancelOperationTool(clientService), new ConfirmMandateTool(clientService)] : []),
-      ...(scope.persona === "provider" && providerExtension ? [providerExtension] : []),
+      ...(escalationTool ? [escalationTool] : []),
       ...(providerService ? [new CreateQuoteTool(providerService), new DeclineQuoteRequestTool(providerService)] : []),
       ...(bookingService ? [new RescheduleBookingTool(bookingService), new CancelBookingTool(bookingService)] : []),
     ], clientService, providerService, this.logger?.child({
