@@ -25,7 +25,6 @@ The database stores the envelope in columns; only event-specific data belongs in
   "schema_version": 1,
   "operation_id": "uuid",
   "call_id": "uuid or null",
-  "commitment_id": "uuid or null",
   "occurred_at": "2026-08-29T22:30:00Z",
   "recording_checkpoint": 142.5,
   "payload": {}
@@ -39,15 +38,15 @@ The database stores the envelope in columns; only event-specific data belongs in
   is required except for global `call.rejected` and an initial `call.routed`
   event whose conversational intent has not selected an operation yet.
 - `call_id` is present only when the fact originated in a persisted call.
-- `commitment_id` is present only when the fact created or directly affected an
-  immutable commitment.
+- Bookings are immutable; the operation's current_booking_id identifies the
+  current reservation. The event envelope no longer has commitment_id (ADR 0003).
 - `recording_checkpoint` is seconds from the beginning of the recording. It is
   present only for call-derived evidence and must refer to the same call.
 - `payload` is always an object and contains no duplicate envelope fields.
 - Payload schemas evolve by incrementing `schema_version`; existing versions are
   never reinterpreted.
-- Events never contain full transcripts. Evidence events link to commitments,
-  which contain the minimal excerpt and recording checkpoint. `mandate.confirmed`
+- Events never contain full transcripts. A Booking references its source call
+  and an actual inclusive range of transcript segments. `mandate.confirmed`
   links through `mandate_id` to the mandate's server-captured confirmation evidence.
   Realtime input-audio offsets are not recording checkpoints without an explicit
   recording correlation; leave `recording_checkpoint` null in that case.
@@ -81,7 +80,6 @@ Envelope requirements:
 
 - `operation_id`: `null`
 - `call_id`: `null`
-- `commitment_id`: `null`
 - `recording_checkpoint`: `null`
 
 Payload:
@@ -136,6 +134,22 @@ snapshot; authorized consumers join the referenced mandate.
 
 ### Quote events
 
+`quote.offered` v1 records every clear provider price proposal independently of
+approval and quote eligibility. Its server-generated payload is:
+
+```text
+{ provider_id, quote_request_id, round_id,
+  price_range: { min, max, currency },
+  range_status: "within" | "outside" | "unassessed",
+  speaker: "provider", approval: "not_requested_by_this_event" }
+```
+
+The operation/call/timestamp/schema_version belong to the envelope. No numeric
+client cap appears in this event. Recording does not consume commercial rounds,
+mutate request status, create a quote or send email. Idempotency is by invocation,
+not amount. `quote.received` v2 keeps the v1 payload and adds `offer_event_id`;
+the server links or inserts the matching observation atomically. Preserve v1 history.
+
 | Event | When emitted | Payload v1 |
 | --- | --- | --- |
 | `quote.requested` | A quote request is created for one provider. | `quote_request_id`, `provider_id`, `attempt`, `expires_at` |
@@ -166,12 +180,13 @@ limit is included in quote tool results or counteroffer events.
 | `booking.reschedule_declined` | The provider runs `decline_reschedule`. | `booking_id`, `change_request_id`, `requested_window`, `reason`, `details?` |
 | `booking.cancelled` | Client or provider cancellation ends an active booking. | `booking_id`, `change_request_id?`, `source`, `reason`, `operation_status`, `notification_email_queued` |
 
-`booking.cancelled.source` is `client` or `provider`. The eventual recorded-evidence
-flow links accepted changes to `commitment_id` and a recording checkpoint.
-Current rollout (2026-08-30): provider reschedule/cancellation instead link a
-`change_request_id`, leave `commitment_id` null and return `commitment_created: false`.
-No recording checkpoint or acceptance evidence is fabricated. Declines never create
-a commitment. An out-of-mandate request is saved without a booking change event;
+`booking.cancelled.source` is `client` or `provider`. Cancellation clears the
+operation's current_booking_id without mutating the historical Booking.
+`booking.rescheduled` v2 keeps the v1 payload and adds `previous_booking_id`;
+`booking_id` identifies the newly inserted successor. The pointer changes in
+the same transaction. `commitment_created:false` is a deprecated compatibility
+field only. No recording checkpoint, transcript range or acceptance is fabricated.
+An out-of-mandate request is saved without a booking change event;
 `escalation.started` requires the subsequent handoff, not merely saving the request.
 
 ### Escalation events

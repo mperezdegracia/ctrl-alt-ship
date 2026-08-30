@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Tango agent tool contracts",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "context_policy": {
     "description": "Internal IDs and authorization context are resolved by the server from the live call. They are never accepted as model-controlled arguments.",
     "server_injected": [
@@ -12,8 +12,13 @@
       "mandate_id",
       "quote_request_id",
       "booking_id",
-      "transcript_excerpt",
-      "recording_checkpoint"
+      "direction",
+      "purpose",
+      "round_id",
+      "current_booking_id",
+      "source_call_id",
+      "evidence_start_segment_id",
+      "evidence_end_segment_id"
     ]
   },
   "profiles": {
@@ -23,35 +28,42 @@
       "update_operation",
       "cancel_operation"
     ],
-    "client_create": ["update_operation", "confirm_mandate"],
-    "client_update": ["update_operation", "confirm_mandate"],
-    "client_confirm": ["update_operation", "confirm_mandate"],
+    "client_create": [
+      "update_operation",
+      "confirm_mandate"
+    ],
+    "client_update": [
+      "update_operation",
+      "confirm_mandate"
+    ],
+    "client_confirm": [
+      "update_operation",
+      "confirm_mandate"
+    ],
+    "terminal": [],
     "provider_inbound_entry": [
       "list_provider_operations",
-      "create_quote",
-      "decline_quote_request",
-      "confirm_booking",
-      "decline_booking",
+      "select_booking_for_reschedule",
+      "select_booking_for_cancellation"
+    ],
+    "provider_reschedule": [
       "reschedule_booking",
+      "escalate"
+    ],
+    "provider_cancel_booking": [
       "cancel_booking",
       "escalate"
     ],
-    "provider_outbound_quote": [
+    "provider_booking_escalation": [
+      "escalate"
+    ],
+    "provider_quote": [
+      "record_provider_offer",
       "create_quote",
       "decline_quote_request",
       "escalate"
     ],
-    "provider_outbound_booking": [
-      "confirm_booking",
-      "decline_booking",
-      "escalate"
-    ],
-    "provider_outbound_reschedule": [
-      "reschedule_booking",
-      "decline_reschedule",
-      "escalate"
-    ],
-    "terminal": []
+    "provider_unavailable": []
   },
   "tools": [
     {
@@ -72,13 +84,40 @@
             "items": {
               "type": "object",
               "properties": {
-                "operation_reference": { "type": "string", "pattern": "^OP-[0-9]{6,}$" },
-                "operation_name": { "type": "string", "minLength": 1, "description": "Display name derived from pickup and delivery locations; not a unique identifier." },
-                "status": { "type": "string" },
-                "container_type": { "type": ["string", "null"] },
-                "pickup_location": { "type": ["string", "null"] },
-                "delivery_location": { "type": ["string", "null"] },
-                "updated_at": { "type": "string", "format": "date-time" }
+                "operation_reference": {
+                  "type": "string",
+                  "pattern": "^OP-[0-9]{6,}$"
+                },
+                "operation_name": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "Display name derived from pickup and delivery locations; not a unique identifier."
+                },
+                "status": {
+                  "type": "string"
+                },
+                "container_type": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "pickup_location": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "delivery_location": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "updated_at": {
+                  "type": "string",
+                  "format": "date-time"
+                }
               },
               "required": [
                 "operation_reference",
@@ -93,10 +132,14 @@
             }
           }
         },
-        "required": ["operations"],
+        "required": [
+          "operations"
+        ],
         "additionalProperties": false
       },
-      "x-personas": ["client"],
+      "x-personas": [
+        "client"
+      ],
       "x-mutating": false
     },
     {
@@ -106,8 +149,14 @@
       "parameters": {
         "type": "object",
         "properties": {
-          "pickup_location": { "type": "string", "minLength": 1 },
-          "delivery_location": { "type": "string", "minLength": 1 }
+          "pickup_location": {
+            "type": "string",
+            "minLength": 1
+          },
+          "delivery_location": {
+            "type": "string",
+            "minLength": 1
+          }
         },
         "required": [],
         "additionalProperties": false
@@ -115,15 +164,39 @@
       "returns": {
         "type": "object",
         "properties": {
-          "operation_reference": { "type": "string", "pattern": "^OP-[0-9]{6,}$" },
-          "status": { "const": "collecting_details" },
-          "missing_fields": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
-          "next_profile": { "type": "string", "enum": ["client_create", "client_confirm"] }
+          "operation_reference": {
+            "type": "string",
+            "pattern": "^OP-[0-9]{6,}$"
+          },
+          "status": {
+            "const": "collecting_details"
+          },
+          "missing_fields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "uniqueItems": true
+          },
+          "next_profile": {
+            "type": "string",
+            "enum": [
+              "client_create",
+              "client_confirm"
+            ]
+          }
         },
-        "required": ["operation_reference", "status", "missing_fields", "next_profile"],
+        "required": [
+          "operation_reference",
+          "status",
+          "missing_fields",
+          "next_profile"
+        ],
         "additionalProperties": false
       },
-      "x-personas": ["client"],
+      "x-personas": [
+        "client"
+      ],
       "x-mutating": true,
       "x-locks-intent": "create"
     },
@@ -134,30 +207,58 @@
       "parameters": {
         "type": "object",
         "properties": {
-          "operation_reference": { "type": "string", "pattern": "^OP-[0-9]{6,}$" },
+          "operation_reference": {
+            "type": "string",
+            "pattern": "^OP-[0-9]{6,}$"
+          },
           "changes": {
             "type": "object",
             "properties": {
-              "pickup_location": { "type": "string", "minLength": 1 },
-              "delivery_location": { "type": "string", "minLength": 1 }
+              "pickup_location": {
+                "type": "string",
+                "minLength": 1
+              },
+              "delivery_location": {
+                "type": "string",
+                "minLength": 1
+              }
             },
             "minProperties": 1,
             "additionalProperties": false
           }
         },
-        "required": ["changes"],
+        "required": [
+          "changes"
+        ],
         "additionalProperties": false
       },
       "returns": {
         "type": "object",
         "properties": {
-          "operation_reference": { "type": "string", "pattern": "^OP-[0-9]{6,}$" },
-          "status": { "type": "string" },
-          "missing_fields": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
-          "mandate_confirmation_required": { "type": "boolean" },
+          "operation_reference": {
+            "type": "string",
+            "pattern": "^OP-[0-9]{6,}$"
+          },
+          "status": {
+            "type": "string"
+          },
+          "missing_fields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "uniqueItems": true
+          },
+          "mandate_confirmation_required": {
+            "type": "boolean"
+          },
           "next_profile": {
             "type": "string",
-            "enum": ["client_create", "client_update", "client_confirm"]
+            "enum": [
+              "client_create",
+              "client_update",
+              "client_confirm"
+            ]
           }
         },
         "required": [
@@ -169,7 +270,9 @@
         ],
         "additionalProperties": false
       },
-      "x-personas": ["client"],
+      "x-personas": [
+        "client"
+      ],
       "x-mutating": true,
       "x-locks-intent": "update"
     },
@@ -180,24 +283,49 @@
       "parameters": {
         "type": "object",
         "properties": {
-          "operation_reference": { "type": "string", "pattern": "^OP-[0-9]{6,}$" },
-          "reason": { "type": "string", "minLength": 1 }
+          "operation_reference": {
+            "type": "string",
+            "pattern": "^OP-[0-9]{6,}$"
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1
+          }
         },
-        "required": ["operation_reference", "reason"],
+        "required": [
+          "operation_reference",
+          "reason"
+        ],
         "additionalProperties": false
       },
       "returns": {
         "type": "object",
         "properties": {
-          "operation_reference": { "type": "string", "pattern": "^OP-[0-9]{6,}$" },
-          "status": { "const": "cancelled" },
-          "provider_email_queued": { "type": "boolean" },
-          "next_profile": { "const": "terminal" }
+          "operation_reference": {
+            "type": "string",
+            "pattern": "^OP-[0-9]{6,}$"
+          },
+          "status": {
+            "const": "cancelled"
+          },
+          "provider_email_queued": {
+            "type": "boolean"
+          },
+          "next_profile": {
+            "const": "terminal"
+          }
         },
-        "required": ["operation_reference", "status", "provider_email_queued", "next_profile"],
+        "required": [
+          "operation_reference",
+          "status",
+          "provider_email_queued",
+          "next_profile"
+        ],
         "additionalProperties": false
       },
-      "x-personas": ["client"],
+      "x-personas": [
+        "client"
+      ],
       "x-mutating": true,
       "x-locks-intent": "cancel"
     },
@@ -208,18 +336,35 @@
       "parameters": {
         "type": "object",
         "properties": {
-          "price_cap": { "type": "number", "exclusiveMinimum": 0, "maximum": 999999999999.99, "multipleOf": 0.01 },
-          "currency": { "type": "string", "pattern": "^[A-Z]{3}$" },
+          "price_cap": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "maximum": 999999999999.99,
+            "multipleOf": 0.01
+          },
+          "currency": {
+            "type": "string",
+            "pattern": "^[A-Z]{3}$"
+          },
           "action_windows": {
             "type": "array",
             "minItems": 1,
             "items": {
               "type": "object",
               "properties": {
-                "start_at": { "type": "string", "format": "date-time" },
-                "end_at": { "type": "string", "format": "date-time" }
+                "start_at": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "end_at": {
+                  "type": "string",
+                  "format": "date-time"
+                }
               },
-              "required": ["start_at", "end_at"],
+              "required": [
+                "start_at",
+                "end_at"
+              ],
               "additionalProperties": false
             }
           }
@@ -230,21 +375,38 @@
       "returns": {
         "type": "object",
         "properties": {
-          "operation_reference": { "type": "string", "pattern": "^OP-[0-9]{6,}$" },
-          "mandate_version": { "type": "integer", "minimum": 1 },
-          "status": { "const": "sourcing" },
-          "next_profile": { "const": "terminal" }
+          "operation_reference": {
+            "type": "string",
+            "pattern": "^OP-[0-9]{6,}$"
+          },
+          "mandate_version": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "status": {
+            "const": "sourcing"
+          },
+          "next_profile": {
+            "const": "terminal"
+          }
         },
-        "required": ["operation_reference", "mandate_version", "status", "next_profile"],
+        "required": [
+          "operation_reference",
+          "mandate_version",
+          "status",
+          "next_profile"
+        ],
         "additionalProperties": false
       },
-      "x-personas": ["client"],
+      "x-personas": [
+        "client"
+      ],
       "x-mutating": true
     },
     {
       "type": "function",
       "name": "list_provider_operations",
-      "description": "Lists only operations where the authenticated provider has an active quote request or booking, for inbound intent selection.",
+      "description": "Lists only the authenticated provider's current bookings selected by operations.current_booking_id.",
       "parameters": {
         "type": "object",
         "properties": {},
@@ -259,32 +421,65 @@
             "items": {
               "type": "object",
               "properties": {
-                "operation_reference": { "type": "string", "pattern": "^OP-[0-9]{6,}$" },
-                "operation_name": { "type": "string", "minLength": 1, "description": "Display name derived from pickup and delivery locations; not a unique identifier." },
-                "relationship": {
+                "operation_reference": {
                   "type": "string",
-                  "enum": ["quote_requested", "booking_pending", "booking_confirmed"]
+                  "pattern": "^OP-[0-9]{6,}$"
                 },
-                "pickup_location": { "type": "string" },
-                "delivery_location": { "type": "string" },
-                "container_type": { "type": "string" }
+                "pickup_location": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "delivery_location": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "pickup_window": {
+                  "type": "object",
+                  "properties": {
+                    "start_at": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "format": "date-time"
+                    },
+                    "end_at": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "format": "date-time"
+                    }
+                  },
+                  "required": [
+                    "start_at",
+                    "end_at"
+                  ],
+                  "additionalProperties": false
+                }
               },
               "required": [
                 "operation_reference",
-                "operation_name",
-                "relationship",
                 "pickup_location",
                 "delivery_location",
-                "container_type"
+                "pickup_window"
               ],
               "additionalProperties": false
             }
           }
         },
-        "required": ["operations"],
+        "required": [
+          "operations"
+        ],
         "additionalProperties": false
       },
-      "x-personas": ["provider"],
+      "x-personas": [
+        "provider"
+      ],
       "x-mutating": false
     },
     {
@@ -294,29 +489,67 @@
       "parameters": {
         "type": "object",
         "properties": {
-          "operation_reference": { "type": "string", "pattern": "^OP-[0-9]{6,}$" },
+          "operation_reference": {
+            "type": "string",
+            "pattern": "^OP-[0-9]{6,}$"
+          },
           "price_range": {
             "type": "object",
             "properties": {
-              "min": { "type": "number", "exclusiveMinimum": 0 },
-              "max": { "type": "number", "exclusiveMinimum": 0 }
+              "min": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              },
+              "max": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              }
             },
-            "required": ["min", "max"],
+            "required": [
+              "min",
+              "max"
+            ],
             "additionalProperties": false
           }
         },
-        "required": ["price_range"],
+        "required": [
+          "price_range"
+        ],
         "additionalProperties": false
       },
       "returns": {
         "type": "object",
         "properties": {
-          "operation_reference": { "type": "string", "pattern": "^OP-[0-9]{6,}$" },
-          "quote_version": { "type": "integer", "minimum": 1 },
-          "verdict": { "type": "string", "enum": ["dentro", "contraoferta", "fuera"] },
-          "reason_codes": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
-          "negotiation_remaining": { "type": "boolean" },
-          "negotiation_rounds_remaining": { "type": "integer", "minimum": 0 }
+          "operation_reference": {
+            "type": "string",
+            "pattern": "^OP-[0-9]{6,}$"
+          },
+          "quote_version": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "verdict": {
+            "type": "string",
+            "enum": [
+              "dentro",
+              "contraoferta",
+              "fuera"
+            ]
+          },
+          "reason_codes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "uniqueItems": true
+          },
+          "negotiation_remaining": {
+            "type": "boolean"
+          },
+          "negotiation_rounds_remaining": {
+            "type": "integer",
+            "minimum": 0
+          }
         },
         "required": [
           "operation_reference",
@@ -328,18 +561,23 @@
         ],
         "additionalProperties": false
       },
-      "x-personas": ["provider"],
+      "x-personas": [
+        "provider"
+      ],
       "x-mutating": true,
       "x-locks-intent": "quote"
     },
     {
       "type": "function",
       "name": "decline_quote_request",
-      "description": "Records that the provider explicitly declined to quote. It creates no quote or commitment.",
+      "description": "Records that the provider explicitly declined to quote. It creates no quote or booking.",
       "parameters": {
         "type": "object",
         "properties": {
-          "operation_reference": { "type": "string", "pattern": "^OP-[0-9]{6,}$" },
+          "operation_reference": {
+            "type": "string",
+            "pattern": "^OP-[0-9]{6,}$"
+          },
           "reason": {
             "type": "string",
             "enum": [
@@ -351,21 +589,37 @@
               "other"
             ]
           },
-          "details": { "type": "string", "minLength": 1 }
+          "details": {
+            "type": "string",
+            "minLength": 1
+          }
         },
-        "required": ["reason"],
+        "required": [
+          "reason"
+        ],
         "additionalProperties": false
       },
       "returns": {
         "type": "object",
         "properties": {
-          "status": { "const": "declined" },
-          "commitment_created": { "const": false }
+          "status": {
+            "const": "declined"
+          },
+          "commitment_created": {
+            "const": false,
+            "deprecated": true,
+            "description": "Legacy compatibility field; there is no Commitment entity."
+          }
         },
-        "required": ["status", "commitment_created"],
+        "required": [
+          "status",
+          "commitment_created"
+        ],
         "additionalProperties": false
       },
-      "x-personas": ["provider"],
+      "x-personas": [
+        "provider"
+      ],
       "x-mutating": true,
       "x-locks-intent": "quote"
     },
@@ -376,26 +630,55 @@
       "parameters": {
         "type": "object",
         "properties": {
-          "confirmed_price": { "type": "number", "exclusiveMinimum": 0 },
-          "provider_confirmation_reference": { "type": "string", "minLength": 1 }
+          "confirmed_price": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "provider_confirmation_reference": {
+            "type": "string",
+            "minLength": 1
+          }
         },
-        "required": ["confirmed_price"],
+        "required": [
+          "confirmed_price"
+        ],
         "additionalProperties": false
       },
       "returns": {
         "type": "object",
         "properties": {
-          "operation_reference": { "type": "string", "pattern": "^OP-[0-9]{6,}$" },
-          "status": { "const": "booking_confirmed" },
-          "confirmed_price": { "type": "number", "exclusiveMinimum": 0 },
-          "commitment_created": { "const": true }
+          "operation_reference": {
+            "type": "string",
+            "pattern": "^OP-[0-9]{6,}$"
+          },
+          "status": {
+            "const": "booking_confirmed"
+          },
+          "confirmed_price": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "commitment_created": {
+            "const": false,
+            "deprecated": true,
+            "description": "Legacy compatibility field; there is no Commitment entity."
+          }
         },
-        "required": ["operation_reference", "status", "confirmed_price", "commitment_created"],
+        "required": [
+          "operation_reference",
+          "status",
+          "confirmed_price",
+          "commitment_created"
+        ],
         "additionalProperties": false
       },
-      "x-personas": ["provider"],
+      "x-personas": [
+        "provider"
+      ],
       "x-mutating": true,
-      "x-locks-intent": "booking_confirmation"
+      "x-locks-intent": "booking_confirmation",
+      "x-enabled": false,
+      "deprecated": true
     },
     {
       "type": "function",
@@ -415,65 +698,130 @@
               "other"
             ]
           },
-          "details": { "type": "string", "minLength": 1 }
+          "details": {
+            "type": "string",
+            "minLength": 1
+          }
         },
-        "required": ["reason"],
+        "required": [
+          "reason"
+        ],
         "additionalProperties": false
       },
       "returns": {
         "type": "object",
         "properties": {
-          "status": { "const": "declined" },
-          "commitment_created": { "const": false },
-          "operation_status": { "type": "string", "enum": ["quote_selected", "sourcing", "needs_follow_up"] }
+          "status": {
+            "const": "declined"
+          },
+          "commitment_created": {
+            "const": false,
+            "deprecated": true,
+            "description": "Legacy compatibility field; there is no Commitment entity."
+          },
+          "operation_status": {
+            "type": "string",
+            "enum": [
+              "quote_selected",
+              "sourcing",
+              "needs_follow_up"
+            ]
+          }
         },
-        "required": ["status", "commitment_created", "operation_status"],
+        "required": [
+          "status",
+          "commitment_created",
+          "operation_status"
+        ],
         "additionalProperties": false
       },
-      "x-personas": ["provider"],
+      "x-personas": [
+        "provider"
+      ],
       "x-mutating": true,
-      "x-locks-intent": "booking_confirmation"
+      "x-locks-intent": "booking_confirmation",
+      "x-enabled": false,
+      "deprecated": true
     },
     {
       "type": "function",
       "name": "reschedule_booking",
-      "description": "Changes only the pickup window of the authenticated provider's confirmed booking after explicit confirmation, preserving price and terms. Outside the mandate it changes no booking and requires escalation. No email is sent or queued.",
+      "description": "After selection and explicit confirmation, inserts an immutable successor booking with the authorized pickup window and replaces the current pointer. Outside mandate leaves the booking unchanged and requires escalation. No email.",
       "parameters": {
         "type": "object",
         "properties": {
-          "operation_reference": { "type": "string", "pattern": "^OP-[0-9]{6,}$" },
+          "operation_reference": {
+            "type": "string",
+            "pattern": "^OP-[0-9]{6,}$"
+          },
           "proposed_pickup_window": {
             "type": "object",
             "properties": {
-              "start_at": { "type": "string", "format": "date-time" },
-              "end_at": { "type": "string", "format": "date-time" }
+              "start_at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "end_at": {
+                "type": "string",
+                "format": "date-time"
+              }
             },
-            "required": ["start_at", "end_at"],
+            "required": [
+              "start_at",
+              "end_at"
+            ],
             "additionalProperties": false
           },
-          "reason": { "type": "string", "minLength": 1 }
+          "reason": {
+            "type": "string",
+            "minLength": 1
+          }
         },
-        "required": ["proposed_pickup_window", "reason"],
+        "required": [
+          "proposed_pickup_window",
+          "reason"
+        ],
         "additionalProperties": false
       },
       "returns": {
         "type": "object",
         "properties": {
-          "status": { "type": "string", "enum": ["applied", "requires_escalation"] },
-          "reason_code": { "type": ["string", "null"] },
-          "commitment_created": { "type": "boolean" }
+          "status": {
+            "type": "string",
+            "enum": [
+              "applied",
+              "requires_escalation"
+            ]
+          },
+          "reason_code": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "commitment_created": {
+            "const": false,
+            "deprecated": true,
+            "description": "Legacy compatibility field; there is no Commitment entity."
+          }
         },
-        "required": ["status", "reason_code", "commitment_created"],
+        "required": [
+          "status",
+          "reason_code",
+          "commitment_created"
+        ],
         "additionalProperties": false
       },
-      "x-personas": ["provider"],
+      "x-personas": [
+        "provider"
+      ],
       "x-mutating": true,
       "x-locks-intent": "reschedule"
     },
     {
       "type": "function",
       "name": "decline_reschedule",
-      "description": "Records the provider's refusal of a proposed reschedule. The previous booking and commitment remain active.",
+      "description": "Records the provider's refusal of a proposed reschedule. The previous booking remains current.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -488,60 +836,107 @@
               "other"
             ]
           },
-          "details": { "type": "string", "minLength": 1 }
+          "details": {
+            "type": "string",
+            "minLength": 1
+          }
         },
-        "required": ["reason"],
+        "required": [
+          "reason"
+        ],
         "additionalProperties": false
       },
       "returns": {
         "type": "object",
         "properties": {
-          "status": { "const": "rejected" },
-          "previous_commitment_active": { "const": true }
+          "status": {
+            "const": "rejected"
+          },
+          "previous_booking_active": {
+            "const": true
+          }
         },
-        "required": ["status", "previous_commitment_active"],
+        "required": [
+          "status",
+          "previous_booking_active"
+        ],
         "additionalProperties": false
       },
-      "x-personas": ["provider"],
+      "x-personas": [
+        "provider"
+      ],
       "x-mutating": true,
-      "x-locks-intent": "reschedule"
+      "x-locks-intent": "reschedule",
+      "x-enabled": false,
+      "deprecated": true
     },
     {
       "type": "function",
       "name": "cancel_booking",
-      "description": "Cancels only the authenticated provider's confirmed booking after explicit verbal confirmation, preserves history and returns the operation to sourcing. Does not cancel the client's operation or send or queue email.",
+      "description": "After selection and explicit confirmation, atomically clears the current booking pointer and starts or exhausts replacement sourcing. Preserves immutable booking history and the client operation. No email.",
       "parameters": {
         "type": "object",
         "properties": {
-          "operation_reference": { "type": "string", "pattern": "^OP-[0-9]{6,}$" },
-          "reason": { "type": "string", "minLength": 1 }
+          "operation_reference": {
+            "type": "string",
+            "pattern": "^OP-[0-9]{6,}$"
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1
+          }
         },
-        "required": ["reason"],
+        "required": [
+          "reason"
+        ],
         "additionalProperties": false
       },
       "returns": {
         "type": "object",
         "properties": {
-          "booking_status": { "const": "cancelled" },
-          "operation_status": { "const": "sourcing" },
-          "commitment_created": { "const": false },
-          "client_email_queued": { "type": "boolean" }
+          "booking_status": {
+            "const": "cancelled"
+          },
+          "operation_status": {
+            "enum": [
+              "sourcing",
+              "needs_follow_up"
+            ]
+          },
+          "commitment_created": {
+            "const": false,
+            "deprecated": true,
+            "description": "Legacy compatibility field; there is no Commitment entity."
+          },
+          "client_email_queued": {
+            "const": false
+          }
         },
-        "required": ["booking_status", "operation_status", "commitment_created", "client_email_queued"],
+        "required": [
+          "booking_status",
+          "operation_status",
+          "commitment_created",
+          "client_email_queued"
+        ],
         "additionalProperties": false
       },
-      "x-personas": ["provider"],
+      "x-personas": [
+        "provider"
+      ],
       "x-mutating": true,
       "x-locks-intent": "cancel_booking"
     },
     {
       "type": "function",
       "name": "escalate",
-      "description": "Starts a live supervisor handoff for a provider conversation. It sends commitments, mandate and reason out of band, never the raw transcript or price cap.",
+      "description": "Starts a live supervisor handoff for a provider conversation. It sends the current booking, mandate and reason out of band, never the raw transcript or price cap.",
       "parameters": {
         "type": "object",
         "properties": {
-          "operation_reference": { "type": "string", "pattern": "^OP-[0-9]{6,}$" },
+          "operation_reference": {
+            "type": "string",
+            "pattern": "^OP-[0-9]{6,}$"
+          },
           "trigger": {
             "type": "string",
             "enum": [
@@ -552,23 +947,182 @@
               "other"
             ]
           },
-          "reason": { "type": "string", "minLength": 1 }
+          "reason": {
+            "type": "string",
+            "minLength": 1
+          }
         },
-        "required": ["trigger", "reason"],
+        "required": [
+          "trigger",
+          "reason"
+        ],
         "additionalProperties": false
       },
       "returns": {
         "type": "object",
         "properties": {
-          "status": { "type": "string", "enum": ["started", "failed"] },
-          "supervisor_notified": { "type": "boolean" }
+          "status": {
+            "type": "string",
+            "enum": [
+              "started",
+              "failed"
+            ]
+          },
+          "supervisor_notified": {
+            "type": "boolean"
+          }
         },
-        "required": ["status", "supervisor_notified"],
+        "required": [
+          "status",
+          "supervisor_notified"
+        ],
         "additionalProperties": false
       },
-      "x-personas": ["provider"],
+      "x-personas": [
+        "provider"
+      ],
       "x-mutating": true,
       "x-locks-intent": "escalation"
+    },
+    {
+      "type": "function",
+      "name": "select_booking_for_reschedule",
+      "description": "Selects this provider's current booking and the requested action without changing the booking.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "operation_reference": {
+            "type": "string",
+            "pattern": "^OP-[0-9]{6,}$"
+          }
+        },
+        "required": [
+          "operation_reference"
+        ],
+        "additionalProperties": false
+      },
+      "returns": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "const": "selected"
+          },
+          "operation_reference": {
+            "type": "string",
+            "pattern": "^OP-[0-9]{6,}$"
+          },
+          "intent": {
+            "const": "reschedule"
+          }
+        },
+        "required": [
+          "status",
+          "operation_reference",
+          "intent"
+        ],
+        "additionalProperties": false
+      },
+      "x-personas": [
+        "provider"
+      ],
+      "x-mutating": true,
+      "x-locks-intent": "reschedule"
+    },
+    {
+      "type": "function",
+      "name": "select_booking_for_cancellation",
+      "description": "Selects this provider's current booking and the requested action without changing the booking.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "operation_reference": {
+            "type": "string",
+            "pattern": "^OP-[0-9]{6,}$"
+          }
+        },
+        "required": [
+          "operation_reference"
+        ],
+        "additionalProperties": false
+      },
+      "returns": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "const": "selected"
+          },
+          "operation_reference": {
+            "type": "string",
+            "pattern": "^OP-[0-9]{6,}$"
+          },
+          "intent": {
+            "const": "cancel_booking"
+          }
+        },
+        "required": [
+          "status",
+          "operation_reference",
+          "intent"
+        ],
+        "additionalProperties": false
+      },
+      "x-personas": [
+        "provider"
+      ],
+      "x-mutating": true,
+      "x-locks-intent": "cancel_booking"
+    },
+    {
+      "type": "function",
+      "name": "record_provider_offer",
+      "description": "Records a clear provider price proposal immediately, including out-of-range offers. Does not approve, create a quote, consume counteroffers or book.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "price_range": {
+            "type": "object",
+            "properties": {
+              "min": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              },
+              "max": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              }
+            },
+            "required": [
+              "min",
+              "max"
+            ],
+            "additionalProperties": false
+          },
+          "currency": {
+            "type": "string",
+            "pattern": "^[A-Z]{3}$"
+          }
+        },
+        "required": [
+          "price_range"
+        ],
+        "additionalProperties": false
+      },
+      "returns": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "const": "recorded"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "additionalProperties": false
+      },
+      "x-personas": [
+        "provider"
+      ],
+      "x-mutating": true
     }
   ]
 }
