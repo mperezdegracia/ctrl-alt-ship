@@ -261,8 +261,8 @@ the trigger cannot create a second notification. The transition and both
 The worker claims jobs with a short lease, records every delivery outcome as an
 event, and retries technical errors with capped exponential backoff. An email
 job with an absent or malformed recipient is terminally failed without calling
-the external provider. The Resend adapter also forwards the deterministic key
-as `Idempotency-Key`, protecting the narrow period between external acceptance
-and recording the local completion. Once both confirmation jobs are processed,
+the external provider. SMTP has no standard provider-side idempotency mechanism;
+the worker retains the deterministic key as an `X-Tango-Idempotency-Key` header
+and the outbox remains the delivery authority. Once both confirmation jobs are processed,
 the worker moves an operation still in `booking_confirmed` to
 `notifications_sent`.

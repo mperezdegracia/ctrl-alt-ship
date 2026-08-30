@@ -141,9 +141,10 @@ check with:
 npm --prefix backend run harness:email
 ```
 
-To deliver real email, set `EMAIL_DELIVERY_MODE=resend`, `RESEND_API_KEY`, and a
-verified-domain `EMAIL_FROM` in Render. The worker sends through Resend with
-the outbox idempotency key, while Supabase remains the delivery audit trail.
+To deliver real email, set `EMAIL_DELIVERY_MODE=smtp`, `SMTP_HOST`,
+`SMTP_PORT`, `SMTP_SECURE`, `SMTP_USERNAME`, `SMTP_PASSWORD`, and `EMAIL_FROM`
+in Render. Gmail uses `smtp.gmail.com`, port `465`, `SMTP_SECURE=true`, and a
+dedicated Google app password. Supabase remains the delivery audit trail.
 
 Voice call acceptance/rejection and the Realtime sideband use the official
 OpenAI Node SDK through `OpenAIRealtimeGateway`. The webhook acknowledgement

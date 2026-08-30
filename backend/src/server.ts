@@ -35,7 +35,7 @@ import { EscalationHandoffCoordinator } from "./tango/telephony/escalation-hando
 import { MockEscalationTool } from "./tango/tools/mock-escalation-tool";
 import { createTwilioOutboundCall, verifyTwilioSignature } from "./tango/telephony/twilio-outbound";
 import { extractOutboundCallRecordId, routeOutboundCall } from "./tango/telephony/outbound-routing";
-import { PreviewEmailGateway, ResendEmailGateway } from "./tango/services/email-gateway";
+import { PreviewEmailGateway, SmtpEmailGateway } from "./tango/services/email-gateway";
 import { EmailOutboxWorker, SupabaseEmailOutboxRepository } from "./tango/workers/email-outbox-worker";
 
 const app = express();
@@ -95,8 +95,14 @@ const callToolFactory = new CallToolFactory(
 
 const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 const realtimeGateway = new OpenAIRealtimeGateway(openai);
-const emailGateway = environment.EMAIL_DELIVERY_MODE === "resend"
-  ? new ResendEmailGateway(environment.RESEND_API_KEY!, environment.EMAIL_FROM!)
+const emailGateway = environment.EMAIL_DELIVERY_MODE === "smtp"
+  ? new SmtpEmailGateway({
+    host: environment.SMTP_HOST!,
+    port: environment.SMTP_PORT,
+    secure: environment.SMTP_SECURE,
+    username: environment.SMTP_USERNAME!,
+    password: environment.SMTP_PASSWORD!,
+  }, environment.EMAIL_FROM!)
   : new PreviewEmailGateway();
 const emailWorker = new EmailOutboxWorker(
   new SupabaseEmailOutboxRepository(supabaseAdmin),

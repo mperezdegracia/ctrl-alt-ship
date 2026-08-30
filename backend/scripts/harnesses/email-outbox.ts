@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import {
   EmailDeliveryError,
   PreviewEmailGateway,
-  ResendEmailGateway,
+  SmtpEmailGateway,
   type EmailGateway,
 } from "../../src/tango/services/email-gateway";
 import { renderBookingEmail, type BookingEmailPayload } from "../../src/tango/services/email-templates";
@@ -93,48 +93,59 @@ async function main(): Promise<void> {
   ]);
 
   const retryingGateway: EmailGateway = {
-    mode: "resend",
-    async deliver() { throw new EmailDeliveryError("resend_http_503", true); },
+    mode: "smtp",
+    async deliver() { throw new EmailDeliveryError("smtp_esocket", true); },
   };
   const retryRepository = new MemoryRepository([[job("retry-job")]]);
   const retryWorker = new EmailOutboxWorker(retryRepository, retryingGateway, silentLogger);
   await retryWorker.runOnce();
   assert.deepEqual(retryRepository.failed.map((failure) => [failure.code, failure.retryable]), [
-    ["resend_http_503", true],
+    ["smtp_esocket", true],
   ]);
 
-  let resendRequest: RequestInit | undefined;
-  const resendGateway = new ResendEmailGateway(
-    "re_test",
+  let smtpMessage: {
+    from: string;
+    to: string;
+    subject: string;
+    html: string;
+    text: string;
+    headers: Record<string, string>;
+  } | undefined;
+  const smtpGateway = new SmtpEmailGateway(
+    {
+      host: "smtp.gmail.com",
+      port: 465,
+      secure: true,
+      username: "tango.demo@gmail.com",
+      password: "app-password",
+    },
     "Tango Logistics <notifications@example.com>",
-    async (_input, init) => {
-      resendRequest = init;
-      return new Response(JSON.stringify({ id: "provider-message-id" }), { status: 200 });
+    {
+      async sendMail(message) {
+        smtpMessage = message;
+        return { messageId: "<provider-message-id@gmail.com>" };
+      },
     },
   );
   const rendered = renderBookingEmail(payload);
-  const resendResult = await resendGateway.deliver({
+  const smtpResult = await smtpGateway.deliver({
     ...rendered,
     to: payload.recipient_email!,
-    idempotencyKey: "booking-confirmation:resend-job:client",
+    idempotencyKey: "booking-confirmation:smtp-job:client",
     operationId: "8a496762-dca5-46fa-b2f5-45d49e47df80",
     template: payload.template,
   });
-  assert.equal(resendResult.providerMessageId, "provider-message-id");
-  assert.equal((resendRequest?.headers as Record<string, string>)["Idempotency-Key"], "booking-confirmation:resend-job:client");
-  assert.deepEqual(JSON.parse(String(resendRequest?.body)), {
+  assert.equal(smtpResult.providerMessageId, "<provider-message-id@gmail.com>");
+  assert.deepEqual(smtpMessage, {
     from: "Tango Logistics <notifications@example.com>",
-    to: ["lucas@example.com"],
+    to: "lucas@example.com",
     subject: "Booking confirmed — OP-900001",
     html: rendered.html,
     text: rendered.text,
-    tags: [
-      { name: "operation", value: "8a496762-dca5-46fa-b2f5-45d49e47df80" },
-      { name: "template", value: "booking_confirmation_client" },
-    ],
+    headers: { "X-Tango-Idempotency-Key": "booking-confirmation:smtp-job:client" },
   });
 
-  console.log("Email outbox harness OK: preview rendering, invalid recipients, retryable failures and Resend idempotency.");
+  console.log("Email outbox harness OK: preview rendering, invalid recipients, retryable failures and Gmail SMTP delivery.");
 }
 
 main().catch((error: unknown) => {

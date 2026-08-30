@@ -39,10 +39,18 @@ services:
       - key: DASHBOARD_ORIGINS
         sync: false
       - key: EMAIL_DELIVERY_MODE
-        value: resend
+        value: smtp
       - key: EMAIL_WORKER_ENABLED
         value: "true"
-      - key: RESEND_API_KEY
+      - key: SMTP_HOST
+        value: smtp.gmail.com
+      - key: SMTP_PORT
+        value: "465"
+      - key: SMTP_SECURE
+        value: "true"
+      - key: SMTP_USERNAME
+        sync: false
+      - key: SMTP_PASSWORD
         sync: false
       - key: EMAIL_FROM
         sync: false
