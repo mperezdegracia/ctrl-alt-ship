@@ -912,7 +912,9 @@ LANGUAGE plpgsql
 AS $$
 BEGIN
   IF NEW.call_id IS NOT NULL AND NOT EXISTS (
-    SELECT 1 FROM calls WHERE id = NEW.call_id AND operation_id = NEW.operation_id
+    SELECT 1 FROM calls
+    WHERE id = NEW.call_id
+      AND operation_id IS NOT DISTINCT FROM NEW.operation_id
   ) THEN
     RAISE EXCEPTION 'event references another operation' USING ERRCODE = '23514';
   END IF;

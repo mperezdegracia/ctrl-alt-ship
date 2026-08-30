@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { MigrationAudit, auditRepository, type Migration } from "../db/migration-audit";
 
@@ -21,4 +22,7 @@ const declared = { file: "20260830010000_event.sql", sql: "ALTER TYPE public.dom
 assert.match(check([initial, declared]).join("\n"), /Reference enum missing/);
 assert.deepEqual(check([initial, declared], initial.sql.replace("'call.routed'", "'call.routed', 'sourcing.dispatch_queued'")), []);
 assert.deepEqual(auditRepository(resolve(__dirname, "../../..")), []);
-console.log("Migration audit harness passed: immutable history, duplicate/backdated versions, missing tables/RPCs/events and valid forward additions. No PostgreSQL or network.");
+const operationlessRoutedCallFix = readFileSync(resolve(__dirname,
+  "../../../supabase/migrations/20260830220000_allow_operationless_routed_call_events.sql"), "utf8");
+assert.match(operationlessRoutedCallFix, /operation_id IS NOT DISTINCT FROM NEW\.operation_id/);
+console.log("Migration audit harness passed: immutable history, duplicate/backdated versions, missing tables/RPCs/events, valid forward additions and operation-less call routing. No PostgreSQL or network.");

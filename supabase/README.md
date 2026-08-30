@@ -43,6 +43,7 @@ existentes; no se hace como una limpieza de nombres.
 | `20260830190000` | Recibos idempotentes para escalaciones | Habilita `escalate` en el ledger de tools |
 | `20260830200000` | Booking vigente y evidencia asociada; retiro de `commitments` | El puntero de la operación se sincroniza con la reserva activa |
 | `20260830210000` | Retención de evidencia de llamadas | Transcript y recording de Twilio se purgan al vencer 90 días |
+| `20260830220000` | Evento `call.routed` sin operación inicial | El contexto nulo de la llamada y del evento se valida como equivalente |
 
 Los sufijos cortos de la última columna comparten el prefijo `202608300`.
 Los comentarios dentro de migraciones viejas describen su momento histórico,
