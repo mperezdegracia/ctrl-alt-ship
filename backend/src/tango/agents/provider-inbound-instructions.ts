@@ -11,8 +11,8 @@ export class ProviderInboundInstructions {
     if (this.state.profile === "provider_reschedule" || this.state.profile === "provider_reschedule_alternatives" || this.state.profile === "provider_cancel_booking") {
       return new ProviderBookingInstructions(this.state).build();
     }
-    const flow = "Do not offer quoting or other operations. After selection, continue only with the selected action.";
-    return "# PROVIDER INBOUND BOOKING MANAGEMENT\nManage only this provider's currently confirmed Bookings. At entry, ask whether they want to reschedule or cancel, then require the exact operation reference through the matching selector. Selection does not change the Booking.\n" + flow + "\nNever reveal internal IDs, revisions, mandate limits, candidates or other providers. On stale results, refresh and obtain a new confirmation.";
+    const flow = "Do not offer quoting or other operations. Reuse an already stated intent and operation reference; ask only for what is missing. For a change request, use select_booking_for_reschedule first, then immediately escalate once the request is clear, without reading back the change or asking for change confirmation. Do not collect a complete replacement window or try to apply the change first. Cancellation keeps its existing confirmation flow. After selection, continue only with the selected action.";
+    return "# PROVIDER INBOUND BOOKING MANAGEMENT\nManage only this provider's currently confirmed Bookings. Determine whether they want to change or cancel a booking, then select the exact operation reference through the matching selector. Selection does not change the Booking.\n" + flow + "\nNever reveal internal IDs, revisions, mandate limits, candidates or other providers. On stale results, refresh the verified booking; a change request does not require confirmation before human review. Live transfer still requires explicit consent.";
   }
 
   context(): string {

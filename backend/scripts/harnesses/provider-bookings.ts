@@ -51,6 +51,20 @@ class RpcFixture {
 }
 
 async function main(): Promise<void> {
+  const entryPrompt = new ProviderInboundInstructions(entry()).build();
+  assert.match(entryPrompt, /Reuse an already stated intent and operation reference/);
+  assert.match(entryPrompt, /use select_booking_for_reschedule first, then immediately escalate/);
+  const changePrompt = new ProviderInboundInstructions(rescheduleState()).build();
+  assert.match(changePrompt, /immediately call escalate/);
+  assert.match(changePrompt, /Do not read back the change or ask for confirmation before opening human review/);
+  assert.match(changePrompt, /Do not call reschedule_booking/);
+  assert.match(changePrompt, /even a potentially in-mandate change goes directly to a human without applying it/);
+  assert.match(changePrompt, /WAIT for explicit transfer consent before confirm_escalation/);
+  assert.doesNotMatch(changePrompt, /Read back the current and proposed|After that yes immediately call reschedule_booking/);
+  const cancelPrompt = new ProviderInboundInstructions({ ...rescheduleState(), profile: "provider_cancel_booking", intent: "cancel_booking" }).build();
+  assert.match(cancelPrompt, /Ask explicit confirmation and WAIT for the next caller turn/);
+  assert.match(cancelPrompt, /After an unambiguous yes, call cancel_booking/);
+  assert.doesNotMatch(cancelPrompt, /FAST HUMAN REVIEW|immediately call escalate/);
   const context = new ProviderInboundInstructions({ ...rescheduleState(), selectedBooking: { ...selected,
     pickup_utc_offset: "-06:00", pickup_window: { start_at: "2026-09-03T06:00:00Z", end_at: "2026-09-04T05:59:59Z" },
   } }).context();
@@ -101,7 +115,7 @@ async function main(): Promise<void> {
   assert.deepEqual(tools.providerFlowState?.flow === "provider_inbound" && tools.providerFlowState.lastResult, alternatives);
   await assert.rejects(tools.execute("escalate", { reason: "Skip options" }, { toolCallId: "skip-options" }), { code: "tool_unavailable" });
   const optionsPrompt = new ProviderInboundInstructions(rpc.state).build();
-  assert.match(optionsPrompt, /¿Podés en alguno de estos\?/);
+  assert.match(optionsPrompt, /Can you make any of these\?/);
   assert.match(optionsPrompt, /WAIT for the caller's next turn/);
   assert.match(optionsPrompt, /decline_reschedule_alternatives/);
   assert.match(new ProviderInboundInstructions(rpc.state).context(), /available_pickup_local_windows/);
