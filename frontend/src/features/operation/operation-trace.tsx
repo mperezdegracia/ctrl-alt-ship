@@ -90,11 +90,7 @@ function DecisionLedger({ nodes, arrivedId }: { nodes: TraceNode[]; arrivedId: s
   }
 
   return (
-    <section className="trace-study trace-study-ledger" aria-labelledby="decision-ledger-title">
-      <header className="trace-study-heading">
-        <h3 id="decision-ledger-title">Decision ledger</h3>
-        <p>Latest durable evidence is first. Scroll to review the earlier record without losing your place.</p>
-      </header>
+    <section className="trace-study trace-study-ledger">
       <div className="decision-ledger-utility">
         <span>Latest first · {nodes.length} recorded {nodes.length === 1 ? "event" : "events"}</span>
         {unseenEntries > 0 && <button type="button" onClick={showLatest}>Show {unseenEntries} new {unseenEntries === 1 ? "entry" : "entries"}</button>}

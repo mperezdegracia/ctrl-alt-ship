@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useRef, useState, useTransition } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 
 import { dashboardRequest } from "@/lib/dashboard-api";
@@ -10,6 +10,8 @@ import { createClient } from "@/lib/supabase/client";
 type DirectoryKind = "contacts" | "providers";
 type DirectoryManagerProps = { kind: DirectoryKind; entries: DirectoryEntry[] };
 type EditorTarget = { mode: "create" } | { mode: "edit"; entry: DirectoryEntry };
+
+const DIRECTORY_SHEET_EXIT_MS = 220;
 
 const providerCapabilityKeys = ["company_name", "equipment", "service_areas", "phone_type", "responds_to_quotes"] as const;
 
@@ -76,7 +78,8 @@ function providerCompanyName(capabilities: Record<string, unknown> | null): stri
   return typeof capabilities?.company_name === "string" && capabilities.company_name.trim() ? capabilities.company_name : null;
 }
 
-function DirectoryEditorSheet({ kind, target, onClose, onComplete }: {
+function DirectoryEditorSheet({ closing, kind, target, onClose, onComplete }: {
+  closing: boolean;
   kind: DirectoryKind;
   target: EditorTarget;
   onClose: () => void;
@@ -91,11 +94,12 @@ function DirectoryEditorSheet({ kind, target, onClose, onComplete }: {
   const capabilities = entry?.capabilities ?? null;
 
   useEffect(() => {
+    if (closing) return;
     firstInputRef.current?.focus();
     const onKeyDown = (event: KeyboardEvent) => { if (event.key === "Escape") onClose(); };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [onClose]);
+  }, [closing, onClose]);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -139,8 +143,8 @@ function DirectoryEditorSheet({ kind, target, onClose, onComplete }: {
 
   return (
     <>
-      <div className="directory-sheet-backdrop" aria-hidden="true" onMouseDown={onClose} />
-      <aside className="directory-sheet-modal" role="dialog" aria-modal="true" aria-labelledby="directory-sheet-title">
+      <div className={`directory-sheet-backdrop${closing ? " is-closing" : ""}`} aria-hidden="true" onMouseDown={closing ? undefined : onClose} />
+      <aside className={`directory-sheet-modal${closing ? " is-closing" : ""}`} role="dialog" aria-modal="true" aria-labelledby="directory-sheet-title">
       <div className="directory-sheet-frame">
         <header className="directory-sheet-header">
           <div>
@@ -190,14 +194,36 @@ function DirectoryEditorSheet({ kind, target, onClose, onComplete }: {
 export function DirectoryManager({ kind, entries }: DirectoryManagerProps) {
   const router = useRouter();
   const [target, setTarget] = useState<EditorTarget | null>(null);
+  const [closing, setClosing] = useState(false);
+  const closeTimer = useRef<number | undefined>(undefined);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
   const singular = kind === "contacts" ? "contact" : "provider";
   const title = useMemo(() => kind === "contacts" ? "New contact" : "New provider", [kind]);
+
+  useEffect(() => () => window.clearTimeout(closeTimer.current), []);
+
+  const closeEditor = useCallback(() => {
+    if (!target || closing) return;
+    setClosing(true);
+    closeTimer.current = window.setTimeout(() => {
+      setTarget(null);
+      setClosing(false);
+      triggerRef.current?.focus();
+    }, DIRECTORY_SHEET_EXIT_MS);
+  }, [closing, target]);
+
+  function openEditor(nextTarget: EditorTarget, trigger: HTMLButtonElement) {
+    window.clearTimeout(closeTimer.current);
+    triggerRef.current = trigger;
+    setClosing(false);
+    setTarget(nextTarget);
+  }
 
   return (
     <section className="directory-manager" aria-label={`${kind} directory`}>
       <div className="directory-register-actions">
         <p>{kind === "contacts" ? "People who can be reached or authorize work." : "Service providers available to the operating team."}</p>
-        <button type="button" className="directory-new-record" onClick={() => setTarget({ mode: "create" })}>{title}</button>
+        <button type="button" className="directory-new-record" onClick={(event) => openEditor({ mode: "create" }, event.currentTarget)}>{title}</button>
       </div>
       {entries.length > 0 ? (
         <div className="operations-table-wrap">
@@ -210,13 +236,13 @@ export function DirectoryManager({ kind, entries }: DirectoryManagerProps) {
                 <td>{entry.email ?? <span className="directory-muted">Not recorded</span>}</td>
                 <td>{kind === "contacts" ? <span className={entry.authorized ? "directory-authorized" : "directory-muted"}>{entry.authorized ? "May authorize work" : "Contact only"}</span> : <ProviderCapabilities capabilities={entry.capabilities} />}</td>
                 <td><span className={`status-mark ${entry.active ? "status-booking-confirmed" : "status-failed"}`}>{entry.active ? "Active" : "Inactive"}</span></td>
-                <td><button type="button" className="directory-open-record" onClick={() => setTarget({ mode: "edit", entry })}>Open</button></td>
+                <td><button type="button" className="directory-open-record" onClick={(event) => openEditor({ mode: "edit", entry }, event.currentTarget)}>Open</button></td>
               </tr>
             ))}</tbody>
           </table>
         </div>
       ) : <p className="section-empty-copy">No {kind} match this view.</p>}
-      {target && <DirectoryEditorSheet kind={kind} target={target} onClose={() => setTarget(null)} onComplete={() => router.refresh()} />}
+      {target && <DirectoryEditorSheet closing={closing} kind={kind} target={target} onClose={closeEditor} onComplete={() => router.refresh()} />}
     </section>
   );
 }
