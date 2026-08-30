@@ -14,6 +14,10 @@ function eventKind(node: TraceNode): string {
   return node.sourceCall ? "Verified during call" : "Operation event";
 }
 
+function sentenceCase(value: string): string {
+  return value.length === 0 ? value : `${value[0].toLocaleUpperCase()}${value.slice(1)}`;
+}
+
 function NodeChanges({ node }: { node: TraceNode }) {
   if (node.changes.length === 0) return null;
   return (
@@ -102,7 +106,7 @@ function DecisionLedger({ nodes, arrivedId }: { nodes: TraceNode[]; arrivedId: s
             <span className={`decision-mark is-${node.kind}`} aria-hidden="true" />
             <div className="decision-entry">
               <span>{eventKind(node)}</span>
-              <strong>{node.title}</strong>
+              <strong>{sentenceCase(node.title)}</strong>
               {node.detail && <p>{node.detail}</p>}
               <NodeChanges node={node} />
               <EvidenceSource node={node} />

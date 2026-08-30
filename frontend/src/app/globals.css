@@ -233,9 +233,53 @@ button { cursor: pointer; }
 /* The heading establishes the view; the live note and register do not repeat its rule. */
 .dashboard-title-row + .operation-live-strip { border-bottom: 0; }
 .dispatch-spine > .ledger-section { border-top: 0; padding-top: 0; }
+.control-room .operations-control-bar { margin-bottom: 2rem; }
+.control-room .operations-table-wrap { padding-top: 1.25rem; }
 
 @media (max-width: 760px) { .trace-comparison-heading { align-items: flex-start; flex-direction: column; gap: .7rem; }.trace-comparison-heading > span { text-align: left; }.decision-ledger-utility { align-items: flex-start; flex-direction: column; gap: .55rem; }.decision-ledger { max-height: min(62vh, 32rem); }.decision-ledger > li { grid-template-columns: 6.7rem 1rem minmax(0, 1fr); }.evidence-changes > div { grid-template-columns: 1fr; gap: .12rem; } }
 @media (prefers-reduced-motion: reduce) { .is-new-evidence { animation: evidence-arrival-reduced 1.2s linear both; }.operation-row-arrived td { animation: none; }.directory-sheet-backdrop { animation: sheet-backdrop-in .12s linear both; }.directory-sheet-backdrop.is-closing { animation: sheet-backdrop-out .12s linear both; }.directory-sheet-modal { animation: sheet-reduced-enter .12s linear both; }.directory-sheet-modal.is-closing { animation: sheet-reduced-exit .12s linear both; } }
+
+/* Small actions and live handoff context keep the ledger readable during an interruption. */
+.dashboard-user button { background: var(--ink); border: 1px solid var(--ink); color: var(--paper); cursor: pointer; font: inherit; font-size: .68rem; padding: .58rem .75rem; text-decoration: none; transition: background .18s ease, border-color .18s ease; }
+.dashboard-user button:hover { background: var(--copper); border-color: var(--copper); }
+.dashboard-user button:focus-visible { outline: 2px solid var(--copper); outline-offset: 3px; }
+.handoff-requested-action { color: var(--paper); font-size: .82rem; font-weight: 800; line-height: 1.5; margin: 0; max-width: 64ch; }
+.handoff-requested-action + p { color: #c7d1d3; font-size: .82rem; line-height: 1.55; margin: .85rem 0 0; max-width: 59ch; }
+.escalation-screen .escalation-control-bar { gap: 1rem; grid-template-columns: minmax(0, 1fr) minmax(10rem, .25fr) auto; }
+.escalation-screen .operation-search { grid-template-columns: minmax(0, 1fr); }
+.escalation-screen .escalation-search-submit { align-self: end; background: var(--ink); border: 1px solid var(--ink); color: var(--paper); font: inherit; font-size: .66rem; font-weight: 800; padding: .57rem .7rem; }
+.escalation-screen .escalation-search-submit:hover { background: var(--copper); border-color: var(--copper); }
+.escalation-screen .escalation-ledger { border-top: 0; }
+.escalation-screen .escalation-ledger-row { grid-template-columns: minmax(0, 1fr); }
+.escalation-screen .escalation-ledger-row > div > p, .escalation-screen .escalation-handoff-note { max-width: none; }
+.escalation-screen .escalation-handoff-note { margin: .9rem 0 0 !important; padding-top: .7rem; }
+.escalation-screen .escalation-ledger-row:has(.escalation-handoff-note) { padding-bottom: .7rem; }
+.escalation-screen .escalation-ledger-row dl > div:nth-child(3), .escalation-screen .escalation-ledger-row dl > div:nth-child(4) { display: none; }
+.escalation-ledger-row > header .escalation-resolve-button { margin-left: 1rem; }
+.escalation-resolve-button, .resolution-modal-actions button { background: var(--ink); border: 1px solid var(--ink); color: var(--paper); font: inherit; font-size: .68rem; font-weight: 800; padding: .62rem .8rem; transition: background .18s ease, border-color .18s ease; }
+.escalation-resolve-button:hover, .resolution-modal-actions button:hover:not(:disabled) { background: var(--copper); border-color: var(--copper); }
+.escalation-resolve-button:focus-visible, .resolution-modal button:focus-visible { outline: 2px solid var(--copper); outline-offset: 3px; }
+.resolution-modal-backdrop { animation: resolution-backdrop-in .18s ease-out both; background: color-mix(in srgb, var(--ink) 52%, transparent); inset: 0; position: fixed; z-index: 90; }
+.resolution-modal-backdrop.is-closing { animation: resolution-backdrop-out .18s ease-in both; pointer-events: none; }
+.resolution-modal { animation: resolution-modal-enter .26s cubic-bezier(.16, 1, .3, 1) both; background: var(--paper); border: 1px solid var(--ink); color: var(--ink); left: 50%; max-height: calc(100dvh - 2rem); overflow-y: auto; padding: clamp(1.4rem, 4vw, 2.5rem); position: fixed; top: 50%; transform: translate(-50%, -50%); width: min(36rem, calc(100vw - 2rem)); z-index: 91; }
+.resolution-modal.is-closing { animation: resolution-modal-exit .18s cubic-bezier(.7, 0, .84, 0) both; pointer-events: none; }
+.resolution-modal header { align-items: start; border-bottom: 1px solid var(--ink); display: flex; gap: 1rem; justify-content: space-between; padding-bottom: 1rem; }
+.resolution-modal header p { color: var(--copper); font-size: .66rem; font-weight: 800; letter-spacing: .075em; margin: 0 0 .65rem; text-transform: uppercase; }
+.resolution-modal h2 { font-family: "Source Serif 4 Variable", Georgia, serif; font-size: clamp(1.7rem, 2.5vw, 2.4rem); font-weight: 560; letter-spacing: -.03em; line-height: .98; margin: 0; }
+.resolution-modal-close { background: transparent; border: 0; color: var(--ink-soft); font: inherit; font-size: .66rem; font-weight: 800; padding: .25rem 0; text-decoration: underline; text-decoration-color: var(--copper); text-underline-offset: .3em; }
+.resolution-modal-intro { color: var(--ink-soft); font-size: .82rem; line-height: 1.6; margin: 1.35rem 0 1.6rem; max-width: 52ch; }
+.resolution-modal-form { gap: 1.1rem; }
+.resolution-modal-actions { align-items: center; display: flex; flex-wrap: wrap; gap: .8rem; margin-top: .3rem; }
+.handoff-minimized { animation: handoff-minimized-enter .24s cubic-bezier(.16, 1, .3, 1) both; }
+.handoff-minimized.is-closing { animation: handoff-minimized-exit .18s cubic-bezier(.7, 0, .84, 0) both; pointer-events: none; }
+@keyframes resolution-backdrop-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes resolution-backdrop-out { from { opacity: 1; } to { opacity: 0; } }
+@keyframes resolution-modal-enter { from { opacity: 0; transform: translate(-50%, calc(-50% + 1rem)); } to { opacity: 1; transform: translate(-50%, -50%); } }
+@keyframes resolution-modal-exit { from { opacity: 1; transform: translate(-50%, -50%); } to { opacity: 0; transform: translate(-50%, calc(-50% + .75rem)); } }
+@keyframes handoff-minimized-enter { from { opacity: 0; transform: translateY(1rem); } to { opacity: 1; transform: translateY(0); } }
+@keyframes handoff-minimized-exit { from { opacity: 1; transform: translateY(0); } to { opacity: 0; transform: translateY(1rem); } }
+@media (max-width: 760px) { .escalation-screen .escalation-control-bar { grid-template-columns: minmax(0, 1fr) auto; }.escalation-screen .operation-search { grid-column: 1 / -1; }.escalation-ledger-row > header .escalation-resolve-button { margin-left: 0; }.resolution-modal { max-height: calc(100dvh - 1rem); width: calc(100vw - 1rem); } }
+@media (prefers-reduced-motion: reduce) { .resolution-modal-backdrop, .resolution-modal-backdrop.is-closing, .resolution-modal, .resolution-modal.is-closing, .handoff-minimized, .handoff-minimized.is-closing { animation-duration: .01ms; } }
 @keyframes evidence-arrival-reduced { 0% { background: color-mix(in srgb, var(--copper) 14%, transparent); } 100% { background: transparent; } }
 @keyframes sheet-reduced-enter { from { opacity: 0; } to { opacity: 1; } }
 @keyframes sheet-reduced-exit { from { opacity: 1; } to { opacity: 0; } }

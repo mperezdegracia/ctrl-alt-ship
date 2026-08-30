@@ -1,10 +1,35 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useState, useSyncExternalStore } from "react";
 
 import { formatDateTime } from "@/lib/dashboard-api";
 import type { DashboardHandoff } from "@/lib/dashboard-api";
+
+const minimizedHandoffStorageKey = "tango:minimized-handoff";
+const minimizedHandoffChangedEvent = "tango:minimized-handoff-changed";
+const MINIMIZED_HANDOFF_EXIT_MS = 180;
+
+function subscribeToMinimizedHandoff(onStoreChange: () => void) {
+  window.addEventListener("storage", onStoreChange);
+  window.addEventListener(minimizedHandoffChangedEvent, onStoreChange);
+  return () => {
+    window.removeEventListener("storage", onStoreChange);
+    window.removeEventListener(minimizedHandoffChangedEvent, onStoreChange);
+  };
+}
+
+function minimizedHandoffSnapshot(): string | null {
+  return window.localStorage.getItem(minimizedHandoffStorageKey);
+}
+
+function serverMinimizedHandoffSnapshot(): null {
+  return null;
+}
+
+function markMinimizedHandoffChanged() {
+  window.dispatchEvent(new Event(minimizedHandoffChangedEvent));
+}
 
 function handoffState(handoff: DashboardHandoff): { label: string; detail: string } {
   switch (handoff.handoffStatus) {
@@ -20,10 +45,28 @@ function handoffState(handoff: DashboardHandoff): { label: string; detail: strin
 }
 
 export function HandoffOverlay({ handoffs }: { handoffs: DashboardHandoff[] }) {
-  const [minimizedHandoffId, setMinimizedHandoffId] = useState<string | null>(null);
   const active = handoffs[0];
+  const hasHydrated = useSyncExternalStore(() => () => {}, () => true, () => false);
+  const minimizedHandoffId = useSyncExternalStore(subscribeToMinimizedHandoff, minimizedHandoffSnapshot, serverMinimizedHandoffSnapshot);
+  const [restoring, setRestoring] = useState(false);
 
-  if (!active) return null;
+  function minimize() {
+    if (!active) return;
+    window.localStorage.setItem(minimizedHandoffStorageKey, active.id);
+    markMinimizedHandoffChanged();
+  }
+
+  function restore() {
+    if (restoring) return;
+    setRestoring(true);
+    window.setTimeout(() => {
+      window.localStorage.removeItem(minimizedHandoffStorageKey);
+      markMinimizedHandoffChanged();
+      setRestoring(false);
+    }, MINIMIZED_HANDOFF_EXIT_MS);
+  }
+
+  if (!active || !hasHydrated) return null;
   const minimized = minimizedHandoffId === active.id;
 
   const pending = handoffs.length - 1;
@@ -31,7 +74,7 @@ export function HandoffOverlay({ handoffs }: { handoffs: DashboardHandoff[] }) {
   const queueCopy = pending > 0 ? `${pending} later transfer${pending === 1 ? "" : "s"} queued` : "No other live transfers";
   if (minimized) {
     return (
-      <button className="handoff-minimized" type="button" onClick={() => setMinimizedHandoffId(null)} aria-label="Restore live handoff context">
+      <button className={`handoff-minimized${restoring ? " is-closing" : ""}`} type="button" onClick={restore} aria-label="Restore live handoff context">
         <span><i aria-hidden="true" />Human review</span>
         <strong>{active.operationReference}</strong>
         <em>{pending > 0 ? `+${pending} queued` : state.label}</em>
@@ -40,7 +83,7 @@ export function HandoffOverlay({ handoffs }: { handoffs: DashboardHandoff[] }) {
   }
 
   return (
-    <section className={`handoff-overlay is-${active.handoffStatus}`} role="region" aria-live="assertive" aria-labelledby="handoff-title" aria-describedby="handoff-detail">
+    <section className={`handoff-overlay is-${active.handoffStatus}`} role="region" aria-live="assertive" aria-label={state.label} aria-describedby="handoff-detail">
       <div className="handoff-overlay-bar">
         <span><i aria-hidden="true" />{state.label}</span>
         <small>{queueCopy}</small>
@@ -48,7 +91,7 @@ export function HandoffOverlay({ handoffs }: { handoffs: DashboardHandoff[] }) {
       <div className="handoff-overlay-content">
         <div>
           <p>{active.operationReference} · {active.clientName}</p>
-          <h2 id="handoff-title">{active.requestedAction}</h2>
+          <p className="handoff-requested-action">{active.requestedAction}</p>
           <p id="handoff-detail">{active.summary}</p>
           <p className="handoff-state-detail">{state.detail}</p>
         </div>
@@ -59,8 +102,8 @@ export function HandoffOverlay({ handoffs }: { handoffs: DashboardHandoff[] }) {
         </dl>
       </div>
       <div className="handoff-overlay-actions">
-        <button type="button" onClick={() => setMinimizedHandoffId(active.id)}>Minimize</button>
-        <Link href={`/dashboard/operations/${active.operationReference}`} onClick={() => setMinimizedHandoffId(active.id)}>Open operation</Link>
+        <button type="button" onClick={minimize}>Minimize</button>
+        <Link href={`/dashboard/operations/${active.operationReference}`} onClick={minimize}>Open operation</Link>
       </div>
     </section>
   );

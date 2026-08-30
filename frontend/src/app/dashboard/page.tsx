@@ -39,7 +39,7 @@ export default async function ControlRoomPage({ searchParams }: { searchParams: 
     <main className="dashboard-shell">
       <DashboardHeader email={email} activeView="control-room" />
       <HandoffOverlay handoffs={handoffs} />
-      <section className="dashboard-main dispatch-spine">
+      <section className="dashboard-main dispatch-spine control-room">
         <header className="dashboard-title-row">
           <div><h1>Control room</h1><p>Live human reviews and the records that need operator attention.</p></div>
           <Link className="refresh-link" href={clearHref}>Refresh record</Link>
