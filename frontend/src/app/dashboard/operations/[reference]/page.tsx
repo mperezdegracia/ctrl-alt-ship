@@ -37,7 +37,7 @@ export default async function OperationPage({ params }: { params: Promise<{ refe
 
   return (
     <main className="dashboard-shell">
-      <DashboardHeader email={email} />
+      <DashboardHeader email={email} activeView="operations" />
       <article className="operation-detail">
         <Link href="/dashboard" className="back-to-operations">Back to active operations</Link>
         <header className="operation-detail-header">
