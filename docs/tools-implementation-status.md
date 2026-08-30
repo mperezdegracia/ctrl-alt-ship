@@ -89,6 +89,10 @@ reemplaza el gate de evidencia de audio y el loop manual de tools.
 
 - Después de crear o seleccionar una operación aparecen update_operation y
   confirm_mandate, incluso cuando faltan campos. SQL no confirma pedidos incompletos.
+- En update con mandato vigente, confirm_mandate acepta solo términos comerciales
+  cambiados (o {}). SQL hereda los demás y el prompt confirma únicamente diferencias.
+  Requiere 20260830030000_incremental_mandate_confirmation.sql; el primer mandato
+  conserva sus requisitos completos. No se probó esa migración en PostgreSQL.
 - El agente resume operación y condiciones y espera el sí explícito. Sin
   ConfirmationEvidenceTracker ni needsApproval; interpretar ese sí depende del modelo.
 - Se conservan autorización, revisión de operación, snapshots/versiones inmutables,

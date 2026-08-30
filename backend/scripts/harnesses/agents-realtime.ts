@@ -67,7 +67,7 @@ async function main(): Promise<void> {
         state.operation!.missing_fields = [];
       }
       if (name === "confirm_mandate") {
-        assert.deepEqual(args, terms);
+        assert.deepEqual(args, state.intent === "update" && state.currentMandate ? {} : terms);
         if (state.operation!.missing_fields.length) throw new ToolError("invalid_transition", "Complete missing operation fields first.");
         assert.deepEqual(context, { expected_operation_revision: "revision-2" });
         state.profile = "terminal";
@@ -179,6 +179,23 @@ async function main(): Promise<void> {
   assert.ok(logs.some((entry) => entry.event === "tool.profile_refresh_failed"));
   failingCall.session.close();
   failRefresh = false;
+  state = { ...state, intent: "update", profile: "client_confirm", operationRevision: "revision-2",
+    currentMandate: { ...terms, version: 1 }, operationChanges: { delivery_location: { before: "Pilar", after: "Escobar" } } };
+  state.operation!.missing_fields = [];
+  const incrementalTools = new CallToolFactory(reads, repository).create(scope);
+  await incrementalTools.refresh();
+  const incrementalSocket = new FakeSocket();
+  const incrementalCall = new AgentsCallSession(decision, incrementalTools, logger, {}, {
+    skipOpenEventListeners: true, createWebSocket: async () => incrementalSocket as unknown as WebSocket,
+  });
+  const incrementalConfig = await incrementalCall.initialConfiguration();
+  assert.match(incrementalConfig.instructions!, /Do not ask the caller to repeat or reconfirm unchanged/);
+  await incrementalCall.connect("rtc-test", "fixture-key");
+  invoke(incrementalSocket, "confirm_mandate", {}, "incremental-confirm");
+  await until(() => incrementalSocket.output("incremental-confirm"));
+  assert.equal(JSON.parse(incrementalSocket.output("incremental-confirm").output).status, "sourcing");
+  assert.equal(commands.at(-1)!.id, "incremental-confirm");
+  incrementalCall.session.close();
   console.log("Agents Realtime harness passed: SIP, SDK tools/results/history/replay, dynamic mandate visibility, no approvals/evidence, terminal state and escalation. Mocked repository/socket; no PostgreSQL or live calls.");
 }
 

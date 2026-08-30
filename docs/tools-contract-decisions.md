@@ -8,6 +8,13 @@
 sin tracker de audio ni `needsApproval`, y saludo inicial en inglés para ambas personas.
 Ver [decisión, límites y despliegue](realtime-confirmation-review.md).
 
+**Confirmación de modificaciones:** con un mandato previo se confirman solo las
+diferencias; condiciones no modificadas se heredan en SQL, sin pedirlas ni leerlas
+otra vez. confirm_mandate acepta un parche comercial ({} si nada comercial cambia).
+El primer mandato sigue requiriendo todos los términos y resumen completo.
+La nueva versión sigue siendo completa e inmutable y requiere renovar la aceptación
+del transportista bajo las condiciones cambiadas.
+
 ## Seguridad y contexto
 
 - El servidor autentica la contraparte por caller ID. El modelo decide la

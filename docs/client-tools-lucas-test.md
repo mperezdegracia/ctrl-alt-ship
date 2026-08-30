@@ -7,7 +7,8 @@ no la fixture compartida `OP-900001`. No volver a ejecutar el seed para esta pru
 
 1. Esperar el deploy del backend y comprobar que Supabase haya aplicado
    `20260830010000_client_operation_tools.sql` y
-   `20260830020000_conversational_mandate_confirmation.sql` por el flujo de migraciones del proyecto.
+   `20260830020000_conversational_mandate_confirmation.sql` y
+   `20260830030000_incremental_mandate_confirmation.sql` por el flujo de migraciones del proyecto.
    Un push no demuestra que el deploy o la migración hayan terminado correctamente.
 2. Recién después, configurar `CLIENT_OPERATION_TOOLS_ENABLED=true` en el backend
    que recibe las llamadas (Render), y reiniciarlo/redeployarlo. El default sigue
@@ -66,11 +67,18 @@ transportista ni se crea un booking por esta prueba.
    marcar `mandate_confirmation_required: true`.
 3. Tango debe explicar que los nuevos términos requieren otra confirmación y que
    la aceptación anterior de un transportista no autorizaría este cambio.
-4. Volver a dar precio máximo, moneda, ventana y plazo; dejar que resuma todos
-   los datos y confirmar en el turno siguiente.
+4. Decir «Solo cambiá el destino, mantené lo demás». No volver a dar precio,
+   moneda, ventana ni plazo. Debe preguntar algo como «Cambio el destino de Pilar
+   a Escobar; el resto queda igual. ¿Confirmás?», sin recitar los valores anteriores.
+   Confirmar en el turno siguiente. confirm_mandate debe recibir {}.
 5. Esperado: misma operación/UUID/referencia, mandato v2 que reemplaza v1,
    `mandate_confirmation_required: false`, `status: sourcing` y perfil terminal.
    v1 conserva el destino Pilar; v2 captura Escobar. No se sobrescribe v1.
+   Precio, moneda, lista de ventanas y plazo deben ser idénticos a v1.
+6. En una llamada adicional, modificar una ubicación y pedir además cambiar
+   únicamente el máximo. Debe confirmar esas dos diferencias y enviar solo
+   price_cap en confirm_mandate; el resto se conserva desde el mandato vigente.
+   Al completar un borrador sin mandato, en cambio, sí debe pedir todos los términos.
 
 ## Llamada 3 y 4 — borrador sin confirmar y recuperación
 

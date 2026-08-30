@@ -32,11 +32,34 @@ el estado, pero todos los perfiles con una operación vinculada exponen el manda
 No se agrega una tool de selección: la primera edición selecciona la OP existente.
 No se implementa cancelar en este cambio ni se exponen tools futuras sin handler.
 
-El agente completa los campos físicos con update_operation, recoge precio máximo,
-moneda, ventanas con zona horaria y pago mínimo, lee el resumen completo y espera
-un sí explícito en el turno siguiente. Recién entonces llama confirm_mandate.
-Una corrección requiere editar y volver a resumir/confirmar. No debe guardar términos
-comerciales en operational_constraints o cargo_notes ni inventar datos faltantes.
+Para un primer mandato, el agente completa los campos físicos con update_operation,
+recoge precio máximo, moneda, ventanas con zona horaria y pago mínimo, lee el resumen
+completo y espera un sí explícito en el turno siguiente. Recién entonces confirma.
+No debe guardar términos comerciales en operational_constraints o cargo_notes.
+
+### Modificar: confirmar solo las diferencias
+
+Si el camino es update y ya existe un mandato, no volver a pedir ni recitar los
+términos que no cambian. Ejemplo: “Cambio el destino de Pilar a Escobar; el resto
+queda igual. ¿Confirmás?”. El sí autoriza el cambio, sin repetir precio, pago y horario.
+
+El estado del servidor incluye currentMandate (términos/version, sin IDs) y
+operationChanges (valores antes/después comparados con el snapshot vigente).
+Ese contexto es exclusivo del cliente. Se resumen todas las diferencias reales;
+si aparece alguna no solicitada, se aclara antes de confirmar. Una corrección
+requiere una nueva confirmación de las diferencias, no recitar todo el pedido.
+
+confirm_mandate recibe solo términos comerciales modificados; {} conserva todos.
+SQL mezcla el parche con los términos del mandato vigente bajo el lock de operación,
+valida el resultado y crea la nueva versión completa. No se rellenan omisiones
+desde memoria del modelo. Un action_windows suministrado reemplaza la lista entera;
+null, listas vacías y campos desconocidos no significan “mantener” y se rechazan.
+El recibo idempotente guarda el parche original, no los valores heredados.
+
+Si no existe un mandato previo, incluso en update, siguen siendo obligatorios todos
+los términos y el resumen completo. SQL mantiene el guard de estado y rechaza una
+confirmación si no hay reconfirmación pendiente. El cambio operativo sigue exigiendo nueva aceptación del
+transportista: solo se acorta la confirmación del cliente, no esa regla de negocio.
 
 ## Lo que valida el backend
 
@@ -70,6 +93,12 @@ No usar el nuevo backend sobre la función vieja: respondería confirmation_not_
 La migración no se ejecutó contra Supabase desde esta tarea. No se hizo push ni deploy.
 El último pull integró origin/main hasta fcfe5c9, incluidos los cambios de dashboard
 y escalamiento. Los cambios locales de esta migración se conservaron sin conflictos.
+
+Actualización posterior: para confirmación por diferencias, aplicar también
+20260830030000_incremental_mandate_confirmation.sql antes del backend nuevo.
+Extiende el estado de cliente y permite parches comerciales en update con mandato.
+No crea tablas ni cambia mandatos históricos. Esta migración adicional no se aplicó
+ni se probó contra PostgreSQL desde la tarea; su validación local es estática y con RPC simulado.
 
 ## Compatibilidad SDK y observabilidad
 

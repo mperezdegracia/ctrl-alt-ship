@@ -50,7 +50,7 @@ export class ConfirmMandateTool extends RealtimeTool {
   readonly definition = {
     type: "function" as const,
     name: "confirm_mandate",
-    description: "Creates an immutable mandate version for the selected operation only after all required details are complete and the client explicitly confirms the full verbal summary. The server validates the operation and builds its snapshot.",
+    description: "Creates an immutable mandate after verbal confirmation. First mandate: provide all commercial terms and confirm the full summary. Updating an existing mandate: confirm only the changes and send only changed commercial terms (or {}); the server inherits omitted terms from the current mandate and builds the full snapshot.",
     parameters: {
       type: "object", properties: {
         price_cap: { type: "number", exclusiveMinimum: 0, maximum: 999999999999.99, multipleOf: 0.01 },
@@ -61,7 +61,7 @@ export class ConfirmMandateTool extends RealtimeTool {
           }, required: ["start_at", "end_at"], additionalProperties: false,
         } },
         minimum_payment_term_days: { type: "integer", minimum: 0, maximum: 2147483647 },
-      }, required: ["price_cap", "currency", "action_windows", "minimum_payment_term_days"], additionalProperties: false,
+      }, required: [], additionalProperties: false,
     } as JsonSchema,
   };
 

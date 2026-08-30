@@ -80,6 +80,13 @@ async function main(): Promise<void> {
   assert.match(migration, /idempotency_conflict/);
   assert.match(migration, /client_tools_completed_at/);
   assert.match(migration, /GRANT EXECUTE ON FUNCTION public.execute_client_operation_tool.*TO service_role/);
+  const incrementalMigration = readFileSync(resolve(__dirname, "../../../supabase/migrations/20260830030000_incremental_mandate_confirmation.sql"), "utf8");
+  assert.match(incrementalMigration, /IF c.operation_intent = 'update' THEN/);
+  assert.match(incrementalMigration, /\) \|\| p_arguments;/);
+  assert.match(incrementalMigration, /'action_windows', previous_mandate.action_windows/);
+  assert.match(incrementalMigration, /mandate_terms->>'price_cap'/);
+  assert.match(incrementalMigration, /VALUES \(c.id, p_tool_call_id, p_tool_name, p_arguments, result\)/);
+  assert.match(incrementalMigration, /'operationChanges', changed_fields/);
   for (const definition of session.definitions) {
     const contract = contracts.tools.find((tool: { name: string }) => tool.name === definition.name);
     assert.deepEqual(definition, { type: contract.type, name: contract.name, description: contract.description, parameters: contract.parameters });
@@ -186,6 +193,34 @@ async function main(): Promise<void> {
   update = factory.createFlowUpdate(decision, session.definitions, session.flowState) as typeof update;
   assert.match(update.session.instructions, /# UPDATE FLOW/);
   assert.doesNotMatch(update.session.instructions, /# CREATE FLOW|# CANCEL FLOW/);
+  assert.match(update.session.instructions, /Read back the COMPLETE/, "Update without a prior mandate still requires full terms and summary");
+  await assert.rejects(session.execute("confirm_mandate", {}, { toolCallId: "no-prior-mandate" }), /first mandate/);
+
+  rpc.state.currentMandate = { ...terms, version: 1 };
+  rpc.state.operationChanges = { delivery_location: { before: "Pilar", after: "Escobar" } };
+  await session.refresh();
+  update = factory.createFlowUpdate(decision, session.definitions, session.flowState) as typeof update;
+  assert.match(update.session.instructions, /# MANDATE UPDATE CONFIRMATION/);
+  assert.match(update.session.instructions, /Do not ask the caller to repeat or reconfirm unchanged/);
+  assert.match(update.session.instructions, /call it with \{\}/);
+  assert.match(update.session.instructions, /Pilar.*Escobar/);
+  assert.doesNotMatch(update.session.instructions, /Read back the COMPLETE|repeat the complete summary/);
+  rpc.results.push({ ...confirmed, mandate_version: 2 });
+  assert.equal((await session.execute("confirm_mandate", {}, { toolCallId: "only-destination" }) as { mandate_version: number }).mandate_version, 2);
+  assert.deepEqual(rpc.requests.at(-1)!.args.p_arguments, {}, "SQL must inherit unchanged terms, not values reconstructed by the model/service");
+  assert.deepEqual(rpc.requests.at(-1)!.args.p_context, { expected_operation_revision: rpc.state.operationRevision });
+  rpc.results.push({ ...confirmed, mandate_version: 2 });
+  await session.execute("confirm_mandate", { price_cap: 900000 }, { toolCallId: "changed-cap" });
+  assert.deepEqual(rpc.requests.at(-1)!.args.p_arguments, { price_cap: 900000 });
+  const requestsBeforeBadPatch = rpc.requests.length;
+  for (const patch of [{ price_cap: null }, { minimum_payment_term_days: null }, { action_windows: [] }, { currency: null }, { operation_id: "forged" }]) {
+    await assert.rejects(session.execute("confirm_mandate", patch, { toolCallId: "bad-patch" }), /first mandate/);
+  }
+  assert.equal(rpc.requests.length, requestsBeforeBadPatch);
+  const providerDecision: AcceptedRoutingDecision = { ...decision, identity: {
+    persona: "provider", providerId: "provider-1", name: "Provider", phone: "+541100000001", email: null, active: true,
+  } };
+  assert.doesNotMatch(factory.create(providerDecision, [], rpc.state).instructions, /Current mandate commercial terms|950000.25|minimum_payment_term_days/);
   rpc.state = { ...rpc.state, profile: "terminal" };
   await session.refresh();
   assert.deepEqual(names(), []);

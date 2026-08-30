@@ -14,8 +14,16 @@ export type OperationFields = {
 export type ClientToolName = "create_operation" | "update_operation" | "confirm_mandate";
 export type ClientCommandContext = { expected_operation_revision: string | null };
 export type ClientProfile = "client_entry" | "client_create" | "client_update" | "client_confirm" | "terminal";
+export type MandateTerms = {
+  price_cap: number;
+  currency: string;
+  action_windows: Array<{ start_at: string; end_at: string }>;
+  minimum_payment_term_days: number;
+};
 export type ClientFlowState = {
   operationRevision?: string;
+  currentMandate?: (MandateTerms & { version: number }) | null;
+  operationChanges?: Partial<Record<keyof OperationFields, { before: unknown; after: unknown }>>;
   profile: ClientProfile;
   intent: "undecided" | "create" | "update" | "cancel";
   operation: ({ [K in keyof Required<OperationFields>]: Required<OperationFields>[K] | null } & {
@@ -77,15 +85,17 @@ export class ClientOperationService {
     this.assertToolCallId(toolCallId);
     this.assertObject(args);
     const keys = ["price_cap", "currency", "action_windows", "minimum_payment_term_days"];
-    if (Object.keys(args).length !== keys.length || Object.keys(args).some((key) => !keys.includes(key))) this.invalidMandate();
+    const canInherit = this.state?.intent === "update" && Boolean(this.state.currentMandate);
+    if ((!canInherit && Object.keys(args).length !== keys.length)
+      || Object.keys(args).some((key) => !keys.includes(key))) this.invalidMandate();
     const price = args.price_cap;
-    if (typeof price !== "number" || !Number.isFinite(price) || price <= 0 || price > 999999999999.99
-      || Number(price.toFixed(2)) !== price) this.invalidMandate();
-    if (typeof args.currency !== "string" || !/^[A-Z]{3}$/.test(args.currency)) this.invalidMandate();
+    if ("price_cap" in args && (typeof price !== "number" || !Number.isFinite(price) || price <= 0 || price > 999999999999.99
+      || Number(price.toFixed(2)) !== price)) this.invalidMandate();
+    if ("currency" in args && (typeof args.currency !== "string" || !/^[A-Z]{3}$/.test(args.currency))) this.invalidMandate();
     const days = args.minimum_payment_term_days;
-    if (typeof days !== "number" || !Number.isInteger(days) || days < 0 || days > 2147483647) this.invalidMandate();
-    if (!Array.isArray(args.action_windows) || args.action_windows.length === 0) this.invalidMandate();
-    for (const window of args.action_windows) {
+    if ("minimum_payment_term_days" in args && (typeof days !== "number" || !Number.isInteger(days) || days < 0 || days > 2147483647)) this.invalidMandate();
+    if ("action_windows" in args && (!Array.isArray(args.action_windows) || args.action_windows.length === 0)) this.invalidMandate();
+    for (const window of (args.action_windows ?? []) as unknown[]) {
       this.assertObject(window);
       if (Object.keys(window).length !== 2 || !this.isTimestamp(window.start_at) || !this.isTimestamp(window.end_at)
         || Date.parse(window.start_at) >= Date.parse(window.end_at)) this.invalidMandate();
@@ -104,7 +114,7 @@ export class ClientOperationService {
   }
 
   private invalidMandate(): never {
-    throw new ToolError("invalid_arguments", "Provide a positive price cap with at most two decimals, currency, explicit time-zone windows and nonnegative payment days. Do not provide IDs or evidence.");
+    throw new ToolError("invalid_arguments", "For a first mandate provide all commercial terms. For an update with an existing mandate, omit unchanged terms. Supplied terms must have a positive price cap (two decimals), currency, explicit time-zone windows and nonnegative payment days. Do not provide IDs or evidence.");
   }
 
   private validateFields(value: unknown, allowNullNotes: boolean): asserts value is Record<string, unknown> {
