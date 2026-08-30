@@ -11,7 +11,7 @@ export type OperationFields = {
   cargo_notes?: string | null;
 };
 
-export type ClientToolName = "create_operation" | "update_operation" | "confirm_mandate";
+export type ClientToolName = "create_operation" | "update_operation" | "confirm_mandate" | "cancel_operation";
 export type ClientCommandContext = { expected_operation_revision: string | null };
 export type ClientProfile = "client_entry" | "client_create" | "client_update" | "client_confirm" | "terminal";
 export type MandateTerms = {
@@ -40,7 +40,8 @@ export type ClientMutationResult = {
   missing_fields: string[];
   next_profile: "client_create" | "client_update" | "client_confirm";
   mandate_confirmation_required?: boolean;
-} | { operation_reference: string; mandate_version: number; status: "sourcing"; next_profile: "terminal" };
+} | { operation_reference: string; mandate_version: number; status: "sourcing"; next_profile: "terminal" }
+  | { operation_reference: string; status: "cancelled"; provider_email_queued: false; next_profile: "terminal" };
 
 export interface ClientOperationRepository {
   getState(scope: ToolCallScope): Promise<ClientFlowState>;
@@ -78,6 +79,19 @@ export class ClientOperationService {
     this.validateFields(args.changes, true);
     if (Object.keys(args.changes).length === 0) this.invalid();
     return this.repository.execute(this.scope, "update_operation", toolCallId, args);
+  }
+
+  async cancel(args: unknown, toolCallId: string): Promise<ClientMutationResult> {
+    this.assertClient();
+    this.assertToolCallId(toolCallId);
+    this.assertObject(args);
+    if (Object.keys(args).length !== 2
+      || typeof args.operation_reference !== "string" || !/^OP-[0-9]{6,}$/.test(args.operation_reference)
+      || typeof args.reason !== "string" || args.reason.trim() === "") {
+      throw new ToolError("invalid_arguments", "Provide the exact operation_reference and a nonempty cancellation reason. No IDs or notification arguments are accepted.");
+    }
+    // Intent, ownership, terminal state and durable replay are enforced in SQL.
+    return this.repository.execute(this.scope, "cancel_operation", toolCallId, args);
   }
 
   async confirm(args: unknown, toolCallId: string): Promise<ClientMutationResult> {

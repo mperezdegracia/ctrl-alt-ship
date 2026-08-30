@@ -43,6 +43,16 @@ Si el camino es update y ya existe un mandato, no volver a pedir ni recitar los
 términos que no cambian. Ejemplo: “Cambio el destino de Pilar a Escobar; el resto
 queda igual. ¿Confirmás?”. El sí autoriza el cambio, sin repetir precio, pago y horario.
 
+Una sola confirmación cubre el conjunto de cambios del envío y del mandato.
+Si se cambian destino, máximo y pago, se resumen juntos y ese mismo sí debe
+disparar confirm_mandate con todos los términos comerciales cambiados, sin una
+segunda pregunta para el mandato. Los datos físicos ya se guardaron mediante
+update_operation; no se envían como argumentos del mandato. Esto es una única
+confirmación conversacional, no una transacción conjunta de ambas tools.
+El agente no da por finalizada la modificación hasta recibir éxito y la nueva
+mandate_version. Si confirmar falla, explica que puede haber datos operativos
+guardados pero que el nuevo mandato aún no está confirmado.
+
 El estado del servidor incluye currentMandate (términos/version, sin IDs) y
 operationChanges (valores antes/después comparados con el snapshot vigente).
 Ese contexto es exclusivo del cliente. Se resumen todas las diferencias reales;

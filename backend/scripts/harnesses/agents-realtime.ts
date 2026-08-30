@@ -101,7 +101,7 @@ async function main(): Promise<void> {
   assert.equal(initial.audio?.output?.voice, "cedar");
   assert.equal(initial.parallel_tool_calls, false);
   assert.deepEqual(initial.reasoning, { effort: "low" });
-  assert.deepEqual(initial.tools?.map((tool) => "name" in tool ? tool.name : "mcp"), ["list_open_operations", "create_operation", "update_operation"]);
+  assert.deepEqual(initial.tools?.map((tool) => "name" in tool ? tool.name : "mcp"), ["list_open_operations", "create_operation", "update_operation", "cancel_operation"]);
   const createDefinition = initial.tools?.find((tool) => "name" in tool && tool.name === "create_operation");
   assert.ok(createDefinition && "parameters" in createDefinition);
   assert.deepEqual(createDefinition.parameters, toolSession.definitions.find((tool) => tool.name === "create_operation")?.parameters);
@@ -196,7 +196,49 @@ async function main(): Promise<void> {
   assert.equal(JSON.parse(incrementalSocket.output("incremental-confirm").output).status, "sourcing");
   assert.equal(commands.at(-1)!.id, "incremental-confirm");
   incrementalCall.session.close();
-  console.log("Agents Realtime harness passed: SIP, SDK tools/results/history/replay, dynamic mandate visibility, no approvals/evidence, terminal state and escalation. Mocked repository/socket; no PostgreSQL or live calls.");
+  // Exercise the real SDK cancellation wrapper and removal of ALL remote tools
+  // before the success result is delivered. There is no notification adapter.
+  let cancellationCount = 0;
+  const cancelledResult = { operation_reference: "OP-000123", status: "cancelled" as const,
+    provider_email_queued: false as const, next_profile: "terminal" as const };
+  state = { profile: "client_entry", intent: "undecided", operation: null };
+  const cancellationRepository: ClientOperationRepository = {
+    getState: async () => structuredClone(state),
+    execute: async (trusted, name, id, args) => {
+      assert.deepEqual(trusted, scope);
+      assert.equal(name, "cancel_operation");
+      assert.equal(id, "cancel-sdk");
+      assert.deepEqual(args, { operation_reference: "OP-000123", reason: "No longer needed" });
+      cancellationCount++;
+      state = { profile: "terminal", intent: "cancel", operation: {
+        operation_reference: "OP-000123", status: "cancelled", container_type: "40_dry",
+        gross_weight_kg: null, pickup_location: null, delivery_location: null, empty_return_depot: null,
+        cargo_notes: null, operational_constraints: [], missing_fields: [], mandate_confirmation_required: false,
+      } };
+      return cancelledResult;
+    },
+  };
+  const cancellationTools = new CallToolFactory(reads, cancellationRepository).create(scope);
+  await cancellationTools.refresh();
+  const cancellationSocket = new FakeSocket();
+  const cancellationCall = new AgentsCallSession(decision, cancellationTools, logger, {}, {
+    skipOpenEventListeners: true, createWebSocket: async () => cancellationSocket as unknown as WebSocket,
+  });
+  await cancellationCall.connect("rtc-test", "fixture-key");
+  const cancellationEvent = invoke(cancellationSocket, "cancel_operation",
+    { operation_reference: "OP-000123", reason: "No longer needed" }, "cancel-sdk", "r-cancel-sdk", false);
+  await until(() => cancellationSocket.output("cancel-sdk"));
+  assert.deepEqual(JSON.parse(cancellationSocket.output("cancel-sdk").output), cancelledResult);
+  const cancellationUpdate = cancellationSocket.sent.filter((event) => event.type === "session.update" && "tools" in event.session).at(-1)!;
+  assert.deepEqual(cancellationUpdate.session.tools, []);
+  assert.match(cancellationUpdate.session.instructions, /carrier has not been notified/);
+  assert.ok(cancellationSocket.sent.indexOf(cancellationUpdate)
+    < cancellationSocket.sent.findIndex((event) => event.item?.call_id === "cancel-sdk"));
+  cancellationSocket.receive(cancellationEvent);
+  await until(() => cancellationSocket.sent.filter((event) => event.item?.call_id === "cancel-sdk").length === 2);
+  assert.equal(cancellationCount, 1, "SDK replays the original cancellation result");
+  cancellationCall.session.close();
+  console.log("Agents Realtime harness passed: SIP, SDK tools/results/history/replay, dynamic mandate visibility, cancellation without email, no approvals/evidence, terminal state and escalation. Mocked repository/socket; no PostgreSQL or live calls.");
 }
 
 main().catch((error: unknown) => { console.error(error); process.exitCode = 1; });

@@ -203,7 +203,7 @@ booking_reschedule_provider
 | `list_open_operations` | none |
 | `create_operation` | `operation.created`, `call.routed` |
 | `update_operation` | `operation.updated`, `call.routed` when selecting the operation |
-| `cancel_operation` | `operation.cancelled`, optional `booking.cancelled`, `email.queued`, and `call.routed` when selecting the operation |
+| `cancel_operation` | `operation.cancelled`, optional `booking.cancelled`, and `call.routed` when selecting the operation. No email events in the current rollout. |
 | `confirm_mandate` | `mandate.confirmed`, `sourcing.started` |
 | `list_provider_operations` | none |
 | `create_quote` | `quote.received`; additionally `quote.counteroffer_requested` when applicable |
@@ -217,6 +217,11 @@ booking_reschedule_provider
 
 Server workflows additionally emit `quote.requested`, `quote.expired`,
 `quote.selected`, `booking.pending` and email delivery events.
+
+Client cancellation rollout (2026-08-30): email sending and enqueueing are disabled.
+`operation.cancelled.provider_email_queued` and
+`booking.cancelled.notification_email_queued` are always `false`. No `email.queued`
+or `email.sent` event is emitted by `cancel_operation`.
 
 ## Idempotency
 

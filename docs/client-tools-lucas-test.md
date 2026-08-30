@@ -8,7 +8,8 @@ no la fixture compartida `OP-900001`. No volver a ejecutar el seed para esta pru
 1. Esperar el deploy del backend y comprobar que Supabase haya aplicado
    `20260830010000_client_operation_tools.sql` y
    `20260830020000_conversational_mandate_confirmation.sql` y
-   `20260830030000_incremental_mandate_confirmation.sql` por el flujo de migraciones del proyecto.
+   `20260830030000_incremental_mandate_confirmation.sql` y
+   `20260830040000_client_cancellation.sql` por el flujo de migraciones del proyecto.
    Un push no demuestra que el deploy o la migración hayan terminado correctamente.
 2. Recién después, configurar `CLIENT_OPERATION_TOOLS_ENABLED=true` en el backend
    que recibe las llamadas (Render), y reiniciarlo/redeployarlo. El default sigue
@@ -89,6 +90,29 @@ transportista ni se crea un booking por esta prueba.
    es Terminal 4». Esa edición selecciona la operación existente. Completar los
    faltantes y confirmar como en la primera llamada; no debe duplicar el borrador.
 
+## Otra llamada — cancelar, sin emails
+
+Usar únicamente la operación de prueba creada arriba; no cancelar pedidos reales.
+
+1. «Hola, quiero ver mis operaciones abiertas».
+2. «Quiero cancelar la OP-[referencia anotada] porque ya no necesito el traslado».
+   Debe identificar el pedido y pedir confirmación de cancelación. No debe usar
+   `update_operation` ni `confirm_mandate` para esto.
+3. Primero responder «No, todavía no». No debe ejecutar `cancel_operation`.
+4. Pedir de nuevo la cancelación. Debe resumir referencia y motivo, aclarar que
+   cancela en el sistema sin avisar al transportista y pedir confirmación.
+5. En el turno siguiente: «Sí, confirmo cancelar esa operación».
+6. Esperado: `cancel_operation` devuelve `status: cancelled`,
+   `provider_email_queued: false`, `next_profile: terminal`. El agente confirma
+   solo el resultado en el sistema; no promete avisos ni pide otro mandato.
+7. Pedir otro cambio: no debe ejecutar mutaciones. En una nueva llamada, el OP
+   cancelado ya no aparece entre las operaciones abiertas.
+
+En la base: operación cancelada, booking activo cancelado si existía, eventos
+`operation.cancelled` y opcionalmente `booking.cancelled`, llamada con intención
+`cancel` y marcador terminal, recibo de la tool. Ninguna nueva versión de mandato,
+ningún email ni job de email. Los mandatos/quotes/compromisos históricos permanecen.
+
 ## Controles adicionales
 
 - Durante un resumen, interrumpir con una corrección. Debe rehacer el resumen y
@@ -101,8 +125,8 @@ transportista ni se crea un booking por esta prueba.
 - Si aparece `stale_operation`, leer los datos refrescados y pedir nueva confirmación.
 - Repetir el saludo con un proveedor autorizado: empieza en inglés y luego cambia
   al idioma del proveedor; no debe exponer tools de cliente.
-- Pedir cancelar: todavía no existe `cancel_operation`; debe explicar la
-  limitación sin anunciar cancelación ni envío de email.
+- Después de elegir create/update, pedir cancelar: debe explicar que ese camino
+  ya no está disponible en esa llamada, sin cancelar ni prometer un email.
 - No probar idempotencia repitiendo «sí»: eso es un turno nuevo. La idempotencia
   se basa en el mismo ID de invocación técnico y aún requiere validación SQL/entorno.
 

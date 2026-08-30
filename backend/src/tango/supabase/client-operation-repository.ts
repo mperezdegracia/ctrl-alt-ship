@@ -29,7 +29,8 @@ export class SupabaseClientOperationRepository implements ClientOperationReposit
   }
 
   async execute(scope: ToolCallScope, toolName: ClientToolName, toolCallId: string, args: object, context?: ClientCommandContext): Promise<ClientMutationResult> {
-    const { data, error } = await this.client.rpc("execute_client_operation_tool", {
+    const rpc = toolName === "cancel_operation" ? "execute_client_cancellation_tool" : "execute_client_operation_tool";
+    const { data, error } = await this.client.rpc(rpc, {
       ...this.context(scope), p_tool_call_id: toolCallId, p_tool_name: toolName, p_arguments: args,
       ...(context ? { p_context: context } : {}),
     });

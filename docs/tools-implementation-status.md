@@ -117,7 +117,7 @@ El diagnóstico de tools enviadas/observadas y la revisión de SDK/HITL están e
 [realtime-confirmation-review.md](realtime-confirmation-review.md). Los nuevos
 logs permiten inspeccionar el flujo, pero no prueban consentimiento humano.
 
-- Aplicar/validar los tramos de escritura y mandato; implementar cancelar operaciones.
+- Aplicar/validar los tramos de escritura, mandato y cancelación de operaciones.
 - Extender las transacciones e idempotencia al resto de mutaciones.
 - Perfiles y bloqueo de intención de los flujos de proveedor.
 - Registrar quotes y calcular el veredicto y la ronda de negociación en el servidor.
@@ -131,3 +131,17 @@ No se anuncian tools de mutación hasta implementar sus handlers y verificacione
 y activar el tramo correspondiente.
 El prompt explica que una acción sin tool disponible no puede ejecutarse en esa llamada.
 Estos tramos no completan los criterios de aceptación del #13.
+
+## Cancelación de cliente implementada (2026-08-30, sin emails)
+
+Este tramo reemplaza las referencias anteriores a cancelación no habilitada.
+`cancel_operation` ya tiene tool OOP, validación, RPC, recibo idempotente y prompt.
+La entrada ofrece listar/crear/editar/cancelar. Crear o editar retira cancelar;
+una cancelación exitosa retira todas las tools y no crea un mandato.
+Cancela lógicamente operación y booking activo, cierra solicitudes pendientes
+y conserva historia. Por decisión explícita, **no envía ni encola correos**.
+
+Requiere aplicar `20260830040000_client_cancellation.sql` antes de desplegar el
+backend con `CLIENT_OPERATION_TOOLS_ENABLED=true`. No se aplicó en la base
+compartida ni se validó en PostgreSQL. Pasaron typecheck y harnesses simulados
+de cliente y Agents SDK. Detalles: [client-cancellation.md](client-cancellation.md).

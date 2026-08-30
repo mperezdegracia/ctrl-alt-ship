@@ -112,8 +112,13 @@ del transportista bajo las condiciones cambiadas.
 
 - `cancel_operation` es cancelación lógica, nunca `DELETE`.
 - Requiere confirmación verbal explícita y termina el flujo de tools.
-- Si ya existe provider o booking, la cancelación se notifica por email
-  idempotente; no requiere confirmación telefónica del provider.
+- No crea ni reemplaza un mandato; conserva las versiones y compromisos históricos.
+- Decisión vigente (2026-08-30): **no enviar ni encolar emails todavía**, aun si
+  existe provider o booking. `provider_email_queued` devuelve `false`. El agente
+  aclara que cancela en el sistema y que el transportista no fue notificado.
+- No requiere confirmación telefónica del provider. La notificación idempotente
+  queda para un tramo posterior, no como trabajo pendiente en el outbox actual.
+- Detalle de implementación y límites: [client-cancellation.md](client-cancellation.md).
 
 ## Cotización y negociación
 

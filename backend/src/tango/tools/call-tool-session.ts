@@ -18,7 +18,7 @@ export class CallToolSession extends RealtimeToolRegistry {
     const definitions = super.definitions;
     if (!this.clientService) return definitions;
     const names = this.state?.profile === "client_entry"
-      ? ["list_open_operations", "create_operation", "update_operation"]
+      ? ["list_open_operations", "create_operation", "update_operation", "cancel_operation"]
       : this.state?.profile === "terminal" ? []
         : this.state?.operation ? ["update_operation", "confirm_mandate"] : [];
     return definitions.filter((tool) => names.includes(tool.name));
@@ -32,7 +32,7 @@ export class CallToolSession extends RealtimeToolRegistry {
   }
 
   async execute(name: string, args: unknown, invocation?: ToolInvocation): Promise<unknown> {
-    if (this.clientService && ["create_operation", "update_operation", "confirm_mandate"].includes(name)) {
+    if (this.clientService && ["create_operation", "update_operation", "confirm_mandate", "cancel_operation"].includes(name)) {
       // The SQL transaction enforces current state, ownership and intent. It
       // also permits replay of a committed command whose tool is now hidden.
       return super.execute(name, args, invocation);

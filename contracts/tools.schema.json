@@ -194,7 +194,7 @@
     {
       "type": "function",
       "name": "cancel_operation",
-      "description": "Cancels an operation only after the authenticated client explicitly confirms the cancellation. This is a terminal logical cancellation, never a database delete.",
+      "description": "Cancels an operation only after the authenticated client explicitly confirms the cancellation. This is a terminal logical cancellation, never a database delete. No email is sent or queued.",
       "parameters": {
         "type": "object",
         "properties": {

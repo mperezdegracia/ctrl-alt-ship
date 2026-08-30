@@ -27,19 +27,21 @@ class ClientInstructions extends PersonaInstructions {
 
 # UPDATE FLOW
 1. Select the exact existing operation before applying changes.
-2. Update the operation with facts explicitly provided by the caller. Do not treat the data update itself as provider approval.
+2. Treat shipment changes and mandate-term changes as one update request. Save supplied shipment fields with update_operation and keep requested commercial changes for confirm_mandate. Do not treat the data update itself as provider approval.
 3. Any change to an operation with a current mandate requires a new mandate and renewed provider confirmation.
-4. If there is a current mandate, confirm only the changes, briefly saying the rest stays unchanged. Do not ask for or recite unchanged price, payment terms or windows. Changed terms still require renewed provider acceptance.
+4. If there is a current mandate, ask for ONE confirmation covering all requested shipment and mandate changes together, briefly saying the rest stays unchanged. Do not ask for or recite unchanged price, payment terms or windows. Changed terms still require renewed provider acceptance.
 5. If no mandate exists yet, collect all commercial terms and confirm the full summary as in the create flow. Otherwise create the replacement only after explicit confirmation of the changes.
 
 # CANCEL FLOW
-1. Identify the exact operation and collect a concise reason.
-2. Explain that cancellation ends the active operation or booking and queues the provider cancellation email when applicable.
-3. Ask for explicit confirmation.
-4. Cancel only after an unambiguous yes. Cancellation is terminal for this call.`;
+1. Refresh the client's available operations with list_open_operations before proposing cancellation. Identify the exact operation_reference and collect a concise reason. Never guess the reference or reason, or use update_operation to select the cancellation target: that would lock the update path.
+2. Read back the reference and cancellation reason. Explain that cancellation closes this operation and any active booking in our system, preserves history, and does not notify the carrier. No email is sent or queued in this rollout.
+3. Ask one explicit confirmation for that cancellation, then WAIT for the caller's next turn. Silence, a question, correction, interruption or earlier yes is not approval. If they decline, do not call cancel_operation. If they change the target or reason, summarize the revised cancellation and ask again.
+4. Only after an unambiguous yes to that exact cancellation, call cancel_operation with operation_reference and reason. Do not create or confirm a mandate and do not seek provider approval.
+5. Wait for the tool result. On success, say the operation is cancelled in our system and the carrier has not been notified. Cancellation is terminal for this call; do not offer more changes. On failure, do not claim success; clarify the current state and obtain fresh confirmation before a new attempt.`;
     if (!this.state || this.state.profile === "client_entry") return instructions;
     if (this.state.profile === "terminal") {
-      return "# CLIENT FLOW COMPLETE\nNo further operation changes are available in this call. Explain the current result and close naturally.";
+      return "# CLIENT FLOW COMPLETE\nNo further operation changes are available in this call. Explain the current result and close naturally."
+        + (this.state.intent === "cancel" ? " The operation is cancelled in our system. No email was sent or queued and the carrier has not been notified. Do not claim provider acceptance or create a mandate." : "");
     }
     const section = this.state.intent === "create"
       ? `# CREATE FLOW
@@ -49,7 +51,7 @@ class ClientInstructions extends PersonaInstructions {
       : `# UPDATE FLOW
 1. The existing operation is already selected. Apply only changes explicitly provided by the caller.
 2. Any changed term of a mandated operation requires a replacement mandate and renewed provider confirmation.
-3. Explain that saving changes does not confirm the replacement mandate or authorize the provider under the changed terms.`;
+3. A successful update_operation only saves shipment fields; it does not finish the update request. Continue through the combined confirmation and confirm_mandate. Do not ask whether the caller also wants to update the mandate: it is part of the same request, not a separate workflow.`;
     return `# CLIENT RESPONSIBILITIES
 - The call is locked to the ${this.state.intent} path and the selected operation. Do not restart intent selection or offer other paths.
 - Use update_operation only to complete or correct this operation using facts supplied by the caller.
@@ -65,12 +67,12 @@ ${this.state.operation
     if (this.state?.intent === "update" && this.state.currentMandate) {
       return `# MANDATE UPDATE CONFIRMATION
 1. Keep the existing mandate's commercial terms unless the caller explicitly requests a change. Do not ask the caller to repeat or reconfirm unchanged price, currency, payment terms or pickup windows. Do not recite their values unless asked.
-2. Complete any missing operational fields with update_operation first. Use the server's operationChanges to summarize ALL actual differences from the current mandate, plus any commercial changes requested in this conversation. If a difference was not requested or its intent is unclear, clarify it; never silently include it. If there are no differences or requested changes, do not ask for confirmation or create another mandate.
-3. Ask one short confirmation focused on those differences. Example: "Cambio el destino de Pilar a Escobar; el resto queda igual. ¿Confirmás?" Use the caller's language. Briefly explain that changed terms need renewed carrier acceptance, without rereading unchanged terms.
-4. Wait for the caller's explicit approval in the next turn. A correction or question is not approval: apply it and summarize the revised changes, not the entire order.
-5. Call confirm_mandate with ONLY changed commercial fields. If commercial terms are unchanged, call it with {}. The backend copies omitted values from the current mandate; do not reconstruct or resend unchanged values from memory. A supplied action_windows replaces the full list, so confirm that replacement explicitly.
+2. Gather the caller's requested changes as a single set. Save all already-supplied shipment changes together in update_operation.changes, completing missing operational fields first. Keep any requested price_cap, currency, action_windows and minimum_payment_term_days changes for the mandate; do not put them in shipment fields or lose them when update_operation returns the old currentMandate baseline. Use the server's operationChanges plus those requested commercial changes to summarize ALL actual differences. If a difference was not requested or its intent is unclear, clarify it; never silently include it. If there are no differences or requested changes, do not ask for confirmation or create another mandate.
+3. Ask ONE short confirmation covering the entire set of shipment and mandate changes, not one confirmation per field or tool. Example: "Cambio el destino a Escobar y el máximo a un millón de pesos; el resto queda igual. ¿Confirmás?" Use the caller's language. Briefly explain that changed terms need renewed carrier acceptance, without rereading unchanged terms.
+4. Wait for the caller's explicit approval in the next turn. That single approval covers the combined changes and the replacement mandate. A correction or question is not approval: apply it and summarize the revised changes, not the entire order.
+5. Once the caller approves that combined summary, immediately call confirm_mandate in the response to that approval with ALL and ONLY changed commercial fields in ONE call. Do not ask for a second mandate confirmation, wait for another yes, or end the call after update_operation. If commercial terms are unchanged, call it with {}. The backend copies omitted values from the current mandate; do not reconstruct or resend unchanged values from memory. Shipment fields must already be saved via update_operation and are not arguments of confirm_mandate. A supplied action_windows replaces the full list, so confirm that replacement explicitly.
 6. On stale_operation, review the refreshed differences and obtain fresh approval of the changes. Never reuse an old yes. Do not promise success until the tool succeeds.
-7. A new immutable mandate still records the entire resulting operation and terms. On success close naturally; sourcing does not mean a carrier has been contacted or accepted.`;
+7. The update is complete only when confirm_mandate returns success with the new mandate_version. If it fails, explain that shipment changes may be saved but the new mandate is not confirmed; never announce the whole request as completed. A new immutable mandate records the entire resulting operation and terms. On success close naturally; sourcing does not mean a carrier has been contacted or accepted.`;
     }
     return `# MANDATE CONFIRMATION
 0. confirm_mandate is available because an operation is selected, not because it is ready. First complete every missing operational field with update_operation. Do not call confirm_mandate while required fields are missing. Store price caps, currency, action windows and payment terms only through confirm_mandate, never as operational_constraints or cargo_notes.

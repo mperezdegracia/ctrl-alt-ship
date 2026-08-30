@@ -41,7 +41,8 @@ class RpcFixture {
       const args = JSON.parse(String(init.body));
       this.requests.push({ method, args });
       const stateRead = method === "get_client_operation_tool_state";
-      assert.ok(stateRead || method === "execute_client_operation_tool");
+      assert.ok(stateRead || method === "execute_client_operation_tool" || method === "execute_client_cancellation_tool");
+      if (!stateRead) assert.equal(method, args.p_tool_name === "cancel_operation" ? "execute_client_cancellation_tool" : "execute_client_operation_tool");
       const error = this.error ?? (stateRead && this.failState ? { code: "XX000", message: "private SQL secret" } : null);
       if (error) return new Response(JSON.stringify(error), { status: 400 });
       const result = stateRead ? this.state : this.results.shift();
@@ -69,7 +70,7 @@ async function main(): Promise<void> {
   const names = () => session.definitions.map((tool) => tool.name);
   assert.deepEqual(names(), [], "No tools before persisted flow state loads");
   await session.refresh();
-  assert.deepEqual(names(), ["list_open_operations", "create_operation", "update_operation"]);
+  assert.deepEqual(names(), ["list_open_operations", "create_operation", "update_operation", "cancel_operation"]);
   const contracts = JSON.parse(readFileSync(resolve(__dirname, "../../../contracts/tools.schema.json"), "utf8"));
   // Static migration regression only; this does not execute/validate PostgreSQL.
   const migration = readFileSync(resolve(__dirname, "../../../supabase/migrations/20260830020000_conversational_mandate_confirmation.sql"), "utf8");
@@ -203,6 +204,11 @@ async function main(): Promise<void> {
   assert.match(update.session.instructions, /# MANDATE UPDATE CONFIRMATION/);
   assert.match(update.session.instructions, /Do not ask the caller to repeat or reconfirm unchanged/);
   assert.match(update.session.instructions, /call it with \{\}/);
+  assert.match(update.session.instructions, /ONE short confirmation covering the entire set of shipment and mandate changes/);
+  assert.match(update.session.instructions, /ALL and ONLY changed commercial fields in ONE call/);
+  assert.match(update.session.instructions, /Do not ask for a second mandate confirmation/);
+  assert.match(update.session.instructions, /only when confirm_mandate returns success with the new mandate_version/);
+  assert.match(update.session.instructions, /do not put them in shipment fields or lose them when update_operation returns/);
   assert.match(update.session.instructions, /Pilar.*Escobar/);
   assert.doesNotMatch(update.session.instructions, /Read back the COMPLETE|repeat the complete summary/);
   rpc.results.push({ ...confirmed, mandate_version: 2 });
@@ -212,6 +218,10 @@ async function main(): Promise<void> {
   rpc.results.push({ ...confirmed, mandate_version: 2 });
   await session.execute("confirm_mandate", { price_cap: 900000 }, { toolCallId: "changed-cap" });
   assert.deepEqual(rpc.requests.at(-1)!.args.p_arguments, { price_cap: 900000 });
+  const combinedTerms = { ...terms, price_cap: 1000000, minimum_payment_term_days: 45 };
+  rpc.results.push({ ...confirmed, mandate_version: 2 });
+  await session.execute("confirm_mandate", combinedTerms, { toolCallId: "all-changed-terms" });
+  assert.deepEqual(rpc.requests.at(-1)!.args.p_arguments, combinedTerms, "One mandate invocation accepts all commercial changes together");
   const requestsBeforeBadPatch = rpc.requests.length;
   for (const patch of [{ price_cap: null }, { minimum_payment_term_days: null }, { action_windows: [] }, { currency: null }, { operation_id: "forged" }]) {
     await assert.rejects(session.execute("confirm_mandate", patch, { toolCallId: "bad-patch" }), /first mandate/);
@@ -226,6 +236,65 @@ async function main(): Promise<void> {
   assert.deepEqual(names(), []);
   assert.match(factory.create(decision, session.definitions, session.flowState).instructions, /# CLIENT FLOW COMPLETE/);
 
+  // Cancellation is available only at entry, uses trusted context and shares
+  // the durable receipt key. SQL behavior below is mocked, not executed.
+  rpc.state = initialState();
+  await session.refresh();
+  const cancelArgs = { operation_reference: "OP-000123", reason: "El cliente ya no necesita el traslado" };
+  const beforeInvalidCancel = rpc.requests.length;
+  for (const args of [null, [], {}, { operation_reference: "OP-000123" }, { reason: "test" },
+    { ...cancelArgs, operation_reference: "uuid" }, { ...cancelArgs, operation_reference: 123 },
+    { ...cancelArgs, reason: " \t" }, { ...cancelArgs, reason: null },
+    { ...cancelArgs, operation_id: "forged" }, { ...cancelArgs, contact_id: "other" },
+    { ...cancelArgs, send_email: true }, { ...cancelArgs, confirmed: true }]) {
+    await assert.rejects(session.execute("cancel_operation", args, { toolCallId: "bad-cancel" }),
+      (error) => error instanceof ToolError && error.code === "invalid_arguments");
+  }
+  await assert.rejects(session.execute("cancel_operation", cancelArgs), (error) => error instanceof ToolError && error.code === "invalid_arguments");
+  assert.equal(rpc.requests.length, beforeInvalidCancel);
+  const cancelPrompt = factory.create(decision, session.definitions, session.flowState).instructions;
+  assert.match(cancelPrompt, /WAIT for the caller's next turn/);
+  assert.match(cancelPrompt, /No email is sent or queued/);
+  assert.match(cancelPrompt, /If they decline, do not call cancel_operation/);
+  assert.match(cancelPrompt, /do not seek provider approval/);
+  const cancelled: ClientMutationResult = { operation_reference: "OP-000123", status: "cancelled", provider_email_queued: false, next_profile: "terminal" };
+  rpc.results.push(cancelled);
+  assert.deepEqual(await session.execute("cancel_operation", cancelArgs, { toolCallId: "fn-cancel" }), cancelled);
+  assert.deepEqual(rpc.requests.at(-1), { method: "execute_client_cancellation_tool", args: {
+    p_call_id: scope.callId, p_realtime_call_id: scope.realtimeCallId, p_contact_id: scope.counterpartyId,
+    p_tool_call_id: "fn-cancel", p_tool_name: "cancel_operation", p_arguments: cancelArgs,
+  } });
+  rpc.state = { ...selectedState(), intent: "cancel", profile: "terminal" };
+  rpc.state.operation!.status = "cancelled";
+  await session.refresh();
+  assert.deepEqual(names(), []);
+  const terminalPrompt = factory.create(decision, session.definitions, session.flowState).instructions;
+  assert.match(terminalPrompt, /No email was sent or queued and the carrier has not been notified/);
+  assert.doesNotMatch(terminalPrompt, /# CREATE FLOW|# UPDATE FLOW|# CANCEL FLOW|# MANDATE CONFIRMATION/);
+  rpc.results.push(cancelled);
+  assert.deepEqual(await session.execute("cancel_operation", cancelArgs, { toolCallId: "fn-cancel" }), cancelled);
+  for (const code of ["intent_locked", "invalid_transition", "not_authorized", "operation_not_available", "idempotency_conflict"]) {
+    rpc.error = { code: "P0001", message: code };
+    await assert.rejects(session.execute("cancel_operation", cancelArgs, { toolCallId: "fn-cancel" }),
+      (error) => error instanceof ToolError && error.code === code);
+  }
+  rpc.error = null;
+  const cancelMigration = readFileSync(resolve(__dirname, "../../../supabase/migrations/20260830040000_client_cancellation.sql"), "utf8");
+  assert.match(cancelMigration, /persona = 'client' AND outcome = 'active'\s+FOR UPDATE/);
+  assert.match(cancelMigration, /active AND authorized FOR SHARE/);
+  assert.match(cancelMigration, /contact_id = p_contact_id\s+FOR UPDATE/);
+  assert.match(cancelMigration, /c.operation_intent <> 'undecided' OR c.operation_id IS NOT NULL/);
+  assert.match(cancelMigration, /IF op.status IN \('cancelled', 'failed'\)/);
+  assert.ok(cancelMigration.indexOf("RETURN receipt.result") < cancelMigration.indexOf("IF c.client_tools_completed_at"));
+  assert.match(cancelMigration, /UPDATE public.bookings SET status = 'cancelled', cancelled_at = cancelled_time/);
+  assert.match(cancelMigration, /'notification_email_queued', false/);
+  assert.match(cancelMigration, /'provider_email_queued', false/);
+  assert.match(cancelMigration, /'operation.cancelled'/);
+  assert.match(cancelMigration, /'booking.cancelled'/);
+  assert.match(cancelMigration, /skipped_reason/);
+  assert.match(cancelMigration, /GRANT EXECUTE ON FUNCTION public.execute_client_cancellation_tool[\s\S]*TO service_role/);
+  assert.doesNotMatch(cancelMigration, /INSERT INTO public\.(outbox|mandates|commitments)|DELETE FROM|email\.queued|email\.sent/);
+
   rpc.failState = true;
   await assert.rejects(session.refresh());
   assert.deepEqual(names(), [], "State failures must remove tools");
@@ -234,9 +303,11 @@ async function main(): Promise<void> {
   assert.deepEqual(provider.definitions.map((tool) => tool.name), ["list_provider_operations"]);
   await assert.rejects(provider.execute("create_operation", {}, { toolCallId: "provider-attempt" }), /not available/);
   await assert.rejects(provider.execute("confirm_mandate", terms, { toolCallId: "provider-attempt" }), /not available/);
+  await assert.rejects(provider.execute("cancel_operation", cancelArgs, { toolCallId: "provider-attempt" }), /not available/);
   const disabled = new CallToolFactory(reads).create(scope);
   assert.deepEqual(disabled.definitions.map((tool) => tool.name), ["list_open_operations"]);
   await assert.rejects(disabled.execute("confirm_mandate", terms, { toolCallId: "disabled-attempt" }), /not available/);
+  await assert.rejects(disabled.execute("cancel_operation", cancelArgs, { toolCallId: "disabled-attempt" }), /not available/);
 
   for (const code of ["not_authorized", "invalid_arguments", "operation_reference_required", "operation_not_available", "invalid_transition"]) {
     rpc.error = { code: "P0001", message: code };

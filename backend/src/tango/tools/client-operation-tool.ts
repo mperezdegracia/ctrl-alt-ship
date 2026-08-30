@@ -46,6 +46,26 @@ export class UpdateOperationTool extends RealtimeTool {
   }
 }
 
+export class CancelOperationTool extends RealtimeTool {
+  readonly definition = {
+    type: "function" as const,
+    name: "cancel_operation",
+    description: "Cancels an operation only after the authenticated client explicitly confirms the cancellation. This is a terminal logical cancellation, never a database delete. No email is sent or queued.",
+    parameters: {
+      type: "object", properties: {
+        operation_reference: { type: "string", pattern: "^OP-[0-9]{6,}$" },
+        reason: { type: "string", minLength: 1 },
+      }, required: ["operation_reference", "reason"], additionalProperties: false,
+    } as JsonSchema,
+  };
+
+  constructor(private readonly service: ClientOperationService) { super(); }
+
+  execute(args: unknown, invocation?: ToolInvocation): Promise<unknown> {
+    return this.service.cancel(args, invocation?.toolCallId ?? "");
+  }
+}
+
 export class ConfirmMandateTool extends RealtimeTool {
   readonly definition = {
     type: "function" as const,

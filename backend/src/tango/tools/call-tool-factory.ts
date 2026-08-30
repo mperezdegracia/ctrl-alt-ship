@@ -1,7 +1,7 @@
 import { OperationReadService, type OperationReadRepository, type ToolCallScope } from "../../domain/operation-read-service";
 import { ListOpenOperationsTool, ListProviderOperationsTool } from "./list-operations-tool";
 import { ClientOperationService, type ClientOperationRepository } from "../../domain/client-operation-service";
-import { ConfirmMandateTool, CreateOperationTool, UpdateOperationTool } from "./client-operation-tool";
+import { CancelOperationTool, ConfirmMandateTool, CreateOperationTool, UpdateOperationTool } from "./client-operation-tool";
 import { CallToolSession } from "./call-tool-session";
 import type { RealtimeTool } from "./realtime-tool";
 
@@ -19,7 +19,7 @@ export class CallToolFactory {
       scope.persona === "client"
         ? new ListOpenOperationsTool(service)
         : new ListProviderOperationsTool(service),
-      ...(clientService ? [new CreateOperationTool(clientService), new UpdateOperationTool(clientService), new ConfirmMandateTool(clientService)] : []),
+      ...(clientService ? [new CreateOperationTool(clientService), new UpdateOperationTool(clientService), new CancelOperationTool(clientService), new ConfirmMandateTool(clientService)] : []),
       ...(scope.persona === "provider" && providerExtension ? [providerExtension] : []),
     ], clientService);
   }
