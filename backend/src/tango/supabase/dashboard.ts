@@ -2,6 +2,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { supabaseAdmin } from "../../config/supabase";
 
+import { matchEvidenceEvents, EVIDENCE_WINDOW_SECONDS, type EvidenceSegment } from "../../domain/call-evidence";
+
 type JsonRecord = Record<string, unknown>;
 
 type OperationRow = {
@@ -889,4 +891,55 @@ export async function getDashboardOperationDossier(
     } : null,
     trace: toOperationTrace(operationCalls, events, names),
   };
+}
+
+
+/** Read only: existing transcript/events, loaded on the evidence page only. */
+export async function getDashboardCallEvidence(reference: string, callId?: string, client: SupabaseClient = supabaseAdmin) {
+  const operationResult = await client.from("operations").select("id,reference").eq("reference", reference).maybeSingle();
+  if (operationResult.error) throw operationResult.error;
+  if (!operationResult.data) return null;
+  const operation = operationResult.data as { id: string; reference: string };
+  // Read every page, not just PostgREST's default first 1000 rows. Restrict
+  // transcripts to one verified call so the register never loads all call text.
+  async function readAll<T>(query: (from: number, to: number) => PromiseLike<{ data: unknown; error: unknown }>) {
+    const rows: T[] = [];
+    for (let from = 0; ; from += 500) {
+      const result = await query(from, from + 499);
+      if (result.error) throw result.error;
+      const page = (result.data ?? []) as T[];
+      rows.push(...page);
+      if (page.length < 500) return rows;
+    }
+  }
+  const calls = await readAll<CallRow>((from, to) => client.from("calls")
+    .select("id,contact_id,provider_id,direction,outcome,started_at,ended_at")
+    .eq("operation_id", operation.id).order("started_at", { ascending: false }).order("id").range(from, to));
+  const selected = callId ? calls.find((call) => call.id === callId) : calls[0];
+  if (callId && !selected) return null;
+  const names = await namesFor(calls.flatMap((call) => call.contact_id ? [call.contact_id] : []),
+    calls.flatMap((call) => call.provider_id ? [call.provider_id] : []), client);
+  const summaries = calls.map((call) => ({ id: call.id, direction: call.direction,
+    counterpartyName: counterpartyName(call, names) ?? "Unknown counterparty",
+    persona: call.provider_id ? "provider" : "client", outcome: call.outcome,
+    startedAt: call.started_at, endedAt: call.ended_at }));
+  type SegmentRow = { id: string; speaker: "caller" | "tango"; content: string | null; recorded_at: string; content_deleted_at: string | null };
+  const [transcript, eventRows] = await Promise.all([
+    selected ? readAll<SegmentRow>((from, to) => client.from("call_transcript_segments")
+      .select("id,speaker,content,recorded_at,content_deleted_at").eq("call_id", selected.id)
+      .order("recorded_at").order("id").range(from, to)) : Promise.resolve([]),
+    readAll<EventRow>((from, to) => {
+      let query = client.from("events").select("id,type,payload,call_id,occurred_at").eq("operation_id", operation.id);
+      // Unscoped operation events (e.g. selection after a call ends) remain
+      // visible, but never become evidence of something said on this call.
+      query = selected ? query.or(`call_id.eq.${selected.id},call_id.is.null`) : query.is("call_id", null);
+      return query.order("occurred_at").order("id").range(from, to);
+    }),
+  ]);
+  const segments: EvidenceSegment[] = transcript.map((row) => ({ id: row.id, callId: selected!.id,
+    speaker: row.speaker, content: row.content, recordedAt: row.recorded_at, contentDeletedAt: row.content_deleted_at }));
+  const events = eventRows.map((event) => ({ id: event.id, callId: event.call_id, type: event.type,
+    title: traceEventTitle(event.type), detail: traceEventDetail(event.type, event.payload), occurredAt: event.occurred_at }));
+  return { reference, calls: summaries, selectedCallId: selected?.id ?? null,
+    segments, events: matchEvidenceEvents(events, segments), matchWindowSeconds: EVIDENCE_WINDOW_SECONDS };
 }

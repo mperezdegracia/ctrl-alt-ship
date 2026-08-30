@@ -47,6 +47,7 @@ export default async function OperationPage({ params }: { params: Promise<{ refe
           <div className="operation-status-block">
             <span className={`status-mark status-${operation.status.replaceAll("_", "-")}`}>{formatStatus(operation.status)}</span>
             <p>Updated {formatDateTime(operation.updatedAt)}</p>
+            <Link className="call-evidence-button" prefetch={false} href={`/dashboard/operations/${operation.reference}/evidence`}>Evidencia ↗</Link>
           </div>
         </header>
 

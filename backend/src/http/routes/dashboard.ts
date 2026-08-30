@@ -4,6 +4,7 @@ import { z } from "zod";
 import { StructuredLogger } from "../../observability/logger";
 import {
   getDashboardOperationDossier,
+  getDashboardCallEvidence,
   getDashboardOperationRevision,
   getDashboardRevision,
   listDashboardOperationsPage,
@@ -418,6 +419,25 @@ export function registerDashboardRoutes(app: Express, logger: StructuredLogger):
       res.on("close", close);
     } catch (error) {
       logger.error("dashboard.stream_setup_failed", { user_id: req.dashboardUser?.id, error });
+      sendDashboardError(res, error);
+    }
+  });
+
+  app.get("/api/dashboard/operations/:reference/evidence", requireDashboardAuth, async (req: DashboardRequest, res) => {
+    res.setHeader("Cache-Control", "no-store");
+    const reference = routeParameter(req.params.reference);
+    const call = req.query.call;
+    if (!reference || !/^OP-[0-9]{6,}$/.test(reference)
+      || (call !== undefined && !uuidSchema.safeParse(call).success)) {
+      invalidRequest(res, "invalid_evidence_query");
+      return;
+    }
+    try {
+      const evidence = await getDashboardCallEvidence(reference, call as string | undefined);
+      if (!evidence) { res.status(404).json({ error: "operation_or_call_not_found" }); return; }
+      res.json({ evidence });
+    } catch (error) {
+      logger.error("dashboard.evidence_failed", { user_id: req.dashboardUser?.id, reference, error });
       sendDashboardError(res, error);
     }
   });

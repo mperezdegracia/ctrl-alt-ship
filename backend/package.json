@@ -26,6 +26,7 @@
     "harness:quotes:above-budget:sql": "node --require tsx/cjs scripts/harnesses/above-budget-quotes-sql.ts",
     "harness:sourcing": "node --require tsx/cjs scripts/harnesses/sourcing-integration.ts",
     "harness:tools": "npm run harness:tools:read && npm run harness:tools:client && npm run harness:tools:provider && npm run harness:tools:bookings",
+    "harness:evidence": "node --require tsx/cjs scripts/harnesses/call-evidence.ts",
     "harness:realtime:agents": "node --require tsx/cjs scripts/harnesses/agents-realtime.ts",
     "harness:realtime:sdk": "node --require tsx/cjs scripts/harnesses/realtime-sdk.ts",
     "dashboard:read": "tsx scripts/harnesses/dashboard-read.ts",

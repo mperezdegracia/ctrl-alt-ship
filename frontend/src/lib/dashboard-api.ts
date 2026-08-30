@@ -169,6 +169,23 @@ export type DashboardOperationDossier = DashboardOperation & {
   };
 };
 
+export type DashboardCallEvidence = {
+  reference: string; selectedCallId: string | null; matchWindowSeconds: number;
+  calls: Array<{ id: string; counterpartyName: string; persona: string; direction: string;
+    outcome: string; startedAt: string; endedAt: string | null }>;
+  segments: Array<{ id: string; callId: string; speaker: "caller" | "tango"; content: string | null;
+    recordedAt: string; contentDeletedAt: string | null }>;
+  events: Array<{ id: string; callId: string | null; type: string; title: string; detail: string | null;
+    occurredAt: string; match: { segmentId: string; offsetSeconds: number } | null }>;
+};
+
+export async function getDashboardCallEvidence(reference: string, accessToken: string, callId?: string): Promise<DashboardCallEvidence> {
+  const result = await dashboardRequest<{ evidence: DashboardCallEvidence }>(
+    `/api/dashboard/operations/${encodeURIComponent(reference)}/evidence${queryString({ call: callId })}`, accessToken,
+  );
+  return result.evidence;
+}
+
 export class DashboardApiError extends Error {
   constructor(readonly status: number, message: string) {
     super(message);
