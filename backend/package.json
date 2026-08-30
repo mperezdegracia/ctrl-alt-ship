@@ -9,6 +9,11 @@
     "db:smoke": "tsx scripts/harnesses/supabase-smoke.ts",
     "db:inspect": "tsx scripts/harnesses/supabase-inspect.ts",
     "inbound:routing": "tsx scripts/harnesses/inbound-routing.ts",
+    "harness:tools:read": "node --require tsx/cjs scripts/harnesses/tools-read.ts",
+    "harness:tools:client": "node --require tsx/cjs scripts/harnesses/client-tools.ts",
+    "harness:tools": "npm run harness:tools:read && npm run harness:tools:client && npm run harness:tools:evidence",
+    "harness:tools:evidence": "node --require tsx/cjs scripts/harnesses/confirmation-evidence.ts",
+    "harness:realtime:sdk": "node --require tsx/cjs scripts/harnesses/realtime-sdk.ts",
     "db:seed": "tsx scripts/db/seed.ts",
     "auth:smoke": "tsx scripts/harnesses/auth-smoke.ts",
     "typecheck": "tsc --project tsconfig.json"

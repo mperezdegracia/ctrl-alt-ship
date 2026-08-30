@@ -1,3 +1,6 @@
+import { ToolError } from "../../domain/tool-error";
+import type { ConfirmationEvidence } from "../../domain/confirmation-evidence";
+
 export type JsonSchema = {
   type: "object";
   properties: Record<string, unknown>;
@@ -12,10 +15,12 @@ export type RealtimeFunctionToolDefinition = {
   parameters: JsonSchema;
 };
 
+export type ToolInvocation = Readonly<{ toolCallId: string; confirmationEvidence?: ConfirmationEvidence }>;
+
 export abstract class RealtimeTool {
   abstract readonly definition: RealtimeFunctionToolDefinition;
 
-  abstract execute(argumentsValue: unknown): Promise<unknown>;
+  abstract execute(argumentsValue: unknown, invocation?: ToolInvocation): Promise<unknown>;
 }
 
 export class RealtimeToolRegistry {
@@ -23,18 +28,21 @@ export class RealtimeToolRegistry {
 
   constructor(tools: RealtimeTool[]) {
     this.toolsByName = new Map(tools.map((tool) => [tool.definition.name, tool]));
+    if (this.toolsByName.size !== tools.length) {
+      throw new Error("Duplicate realtime tool definition");
+    }
   }
 
   get definitions(): RealtimeFunctionToolDefinition[] {
     return Array.from(this.toolsByName.values(), (tool) => tool.definition);
   }
 
-  async execute(name: string, argumentsValue: unknown): Promise<unknown> {
+  async execute(name: string, argumentsValue: unknown, invocation?: ToolInvocation): Promise<unknown> {
     const tool = this.toolsByName.get(name);
     if (!tool) {
-      throw new Error(`Unknown realtime tool: ${name}`);
+      throw new ToolError("tool_unavailable", "This tool is not available for the current call.");
     }
 
-    return tool.execute(argumentsValue);
+    return tool.execute(argumentsValue, invocation);
   }
 }

@@ -26,9 +26,8 @@ export default async function OperationPage({ params }: { params: Promise<{ refe
         <Link href="/dashboard" className="back-to-operations">Back to active operations</Link>
         <header className="operation-detail-header">
           <div>
-            <p className="operation-reference">{operation.reference}</p>
-            <h1>{operation.client}</h1>
-            <p className="operation-route">{operation.origin} <span aria-hidden="true">→</span> {operation.destination}</p>
+            <p className="operation-reference">{operation.reference} · {operation.client}</p>
+            <h1>{operation.name}</h1>
           </div>
           <div className="operation-status-block">
             <span className={`status-mark status-${operation.status.toLowerCase().replaceAll(" ", "-")}`}>{operation.status}</span>

@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { supabaseAdmin } from "../../config/supabase";
+import { OperationName } from "../../domain/operation-name";
 
 const E164_PHONE = /^\+[1-9][0-9]{7,14}$/;
 
@@ -24,11 +25,16 @@ export type Provider = {
 export type OperationContext = {
   id: string;
   reference: string;
+  name: string;
   status: string;
   containerType: string | null;
   pickupLocation: string | null;
   deliveryLocation: string | null;
   updatedAt: string;
+};
+
+export type ProviderOperationContext = OperationContext & {
+  relationship: "quote_requested" | "booking_pending" | "booking_confirmed";
 };
 
 type OperationRow = {
@@ -137,6 +143,7 @@ function toOperationContext(row: OperationRow): OperationContext {
   return {
     id: row.id,
     reference: row.reference,
+    name: OperationName.fromRoute(row.pickup_location, row.delivery_location),
     status: row.status,
     containerType: row.container_type,
     pickupLocation: row.pickup_location,
@@ -163,21 +170,30 @@ export async function listOpenOperationsForContact(
 export async function listActiveOperationsForProvider(
   providerId: string,
   client: SupabaseClient = supabaseAdmin,
-): Promise<OperationContext[]> {
+): Promise<ProviderOperationContext[]> {
   const requestResult = await client
     .from("quote_requests")
-    .select("id,operation_id,status")
-    .eq("provider_id", providerId)
-    .in("status", ["pending", "queued", "contacted", "responded"]);
+    .select("id,operation_id,status,expires_at")
+    .eq("provider_id", providerId);
   if (requestResult.error) throw requestResult.error;
 
   const requests = (requestResult.data ?? []) as Array<{
     id: string;
     operation_id: string;
     status: string;
+    expires_at: string;
   }>;
-  const operationIds = new Set(requests.map((request) => request.operation_id));
+  const relationships = new Map<string, ProviderOperationContext["relationship"]>();
+  const now = Date.now();
+  for (const request of requests) {
+    if (["pending", "queued", "contacted", "responded"].includes(request.status)
+      && Date.parse(request.expires_at) > now) {
+      relationships.set(request.operation_id, "quote_requested");
+    }
+  }
 
+  // A confirmed booking remains active even after its original quote request
+  // expires. Inspect bookings from all of this provider's requests.
   if (requests.length > 0) {
     const quoteResult = await client
       .from("quotes")
@@ -189,25 +205,29 @@ export async function listActiveOperationsForProvider(
     if (quoteIds.length > 0) {
       const bookingResult = await client
         .from("bookings")
-        .select("operation_id")
+        .select("operation_id,status")
         .in("quote_id", quoteIds)
         .in("status", ["pending", "confirmed"]);
       if (bookingResult.error) throw bookingResult.error;
       for (const booking of bookingResult.data ?? []) {
-        operationIds.add(booking.operation_id as string);
+        relationships.set(booking.operation_id as string,
+          booking.status === "confirmed" ? "booking_confirmed" : "booking_pending");
       }
     }
   }
 
-  if (operationIds.size === 0) return [];
+  if (relationships.size === 0) return [];
 
   const operationResult = await client
     .from("operations")
     .select("id,reference,status,container_type,pickup_location,delivery_location,updated_at")
-    .in("id", [...operationIds])
+    .in("id", [...relationships.keys()])
     .not("status", "in", "(cancelled,failed)")
     .order("updated_at", { ascending: false });
   if (operationResult.error) throw operationResult.error;
 
-  return ((operationResult.data ?? []) as OperationRow[]).map(toOperationContext);
+  return ((operationResult.data ?? []) as OperationRow[]).map((row) => ({
+    ...toOperationContext(row),
+    relationship: relationships.get(row.id)!,
+  }));
 }

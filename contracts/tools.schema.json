@@ -73,6 +73,7 @@
               "type": "object",
               "properties": {
                 "operation_reference": { "type": "string", "pattern": "^OP-[0-9]{6,}$" },
+                "operation_name": { "type": "string", "minLength": 1, "description": "Display name derived from pickup and delivery locations; not a unique identifier." },
                 "status": { "type": "string" },
                 "container_type": { "type": ["string", "null"] },
                 "pickup_location": { "type": ["string", "null"] },
@@ -81,6 +82,7 @@
               },
               "required": [
                 "operation_reference",
+                "operation_name",
                 "status",
                 "container_type",
                 "pickup_location",
@@ -105,7 +107,7 @@
         "type": "object",
         "properties": {
           "container_type": { "type": "string", "minLength": 1 },
-          "gross_weight_kg": { "type": "number", "exclusiveMinimum": 0 },
+          "gross_weight_kg": { "type": "number", "exclusiveMinimum": 0, "maximum": 999999999.999, "multipleOf": 0.001 },
           "pickup_location": { "type": "string", "minLength": 1 },
           "delivery_location": { "type": "string", "minLength": 1 },
           "empty_return_depot": { "type": "string", "minLength": 1 },
@@ -125,7 +127,7 @@
           "operation_reference": { "type": "string", "pattern": "^OP-[0-9]{6,}$" },
           "status": { "const": "collecting_details" },
           "missing_fields": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
-          "next_profile": { "const": "client_create" }
+          "next_profile": { "type": "string", "enum": ["client_create", "client_confirm"] }
         },
         "required": ["operation_reference", "status", "missing_fields", "next_profile"],
         "additionalProperties": false
@@ -146,7 +148,7 @@
             "type": "object",
             "properties": {
               "container_type": { "type": "string", "minLength": 1 },
-              "gross_weight_kg": { "type": "number", "exclusiveMinimum": 0 },
+              "gross_weight_kg": { "type": "number", "exclusiveMinimum": 0, "maximum": 999999999.999, "multipleOf": 0.001 },
               "pickup_location": { "type": "string", "minLength": 1 },
               "delivery_location": { "type": "string", "minLength": 1 },
               "empty_return_depot": { "type": "string", "minLength": 1 },
@@ -224,7 +226,7 @@
       "parameters": {
         "type": "object",
         "properties": {
-          "price_cap": { "type": "number", "exclusiveMinimum": 0 },
+          "price_cap": { "type": "number", "exclusiveMinimum": 0, "maximum": 999999999999.99, "multipleOf": 0.01 },
           "currency": { "type": "string", "pattern": "^[A-Z]{3}$" },
           "action_windows": {
             "type": "array",
@@ -239,7 +241,7 @@
               "additionalProperties": false
             }
           },
-          "minimum_payment_term_days": { "type": "integer", "minimum": 0 }
+          "minimum_payment_term_days": { "type": "integer", "minimum": 0, "maximum": 2147483647 }
         },
         "required": ["price_cap", "currency", "action_windows", "minimum_payment_term_days"],
         "additionalProperties": false
@@ -277,6 +279,7 @@
               "type": "object",
               "properties": {
                 "operation_reference": { "type": "string", "pattern": "^OP-[0-9]{6,}$" },
+                "operation_name": { "type": "string", "minLength": 1, "description": "Display name derived from pickup and delivery locations; not a unique identifier." },
                 "relationship": {
                   "type": "string",
                   "enum": ["quote_requested", "booking_pending", "booking_confirmed"]
@@ -287,6 +290,7 @@
               },
               "required": [
                 "operation_reference",
+                "operation_name",
                 "relationship",
                 "pickup_location",
                 "delivery_location",

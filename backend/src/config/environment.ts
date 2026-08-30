@@ -10,6 +10,7 @@ const environmentSchema = z.object({
   PORT: z.coerce.number().int().min(1).max(65_535).default(3000),
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("info"),
+  CLIENT_OPERATION_TOOLS_ENABLED: z.enum(["true", "false"]).default("false").transform((value) => value === "true"),
   SUPABASE_URL: z.url(),
   SUPABASE_SECRET_KEY: z.string().min(1),
   SUPABASE_PUBLISHABLE_KEY: z.string().min(1),

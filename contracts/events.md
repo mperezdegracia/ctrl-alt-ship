@@ -47,7 +47,10 @@ The database stores the envelope in columns; only event-specific data belongs in
 - Payload schemas evolve by incrementing `schema_version`; existing versions are
   never reinterpreted.
 - Events never contain full transcripts. Evidence events link to commitments,
-  which contain the minimal excerpt and recording checkpoint.
+  which contain the minimal excerpt and recording checkpoint. `mandate.confirmed`
+  links through `mandate_id` to the mandate's server-captured confirmation evidence.
+  Realtime input-audio offsets are not recording checkpoints without an explicit
+  recording correlation; leave `recording_checkpoint` null in that case.
 - Provider-facing event payloads never expose the client's `price_cap`.
 
 ## Domain events
@@ -121,6 +124,10 @@ provider errors and stack traces stay in observability.
 | `operation.cancelled` | The client confirms `cancel_operation`. | `operation_reference`, `reason`, `provider_email_queued` |
 | `mandate.confirmed` | `confirm_mandate` creates an immutable version. | `operation_reference`, `mandate_id`, `mandate_version`, `supersedes_version?` |
 | `sourcing.started` | Provider sourcing starts or restarts. | `operation_reference`, `mandate_version`, `provider_count`, `reason` |
+
+`sourcing.started` records entry/reentry into the sourcing state, not proof of a
+provider call. `provider_count` is zero when no provider has been dispatched yet;
+subsequent dispatch is recorded through quote-request events.
 
 `operation.updated.changes` maps each changed field to `{ "before": ..., "after": ... }`.
 `sourcing.started.reason` is `initial`, `mandate_changed`, `provider_cancelled` or

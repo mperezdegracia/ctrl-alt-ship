@@ -3,6 +3,8 @@ import {
   type AcceptedRoutingDecision,
 } from "../agents/routing-instructions";
 import type { RealtimeFunctionToolDefinition } from "../tools/realtime-tool";
+import type { ClientFlowState } from "../../domain/client-operation-service";
+import type { SessionUpdateEvent } from "openai/resources/realtime/realtime";
 
 export type RealtimeSessionConfiguration = {
   type: "realtime";
@@ -29,6 +31,7 @@ export class RealtimeSessionFactory {
   create(
     decision: AcceptedRoutingDecision,
     tools: RealtimeFunctionToolDefinition[],
+    flowState?: ClientFlowState,
   ): RealtimeSessionConfiguration {
     return {
       type: "realtime",
@@ -45,11 +48,25 @@ export class RealtimeSessionFactory {
           speed: 1.05,
         },
       },
-      instructions: new RoutingInstructionsBuilder(decision).build(),
+      instructions: new RoutingInstructionsBuilder(decision, flowState).build(),
       tools,
       tool_choice: "auto",
       parallel_tool_calls: false,
     };
   }
 
+  createFlowUpdate(
+    decision: AcceptedRoutingDecision,
+    tools: RealtimeFunctionToolDefinition[],
+    flowState?: ClientFlowState,
+  ): SessionUpdateEvent {
+    return {
+      type: "session.update",
+      session: {
+        type: "realtime",
+        tools,
+        instructions: new RoutingInstructionsBuilder(decision, flowState).build(),
+      },
+    };
+  }
 }

@@ -7,6 +7,7 @@ export type OperationStatus =
 
 export type Operation = {
   reference: string;
+  name: string;
   client: string;
   container: string;
   containerType: string;
@@ -74,7 +75,7 @@ export type OperationDossier = Operation & {
   commitments: Commitment[];
 };
 
-export const operations: Operation[] = [
+const operationFixtures: Omit<Operation, "name">[] = [
   {
     reference: "OP-900024",
     client: "Textiles del Plata",
@@ -155,6 +156,11 @@ export const operations: Operation[] = [
     updated: "41 min ago",
   },
 ];
+
+export const operations: Operation[] = operationFixtures.map((operation) => ({
+  ...operation,
+  name: `${operation.origin.trim()} → ${operation.destination.trim()}`,
+}));
 
 const operationDossiers: Record<string, OperationDossier> = {
   "OP-900024": {

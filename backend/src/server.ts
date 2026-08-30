@@ -1,9 +1,9 @@
 import express from "express";
 import OpenAI from "openai";
-import WebSocket from "ws";
 
 import { environment } from "./config/environment";
 import { supabaseAdmin } from "./config/supabase";
+import { publicToolError, ToolError } from "./domain/tool-error";
 import {
   requireDashboardAuth,
   type DashboardRequest,
@@ -23,8 +23,11 @@ import {
   routeIncomingCall,
   type IncomingCallEvent,
 } from "./tango/telephony/inbound-routing";
-import { OperationStatusTool } from "./tango/tools/operation-status-tool";
-import { RealtimeToolRegistry } from "./tango/tools/realtime-tool";
+import { SupabaseOperationReadRepository } from "./tango/supabase/operation-read-repository";
+import { CallToolFactory } from "./tango/tools/call-tool-factory";
+import { SupabaseClientOperationRepository } from "./tango/supabase/client-operation-repository";
+import { OpenAIRealtimeGateway } from "./tango/realtime/openai-realtime-gateway";
+import { ConfirmationEvidenceTracker } from "./tango/realtime/confirmation-evidence-tracker";
 
 const app = express();
 
@@ -72,28 +75,17 @@ app.use((req, res, next) => {
 const OPENAI_API_KEY = environment.OPENAI_API_KEY;
 const logger = new StructuredLogger("tango-backend");
 const realtimeSessionFactory = new RealtimeSessionFactory();
-const realtimeTools = new RealtimeToolRegistry([
-  new OperationStatusTool(),
-]);
+const callToolFactory = new CallToolFactory(
+  new SupabaseOperationReadRepository(supabaseAdmin),
+  environment.CLIENT_OPERATION_TOOLS_ENABLED
+    ? new SupabaseClientOperationRepository(supabaseAdmin) : undefined,
+);
 
 const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
+const realtimeGateway = new OpenAIRealtimeGateway(openai);
 
 async function rejectRealtimeCall(callId: string): Promise<void> {
-  const response = await fetch(
-    `https://api.openai.com/v1/realtime/calls/${encodeURIComponent(callId)}/reject`,
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${OPENAI_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ status_code: 603 }),
-    },
-  );
-
-  if (!response.ok) {
-    throw new Error(`OpenAI call rejection failed with status ${response.status}`);
-  }
+  await realtimeGateway.reject(callId);
 }
 
 app.get("/", (_req, res) => {
@@ -200,13 +192,35 @@ app.post("/openai/webhook", express.raw({ type: "*/*" }), async (req, res) => {
       candidate_operations: routingDecision.operations.map((operation) => operation.reference),
     });
 
+    let persistedCallId: string;
     try {
-      await persistRoutedCall(routingDecision);
+      persistedCallId = await persistRoutedCall(routingDecision);
       callLogger.info("call.routing_persisted");
     } catch (error) {
       callLogger.error("call.routing_persist_failed", { error });
       await rejectRealtimeCall(callId);
       callLogger.warn("call.rejected", { reason: "routing_persist_failed", sip_status: 603 });
+      res.sendStatus(200);
+      return;
+    }
+
+    const realtimeTools = callToolFactory.create({
+      callId: persistedCallId,
+      realtimeCallId: callId,
+      persona: routingDecision.identity.persona,
+      counterpartyId: routingDecision.identity.persona === "client"
+        ? routingDecision.identity.contactId
+        : routingDecision.identity.providerId,
+    });
+    try {
+      await realtimeTools.refresh();
+      callLogger.info("call.tools_configured", {
+        profile: realtimeTools.flowState?.profile ?? "read_only",
+        tools: realtimeTools.definitions.map((tool) => tool.name),
+      });
+    } catch (error) {
+      callLogger.error("call.tool_state_failed", { error });
+      await rejectRealtimeCall(callId);
       res.sendStatus(200);
       return;
     }
@@ -219,41 +233,26 @@ app.post("/openai/webhook", express.raw({ type: "*/*" }), async (req, res) => {
 
     const acceptStartedAt = Date.now();
 
-    const acceptResponse = await fetch(
-      `https://api.openai.com/v1/realtime/calls/${callId}/accept`,
-      {
-        method: "POST",
-
-        headers: {
-          Authorization: `Bearer ${OPENAI_API_KEY}`,
-          "Content-Type": "application/json",
-        },
-
-        body: JSON.stringify(
-          realtimeSessionFactory.create(routingDecision, realtimeTools.definitions),
-        ),
-      }
-    );
-
-    const acceptText = await acceptResponse.text();
-
-    callLogger.info("call.accept_completed", {
-      status: acceptResponse.status,
-      duration_ms: Date.now() - acceptStartedAt,
-    });
-
-    if (!acceptResponse.ok) {
+    try {
+      const accepted = await realtimeGateway.accept(callId,
+        realtimeSessionFactory.create(routingDecision, realtimeTools.definitions, realtimeTools.flowState),
+      );
+      callLogger.info("call.accept_completed", {
+        status: accepted.status,
+        request_id: accepted.requestId,
+        duration_ms: Date.now() - acceptStartedAt,
+      });
+    } catch (error) {
       callLogger.error("call.accept_failed", {
-        status: acceptResponse.status,
-        response_body: acceptText.slice(0, 1_000),
+        status: error instanceof OpenAI.APIError ? error.status : undefined,
+        request_id: error instanceof OpenAI.APIError ? error.requestID : undefined,
+        duration_ms: Date.now() - acceptStartedAt,
       });
       res.status(502).json({ error: "openai_call_accept_failed" });
       return;
     }
 
-    // The Realtime SIP connector expects the API key in the acknowledgement.
-    // This response is sent only after a valid OpenAI signature was verified.
-    res.setHeader("Authorization", `Bearer ${OPENAI_API_KEY}`);
+    // Acknowledge the verified webhook without returning server credentials.
     res.sendStatus(200);
 
     /*
@@ -262,18 +261,10 @@ app.post("/openai/webhook", express.raw({ type: "*/*" }), async (req, res) => {
      * ============================================================
      */
 
-    const ws = new WebSocket(
-      `wss://api.openai.com/v1/realtime?call_id=${encodeURIComponent(
-        callId
-      )}`,
-      {
-        headers: {
-          Authorization: `Bearer ${OPENAI_API_KEY}`,
-        },
-      }
-    );
+    const realtime = realtimeGateway.connectSideband(callId);
+    const confirmationEvidence = new ConfirmationEvidenceTracker();
 
-    ws.on("open", () => {
+    realtime.socket.on("open", () => {
       callLogger.info("realtime.sideband_connected");
 
       // Let VAD trigger the first reply after the caller speaks, so the
@@ -290,12 +281,9 @@ app.post("/openai/webhook", express.raw({ type: "*/*" }), async (req, res) => {
      * ============================================================
      */
 
-    ws.on("message", async (data) => {
+    realtime.on("event", async (message) => {
       try {
-        const message = JSON.parse(
-          data.toString()
-        );
-
+        confirmationEvidence.observe(message);
         callLogger.debug("realtime.event_received", { event_type: message.type });
 
         switch (message.type) {
@@ -307,7 +295,7 @@ app.post("/openai/webhook", express.raw({ type: "*/*" }), async (req, res) => {
 
           case "session.created":
             callLogger.info("realtime.session_created", {
-              model: message.session?.model,
+              model: "model" in message.session ? message.session.model : undefined,
             });
             break;
 
@@ -357,22 +345,31 @@ app.post("/openai/webhook", express.raw({ type: "*/*" }), async (req, res) => {
               arguments: message.arguments,
             });
 
-            let args: unknown = {};
-
             try {
-              args = JSON.parse(
-                message.arguments || "{}"
-              );
-            } catch {
-              callLogger.error("tool.arguments_invalid", {
-                tool_name: message.name,
-                tool_call_id: message.call_id,
+              let args: unknown;
+              try {
+                args = JSON.parse(message.arguments);
+              } catch {
+                throw new ToolError("invalid_arguments", "Tool arguments must be valid JSON matching the tool schema.");
+              }
+              const evidence = message.name === "confirm_mandate"
+                ? confirmationEvidence.capture(message.response_id) : undefined;
+              if (["create_operation", "update_operation"].includes(message.name)) confirmationEvidence.invalidate();
+              const result = await realtimeTools.execute(message.name, args, {
+                toolCallId: message.call_id, confirmationEvidence: evidence,
               });
-              return;
-            }
+              if (message.name === "confirm_mandate") confirmationEvidence.invalidate();
 
-            try {
-              const result = await realtimeTools.execute(message.name, args);
+              try {
+                await realtimeTools.refresh();
+              } catch (error) {
+                // The mutation may already be committed. Preserve its success
+                // result, but remove tools until state can be refreshed safely.
+                callLogger.error("tool.profile_refresh_failed", { error });
+              }
+              realtime.send(realtimeSessionFactory.createFlowUpdate(
+                routingDecision, realtimeTools.definitions, realtimeTools.flowState,
+              ));
 
               callLogger.debug("tool.result", {
                 tool_name: message.name,
@@ -385,20 +382,14 @@ app.post("/openai/webhook", express.raw({ type: "*/*" }), async (req, res) => {
                * ----------------------------------------------------
                */
 
-              ws.send(
-                JSON.stringify({
-                  type: "conversation.item.create",
-
-                  item: {
-                    type: "function_call_output",
-
-                    call_id: message.call_id,
-
-                    output:
-                      JSON.stringify(result),
-                  },
-                })
-              );
+              realtime.send({
+                type: "conversation.item.create",
+                item: {
+                  type: "function_call_output",
+                  call_id: message.call_id,
+                  output: JSON.stringify(result),
+                },
+              });
 
               /*
                * Ahora le decimos al modelo:
@@ -407,36 +398,37 @@ app.post("/openai/webhook", express.raw({ type: "*/*" }), async (req, res) => {
                * continuá respondiendo."
                */
 
-              ws.send(
-                JSON.stringify({
-                  type: "response.create",
-                })
-              );
+              realtime.send({ type: "response.create" });
 
               callLogger.info("tool.completed", {
                 tool_name: message.name,
                 tool_call_id: message.call_id,
               });
             } catch (error) {
+              if (message.name === "confirm_mandate") confirmationEvidence.invalidate();
               callLogger.error("tool.failed", {
                 tool_name: message.name,
                 tool_call_id: message.call_id,
                 error,
               });
 
-              ws.send(JSON.stringify({
+              try { await realtimeTools.refresh(); } catch (refreshError) {
+                callLogger.error("tool.profile_refresh_failed", { error: refreshError });
+              }
+              realtime.send(realtimeSessionFactory.createFlowUpdate(
+                routingDecision, realtimeTools.definitions, realtimeTools.flowState,
+              ));
+
+              realtime.send({
                 type: "conversation.item.create",
                 item: {
                   type: "function_call_output",
                   call_id: message.call_id,
-                  output: JSON.stringify({
-                    ok: false,
-                    error: "The requested operation could not be completed.",
-                  }),
+                  output: JSON.stringify(publicToolError(error)),
                 },
-              }));
+              });
 
-              ws.send(JSON.stringify({ type: "response.create" }));
+              realtime.send({ type: "response.create" });
             }
 
             break;
@@ -470,30 +462,23 @@ app.post("/openai/webhook", express.raw({ type: "*/*" }), async (req, res) => {
             });
             break;
 
-          /*
-           * --------------------------------------------------------
-           * ERROR
-           * --------------------------------------------------------
-           */
-
-          case "error":
-            callLogger.error("realtime.error", {
-              error_type: message.error?.type,
-              error_code: message.error?.code,
-              error_message: message.error?.message,
-            });
-            break;
         }
       } catch (error) {
-        callLogger.error("realtime.message_parse_failed", { error });
+        callLogger.error("realtime.event_handler_failed", { error });
       }
     });
 
-    ws.on("error", (error) => {
-      callLogger.error("realtime.websocket_error", { error });
+    realtime.on("error", (error) => {
+      // SDK normalizes API errors, malformed frames and transport errors here.
+      callLogger.error("realtime.error", {
+        error_type: error.error?.type,
+        error_code: error.error?.code,
+        event_id: error.event_id,
+        error_message: error.message,
+      });
     });
 
-    ws.on("close", (code, reason) => {
+    realtime.socket.on("close", (code, reason) => {
       callLogger.info("realtime.sideband_closed", {
         code,
         reason: reason.toString(),

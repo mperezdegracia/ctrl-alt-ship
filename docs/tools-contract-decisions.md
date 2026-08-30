@@ -13,6 +13,13 @@
   cotización, booking y evidencia.
 - Las referencias públicas `OP-000001` sirven para desambiguar operaciones y
   siempre se validan contra la contraparte autenticada.
+- El UUID interno y la referencia `OP-…` tienen defaults generados por PostgreSQL.
+  La creación normal omite ambos campos; el seed reserva una referencia fija de demo.
+- El nombre visible se deriva de `pickup_location → delivery_location` y se expone
+  como `operation_name` en los listados. Se presenta junto a la referencia; puede
+  repetirse y no se usa para autorizar ni identificar unívocamente una operación.
+  Si faltan ubicaciones, se muestra origen/destino pendiente, sin inventar datos.
+  No se persiste otro campo: cambiar la ruta actualiza el nombre sin cambiar el OP.
 - La disponibilidad de una tool orienta al modelo, pero no autoriza la acción:
   cada handler vuelve a validar persona, estado, propiedad e idempotencia.
 
@@ -30,6 +37,14 @@
   rechazar el pedido, confirmar o rechazar un booking pendiente, reprogramar,
   cancelar booking o escalar. Después de elegir se bloquea el flujo.
 - `escalate` queda disponible solamente para la persona provider en V1.
+- La implementación se activa por tramos: crear/editar requiere la migración de
+  tools de cliente y `CLIENT_OPERATION_TOOLS_ENABLED=true`. Las tools todavía sin
+  handler no se exponen, aunque figuren en el perfil del contrato final.
+- Un borrador creado con todos los campos operativos puede devolver directamente
+  `next_profile: client_confirm`; uno incompleto devuelve `client_create`.
+- Cada mutación de cliente recibe el ID de invocación de Realtime desde el sideband,
+  nunca desde los argumentos del modelo. Su resultado se persiste junto a la mutación
+  y los eventos para permitir reintentos idempotentes.
 
 ## Prompt y sesión Realtime
 
@@ -38,9 +53,10 @@
 - La salida de audio usa la voz `cedar` a velocidad `1.05`. La voz se fija antes
   de producir el primer audio porque no puede cambiarse después dentro de la
   misma sesión.
-- El saludo inicial es en inglés. El agente sólo cambia de idioma ante un pedido
-  explícito o una intervención sustantiva en otro idioma; nombres, direcciones,
-  acentos o palabras aisladas no disparan el cambio.
+- El agente espera la primera intervención y responde en el idioma del usuario
+  desde el saludo. Cambia ante un pedido explícito o una intervención clara en
+  otro idioma; nombres, direcciones, acentos o palabras aisladas no disparan
+  cambios una vez establecido el idioma.
 - Las instrucciones se componen con una base compartida, reglas polimórficas de
   cliente/provider y contexto verificado al final. Teléfono, email, SIP, UUIDs,
   transcript y errores internos no se inyectan al prompt.
@@ -61,6 +77,16 @@
   después de un resumen verbal y una confirmación inequívoca del cliente.
 - Cada confirmación crea un mandato inmutable nuevo con snapshot construido por
   el servidor. Transcript, timestamp y checkpoint tampoco los aporta el modelo.
+- La confirmación cierra las tools de cliente para esa llamada, sin cortar el audio.
+  Un reintento conserva el resultado original; otra confirmación requiere otra llamada.
+- Una revisión de operación distinta de la resumida obliga a repetir el resumen y
+  confirmar de nuevo. No se usan snapshots o revisiones aportados por el modelo.
+- La evidencia del mandato guarda resumen reproducido y siguiente intervención,
+  correlacionados por eventos de Realtime. Interpretar la aprobación sigue siendo
+  responsabilidad conversacional del agente, no de una regex de palabras afirmativas.
+  Si falta evidencia o el resumen fue interrumpido, no se confirma.
+- El offset `input_audio_end_ms` se identifica como audio Realtime y no se presenta
+  como checkpoint de una grabación Twilio sin correlación. Esta integración queda pendiente.
 - Cambiar cualquier término operativo activa
   `mandate_confirmation_required`. Hasta una nueva confirmación se bloquean
   sourcing, contacto con providers y cambios de booking.

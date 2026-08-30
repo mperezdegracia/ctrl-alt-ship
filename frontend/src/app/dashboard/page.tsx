@@ -33,7 +33,7 @@ export default async function DashboardPage() {
           <section className="escalation-sheet" aria-labelledby="escalation-title">
             <div className="escalation-live"><span className="live-dot" aria-hidden="true" />Live call · awaiting supervisor</div>
             <div className="escalation-copy">
-              <p className="operation-reference">{escalation.reference} · {escalation.client}</p>
+              <p className="operation-reference">{escalation.reference} · {escalation.name}</p>
               <h2 id="escalation-title">A provider requested a pickup outside the Action Window.</h2>
               <p>Requested: Tue 02 Sep, 16:00–18:00 · Authorized: Mon 01 Sep, 08:00–14:00</p>
             </div>
@@ -56,7 +56,7 @@ export default async function DashboardPage() {
             <tbody>
               {operations.map((operation) => (
                 <tr key={operation.reference} className={operation.isEscalated ? "operation-row-escalated" : undefined}>
-                  <td><Link href={`/dashboard/operations/${operation.reference}`}><strong>{operation.reference}</strong><span>{operation.client}</span></Link></td>
+                  <td><Link href={`/dashboard/operations/${operation.reference}`}><strong>{operation.reference}</strong><span>{operation.name}</span><span>{operation.client}</span></Link></td>
                   <td><span>{operation.origin}</span><strong>{operation.destination}</strong></td>
                   <td><span className={`status-mark status-${operation.status.toLowerCase().replaceAll(" ", "-")}`}>{operation.status}</span></td>
                   <td>{operation.nextStep}</td>

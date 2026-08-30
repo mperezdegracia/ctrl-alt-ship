@@ -9,8 +9,7 @@ import {
   routeIncomingCall,
   type IncomingCallEvent,
 } from "../../src/tango/telephony/inbound-routing";
-import { OperationStatusTool } from "../../src/tango/tools/operation-status-tool";
-import { RealtimeToolRegistry } from "../../src/tango/tools/realtime-tool";
+import { CallToolFactory } from "../../src/tango/tools/call-tool-factory";
 
 const lucasPhone = "+5491163723502";
 const providerPhone = "+5491132555829";
@@ -19,6 +18,7 @@ const unknownPhone = "+5491199999999";
 const operation: OperationContext = {
   id: "11111111-1111-4111-8111-111111111111",
   reference: "OP-900001",
+  name: "Terminal 4 → González Catán",
   status: "booking_confirmed",
   containerType: "40_dry",
   pickupLocation: "Terminal 4, Puerto de Buenos Aires",
@@ -90,13 +90,22 @@ async function main(): Promise<void> {
 
     const session = new RealtimeSessionFactory().create(
       client,
-      new RealtimeToolRegistry([new OperationStatusTool()]).definitions,
+      new CallToolFactory({
+        isAuthorized: async () => true,
+        listForClient: async () => [],
+        listForProvider: async () => [],
+      }).create({
+        callId: "test-call", realtimeCallId: "rtc_client", persona: "client",
+        counterpartyId: client.identity.persona === "client" ? client.identity.contactId : "",
+      }).definitions,
     );
+    assert.deepEqual(session.tools.map((tool) => tool.name), ["list_open_operations"]);
     assert.equal(session.model, "gpt-realtime-2.1");
     assert.equal(session.reasoning.effort, "low");
     assert.equal(session.audio.output.voice, "cedar");
     assert.equal(session.audio.output.speed, 1.05);
     assert.match(session.instructions, /# CREATE FLOW/);
+    assert.match(session.instructions, /OP-900001 · Terminal 4 → González Catán/);
     assertLanguagePolicy(session);
     assert.doesNotMatch(session.instructions, new RegExp(lucasPhone.replace("+", "\\+")));
     assert.doesNotMatch(session.instructions, /lucasaffre@gmail\.com/);

@@ -66,6 +66,7 @@ export async function persistRoutedCall(
     .select("id")
     .eq("call_id", callId)
     .eq("type", "call.routed")
+    .limit(1)
     .maybeSingle();
   if (routedEvent.error) throw routedEvent.error;
 

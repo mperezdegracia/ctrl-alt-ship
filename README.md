@@ -120,6 +120,14 @@ OpenAI webhooks:
 The OpenAI API key must remain only in `backend/.env` locally and in Render.
 The browser never receives it.
 
+Voice call acceptance/rejection and the Realtime sideband use the official
+OpenAI Node SDK through `OpenAIRealtimeGateway`. The webhook acknowledgement
+does not return credentials. Run the SDK transport harness without real calls:
+
+```bash
+npm --prefix backend run harness:realtime:sdk
+```
+
 ## Running locally
 
 Supabase remains hosted and shared; neither app starts a local database or Auth

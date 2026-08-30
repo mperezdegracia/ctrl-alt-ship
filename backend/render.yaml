@@ -15,6 +15,8 @@ services:
     envVars:
       - key: NODE_ENV
         value: production
+      - key: CLIENT_OPERATION_TOOLS_ENABLED
+        value: "false"
       - key: OPENAI_API_KEY
         sync: false
       - key: OPENAI_WEBHOOK_SECRET
