@@ -50,6 +50,8 @@ import { SupabaseProviderContactRepository } from "./tango/supabase/provider-con
 import { ProviderContactWorker } from "./tango/workers/provider-contact-worker";
 import { ProviderCallStatusHandler, ProviderCallStatusHttpError } from "./tango/telephony/provider-call-status-handler";
 import { RecordingStatusHandler, RecordingStatusHttpError } from "./tango/telephony/recording-status-handler";
+import { HandoffReferHandler, HandoffReferHttpError } from "./tango/telephony/handoff-refer-handler";
+import { HandoffReferRepository } from "./tango/supabase/handoff-refer-repository";
 
 const app = express();
 
@@ -306,6 +308,35 @@ app.post("/twilio/call-status", async (req, res) => {
 // the dashboard routes exist. Voice webhooks deliberately do not use it.
 app.get("/api/me", requireDashboardAuth, (req: DashboardRequest, res) => {
   res.json({ user: req.dashboardUser });
+});
+
+const handoffReferRepository = new HandoffReferRepository(supabaseAdmin);
+const handoffReferHandler = new HandoffReferHandler({
+  accountSid: environment.TWILIO_ACCOUNT_SID ?? "",
+  fromNumber: environment.TWILIO_FROM_NUMBER ?? "",
+  baseUrl: environment.PUBLIC_BASE_URL ?? "",
+  verifySignature: verifyTwilioSignature,
+  find: (callId) => handoffReferRepository.find(callId),
+  markFailed: (context, detail) => escalationHandoffRepository.mark({
+    escalationId: context.escalationId, sourceCallId: context.sourceCallId,
+    status: "transfer_failed", detail,
+  }),
+  log: (event, fields) => logger.info(event, fields),
+});
+app.post(["/twilio/handoff-refer", "/twilio/handoff-finished"], async (req, res) => {
+  const baseUrl = environment.PUBLIC_BASE_URL?.replace(/\/$/, "");
+  if (!baseUrl) return res.sendStatus(503);
+  try {
+    const twiml = await handoffReferHandler.handle({
+      url: `${baseUrl}${req.originalUrl}`, body: req.body,
+      signature: req.header("x-twilio-signature") ?? undefined,
+      finished: req.path === "/twilio/handoff-finished",
+    });
+    return res.type("text/xml").send(twiml);
+  } catch (error) {
+    logger.error("escalation.twilio_callback_failed", { error });
+    return res.sendStatus(error instanceof HandoffReferHttpError ? error.statusCode : 500);
+  }
 });
 
 registerDashboardRoutes(app, logger);

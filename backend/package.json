@@ -28,6 +28,7 @@
     "dashboard:read": "tsx scripts/harnesses/dashboard-read.ts",
     "dashboard:console:read": "tsx scripts/harnesses/dashboard-console-read.ts",
     "harness:escalation": "node --require tsx/cjs scripts/harnesses/escalation-handoff.ts",
+    "harness:escalation:refer": "node --require tsx/cjs scripts/harnesses/handoff-refer.ts",
     "harness:escalation:triggers": "node --require tsx/cjs scripts/harnesses/escalation-triggers.ts",
     "harness:escalation:durable": "tsx scripts/harnesses/durable-escalation.ts",
     "harness:twilio-handoff": "node --require tsx/cjs scripts/harnesses/twilio-handoff-smoke.ts",

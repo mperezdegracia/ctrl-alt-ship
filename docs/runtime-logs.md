@@ -59,6 +59,24 @@ La escalación conserva su destinatario configurable en Directory
 aceptado no prueba que el Supervisor atendió. Los logs heredados pueden contener
 datos de negocio: limitar acceso y retención según la política del entorno.
 
+En llamadas outbound, el `<Dial>` que conecta a OpenAI debe incluir `referUrl`
+apuntando a `/twilio/handoff-refer?call_record_id=...`. Se construye con el
+`PUBLIC_BASE_URL` existente, sin otra variable de entorno. El callback firmado
+valida cuenta, llamada y destinatario de la escalación antes de devolver el
+`<Dial><Number>` humano. El teléfono sigue viniendo de Directory.
+
+- `escalation.twilio_dial_requested`: Twilio pidió las instrucciones para marcar
+  al destinatario; no confirma respuesta.
+- `escalation.twilio_dial_finished`: resultado final `completed`, `busy`,
+  `no-answer`, `failed` o `canceled`. Los fallos dejan `transfer_failed` y revisión
+  manual pendiente. `completed` también puede corresponder a un buzón de voz.
+- `escalation.twilio_callback_failed`: firma inválida, contexto inconsistente o
+  error de persistencia; no se devuelve un destino arbitrario.
+
+Esta integración aplica a nuevas llamadas outbound. No modifica los SIP Trunks
+ni los TwiML Bins externos usados para inbound. Referencia:
+[Twilio inbound SIP REFER](https://www.twilio.com/docs/voice/api/refer-to-twilio).
+
 ## Activación y límites
 
 El runbook de activación es documental: pausar dispatch sin feature flag nuevo,

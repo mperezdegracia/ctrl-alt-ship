@@ -19,3 +19,4 @@ jobs:
       - run: npm --prefix backend run db:check
       - run: npm --prefix backend run harness:migrations
       - run: npm --prefix backend run harness:sourcing
+      - run: npm --prefix backend run harness:escalation:refer

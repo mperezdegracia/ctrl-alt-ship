@@ -32,7 +32,8 @@ function requiredTwilioConfig() {
 export function buildOutboundTwiml(callRecordId: string): string {
   const { baseUrl, projectId } = requiredTwilioConfig();
   const sipUri = `sip:${projectId}@sip.api.openai.com;transport=tls?X-Tango-Call-Id=${encodeURIComponent(callRecordId)}`;
-  return `<Response><Dial record="record-from-answer-dual" recordingStatusCallback="${xml(`${baseUrl}/twilio/recording-status`)}" recordingStatusCallbackEvent="completed"><Sip>${xml(sipUri)}</Sip></Dial></Response>`;
+  const referUrl = `${baseUrl}/twilio/handoff-refer?call_record_id=${encodeURIComponent(callRecordId)}`;
+  return `<Response><Dial referUrl="${xml(referUrl)}" referMethod="POST" record="record-from-answer-dual" recordingStatusCallback="${xml(`${baseUrl}/twilio/recording-status`)}" recordingStatusCallbackEvent="completed"><Sip>${xml(sipUri)}</Sip></Dial></Response>`;
 }
 
 export async function createTwilioOutboundCall(request: OutboundCallRequest): Promise<{ sid: string }> {
