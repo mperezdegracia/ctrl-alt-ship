@@ -68,6 +68,58 @@
     {
       "file": "20260830100000_sourcing_dispatch_event.sql",
       "sha256": "1c22e8f833552274fc0973e0af6fd331f028a409ebf931793cd9eae085abb9d7"
+    },
+    {
+      "file": "20260830110000_random_provider_sourcing.sql",
+      "sha256": "9179776f738e0de4a76c612817c9cdb1e847284f2a5c1e1df1f9d4db3a84f861"
+    },
+    {
+      "file": "20260830120000_dashboard_operator_console.sql",
+      "sha256": "f6fb204b0af79d03f5909cbfa04c35829b4ef4a3ebf0d656cd32825bb8a66229"
+    },
+    {
+      "file": "20260830120001_minimal_operation_intake.sql",
+      "sha256": "79208e1fd41db281fb182dc55456b2529832af7968cc261120a421d0ed2ff27b"
+    },
+    {
+      "file": "20260830125000_escalation_handoff_events.sql",
+      "sha256": "97f5dcbf091559be4187fbeacce6b132af372b82da046776f56f748327d2d080"
+    },
+    {
+      "file": "20260830130000_sourcing_judge_review.sql",
+      "sha256": "fcef06afcea7f334776ba08f8163ab852f6bd3b801fd60298b1618f6d90f5df9"
+    },
+    {
+      "file": "20260830140000_price_only_negotiation.sql",
+      "sha256": "cce4195f252cb46cddd96f165d7e4ff7095fceaf2f532e1fc484ebf77a7285f8"
+    },
+    {
+      "file": "20260830150000_minimal_price_quote.sql",
+      "sha256": "015b6b40a117e6f620bb90ec87b54e7adfbd8f71c1c5768012a7fe1630b07c5d"
+    },
+    {
+      "file": "20260830160000_provider_private_price_context.sql",
+      "sha256": "e8642ed1ddb5a5c1b5d6fff48088864e8e7c4b4fd3a23702114fc30d393318b2"
+    },
+    {
+      "file": "20260830170000_automatic_sourcing_selection.sql",
+      "sha256": "3181e44910c7fb94f0258a181e08a297770643d66f1ce00a1b2ad78711cce4bf"
+    },
+    {
+      "file": "20260830180000_durable_handoffs.sql",
+      "sha256": "6d6a2bec42f3f5e90b98e6a52796e761c6708f6b4e2365f21d41098a9c0a8ca2"
+    },
+    {
+      "file": "20260830190000_allow_escalation_tool_receipts.sql",
+      "sha256": "aed77133f7cf076aba15fd958261e96535bb0fe2df541024396ed351e140136a"
+    },
+    {
+      "file": "20260830200000_bookings_replace_commitments.sql",
+      "sha256": "0ec4160578ff42ddcf158d1012300b490f60f0100e53a1ede06d77d9abbcdfa2"
+    },
+    {
+      "file": "20260830210000_call_evidence_retention.sql",
+      "sha256": "3c44821949f1fdf9c2d8fc7eee66097355e266ce7ea1626963c4266b08ed90bd"
     }
   ]
 }

@@ -25,7 +25,6 @@ CREATE TYPE change_request_type AS ENUM ('reschedule', 'cancel');
 CREATE TYPE change_request_verdict AS ENUM ('dentro', 'fuera');
 CREATE TYPE change_request_status AS ENUM ('pending', 'applied', 'rejected', 'escalated');
 CREATE TYPE escalation_status AS ENUM ('started', 'supervisor_joined', 'resolved', 'failed');
-CREATE TYPE commitment_type AS ENUM ('quote', 'booking', 'reschedule', 'cancellation');
 CREATE TYPE outbox_status AS ENUM ('pending', 'processing', 'processed', 'failed');
 CREATE TYPE domain_event_type AS ENUM (
   'call.rejected', 'call.routed', 'call.completed', 'call.failed', 'call.transferred',
@@ -247,6 +246,7 @@ CREATE TABLE operations (
     CHECK (reference ~ '^OP-[0-9]{6,}$'),
   contact_id uuid NOT NULL REFERENCES contacts(id),
   current_mandate_id uuid,
+  current_booking_id uuid,
   mandate_confirmation_required boolean NOT NULL DEFAULT false,
   status operation_status NOT NULL DEFAULT 'draft',
   container_type text,
@@ -277,6 +277,11 @@ CREATE TABLE calls (
   client_tools_completed_at timestamptz,
   provider_tools_completed_at timestamptz,
   recording_url text,
+  recording_sid text UNIQUE,
+  recording_status text NOT NULL DEFAULT 'pending'
+    CHECK (recording_status IN ('pending', 'completed', 'absent', 'deleted', 'failed')),
+  recording_completed_at timestamptz,
+  evidence_expires_at timestamptz NOT NULL DEFAULT (now() + interval '90 days'),
   started_at timestamptz NOT NULL DEFAULT now(),
   ended_at timestamptz,
   created_at timestamptz NOT NULL DEFAULT now(),
@@ -302,6 +307,8 @@ CREATE TABLE calls (
   ),
   CHECK (ended_at IS NULL OR ended_at >= started_at)
 );
+CREATE INDEX calls_evidence_expiry_idx ON calls(evidence_expires_at)
+  WHERE evidence_expires_at IS NOT NULL;
 
 CREATE TABLE call_transcript_segments (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -646,6 +653,9 @@ CREATE TABLE bookings (
   confirmed_at timestamptz,
   cancelled_at timestamptz,
   last_change_request_id uuid,
+  source_call_id uuid REFERENCES calls(id),
+  evidence_start_segment_id uuid REFERENCES call_transcript_segments(id),
+  evidence_end_segment_id uuid REFERENCES call_transcript_segments(id),
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now(),
   CHECK (pickup_window_start < pickup_window_end),
@@ -718,6 +728,49 @@ BEFORE INSERT OR UPDATE OF operation_id, quote_id, pickup_window_start, pickup_w
 ON bookings FOR EACH ROW EXECUTE FUNCTION validate_booking();
 CREATE TRIGGER bookings_touch_updated_at
 BEFORE UPDATE ON bookings FOR EACH ROW EXECUTE FUNCTION touch_updated_at();
+
+ALTER TABLE operations
+  ADD CONSTRAINT operations_current_booking_id_fkey
+  FOREIGN KEY (current_booking_id) REFERENCES bookings(id);
+
+CREATE OR REPLACE FUNCTION validate_booking_evidence()
+RETURNS trigger LANGUAGE plpgsql SET search_path = public AS $$
+BEGIN
+  IF NEW.source_call_id IS NOT NULL AND NOT EXISTS (
+    SELECT 1 FROM calls c WHERE c.id = NEW.source_call_id AND c.operation_id = NEW.operation_id
+  ) THEN RAISE EXCEPTION 'booking source call belongs to another operation' USING ERRCODE = '23514'; END IF;
+  IF (NEW.evidence_start_segment_id IS NULL) <> (NEW.evidence_end_segment_id IS NULL) THEN
+    RAISE EXCEPTION 'booking evidence range is incomplete' USING ERRCODE = '23514';
+  END IF;
+  IF NEW.evidence_start_segment_id IS NOT NULL AND NOT EXISTS (
+    SELECT 1 FROM call_transcript_segments first_segment
+    JOIN call_transcript_segments last_segment ON last_segment.id = NEW.evidence_end_segment_id
+    WHERE first_segment.id = NEW.evidence_start_segment_id
+      AND first_segment.call_id = last_segment.call_id
+      AND first_segment.call_id = NEW.source_call_id
+  ) THEN RAISE EXCEPTION 'booking evidence must belong to its source call' USING ERRCODE = '23514'; END IF;
+  RETURN NEW;
+END;
+$$;
+CREATE TRIGGER bookings_validate_evidence
+BEFORE INSERT OR UPDATE OF operation_id, source_call_id, evidence_start_segment_id, evidence_end_segment_id
+ON bookings FOR EACH ROW EXECUTE FUNCTION validate_booking_evidence();
+
+CREATE OR REPLACE FUNCTION sync_current_booking()
+RETURNS trigger LANGUAGE plpgsql SET search_path = public AS $$
+BEGIN
+  IF TG_OP = 'INSERT' AND NEW.status IN ('pending', 'confirmed') THEN
+    UPDATE operations SET current_booking_id = NEW.id WHERE id = NEW.operation_id;
+  ELSIF TG_OP = 'UPDATE' AND NEW.status = 'cancelled' AND OLD.status <> 'cancelled' THEN
+    UPDATE operations SET current_booking_id = NULL
+    WHERE id = NEW.operation_id AND current_booking_id = NEW.id;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+CREATE TRIGGER bookings_sync_current_booking
+AFTER INSERT OR UPDATE OF status ON bookings
+FOR EACH ROW EXECUTE FUNCTION sync_current_booking();
 
 CREATE TABLE change_requests (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -835,84 +888,10 @@ CREATE TABLE escalation_contexts (
 CREATE TRIGGER escalation_contexts_append_only
 BEFORE UPDATE OR DELETE ON escalation_contexts FOR EACH ROW EXECUTE FUNCTION reject_mutation();
 
-CREATE TABLE commitments (
-  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  operation_id uuid NOT NULL REFERENCES operations(id),
-  quote_id uuid REFERENCES quotes(id),
-  booking_id uuid REFERENCES bookings(id),
-  mandate_id uuid NOT NULL REFERENCES mandates(id),
-  call_id uuid NOT NULL REFERENCES calls(id),
-  change_request_id uuid REFERENCES change_requests(id),
-  supersedes_commitment_id uuid UNIQUE REFERENCES commitments(id),
-  type commitment_type NOT NULL,
-  terms jsonb NOT NULL CHECK (jsonb_typeof(terms) = 'object' AND terms <> '{}'::jsonb),
-  transcript_excerpt text NOT NULL CHECK (btrim(transcript_excerpt) <> ''),
-  recording_checkpoint numeric(12,3) NOT NULL CHECK (recording_checkpoint >= 0),
-  occurred_at timestamptz NOT NULL,
-  created_at timestamptz NOT NULL DEFAULT now(),
-  CHECK (supersedes_commitment_id IS NULL OR supersedes_commitment_id <> id)
-);
-
-CREATE FUNCTION validate_commitment_context()
-RETURNS trigger
-LANGUAGE plpgsql
-AS $$
-DECLARE
-  q_verdict quote_verdict;
-  q_operation uuid;
-  b_operation uuid;
-  b_quote uuid;
-  c_operation uuid;
-  c_type change_request_type;
-  previous_operation uuid;
-BEGIN
-  IF NOT EXISTS (SELECT 1 FROM mandates WHERE id = NEW.mandate_id AND operation_id = NEW.operation_id)
-     OR NOT EXISTS (SELECT 1 FROM calls WHERE id = NEW.call_id AND operation_id = NEW.operation_id) THEN
-    RAISE EXCEPTION 'commitment mandate or call belongs to another operation' USING ERRCODE = '23514';
-  END IF;
-  IF NEW.quote_id IS NOT NULL THEN
-    SELECT q.verdict, qr.operation_id INTO q_verdict, q_operation
-    FROM quotes q JOIN quote_requests qr ON qr.id = q.quote_request_id WHERE q.id = NEW.quote_id;
-  END IF;
-  IF NEW.booking_id IS NOT NULL THEN
-    SELECT operation_id, quote_id INTO b_operation, b_quote FROM bookings WHERE id = NEW.booking_id;
-  END IF;
-  IF NEW.change_request_id IS NOT NULL THEN
-    SELECT operation_id, type INTO c_operation, c_type FROM change_requests WHERE id = NEW.change_request_id;
-  END IF;
-  IF NEW.supersedes_commitment_id IS NOT NULL THEN
-    SELECT operation_id INTO previous_operation FROM commitments WHERE id = NEW.supersedes_commitment_id;
-  END IF;
-  IF coalesce(q_operation, NEW.operation_id) IS DISTINCT FROM NEW.operation_id
-     OR coalesce(b_operation, NEW.operation_id) IS DISTINCT FROM NEW.operation_id
-     OR coalesce(c_operation, NEW.operation_id) IS DISTINCT FROM NEW.operation_id
-     OR coalesce(previous_operation, NEW.operation_id) IS DISTINCT FROM NEW.operation_id THEN
-    RAISE EXCEPTION 'commitment references another operation' USING ERRCODE = '23514';
-  END IF;
-  IF NEW.type = 'quote' AND NOT (NEW.quote_id IS NOT NULL AND q_verdict = 'dentro'
-      AND NEW.booking_id IS NULL AND NEW.change_request_id IS NULL AND NEW.supersedes_commitment_id IS NULL) THEN
-    RAISE EXCEPTION 'invalid quote commitment' USING ERRCODE = '23514';
-  ELSIF NEW.type = 'booking' AND NOT (NEW.booking_id IS NOT NULL AND NEW.quote_id = b_quote AND NEW.change_request_id IS NULL) THEN
-    RAISE EXCEPTION 'invalid booking commitment' USING ERRCODE = '23514';
-  ELSIF NEW.type = 'reschedule' AND NOT (NEW.booking_id IS NOT NULL AND c_type = 'reschedule' AND NEW.supersedes_commitment_id IS NOT NULL) THEN
-    RAISE EXCEPTION 'invalid reschedule commitment' USING ERRCODE = '23514';
-  ELSIF NEW.type = 'cancellation' AND NOT (NEW.booking_id IS NOT NULL AND c_type = 'cancel' AND NEW.supersedes_commitment_id IS NOT NULL) THEN
-    RAISE EXCEPTION 'invalid cancellation commitment' USING ERRCODE = '23514';
-  END IF;
-  RETURN NEW;
-END;
-$$;
-CREATE TRIGGER commitments_validate_context
-BEFORE INSERT ON commitments FOR EACH ROW EXECUTE FUNCTION validate_commitment_context();
-CREATE TRIGGER commitments_append_only
-BEFORE UPDATE OR DELETE ON commitments FOR EACH ROW EXECUTE FUNCTION reject_mutation();
-CREATE INDEX commitments_operation_occurred_idx ON commitments(operation_id, occurred_at);
-
 CREATE TABLE events (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   operation_id uuid REFERENCES operations(id),
   call_id uuid REFERENCES calls(id),
-  commitment_id uuid REFERENCES commitments(id),
   type domain_event_type NOT NULL,
   schema_version smallint NOT NULL DEFAULT 1 CHECK (schema_version > 0),
   payload jsonb NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(payload) = 'object'),
@@ -921,8 +900,8 @@ CREATE TABLE events (
   created_at timestamptz NOT NULL DEFAULT now(),
   CHECK (
     operation_id IS NOT NULL
-    OR (type = 'call.rejected' AND call_id IS NULL AND commitment_id IS NULL)
-    OR (type = 'call.routed' AND call_id IS NOT NULL AND commitment_id IS NULL)
+    OR (type = 'call.rejected' AND call_id IS NULL)
+    OR (type = 'call.routed' AND call_id IS NOT NULL)
   ),
   CHECK (recording_checkpoint IS NULL OR call_id IS NOT NULL)
 );
@@ -932,13 +911,9 @@ RETURNS trigger
 LANGUAGE plpgsql
 AS $$
 BEGIN
-  IF (NEW.call_id IS NOT NULL AND NOT EXISTS (
-       SELECT 1 FROM calls
-       WHERE id = NEW.call_id AND operation_id IS NOT DISTINCT FROM NEW.operation_id
-     ))
-     OR (NEW.commitment_id IS NOT NULL AND NOT EXISTS (
-       SELECT 1 FROM commitments WHERE id = NEW.commitment_id AND operation_id = NEW.operation_id
-     )) THEN
+  IF NEW.call_id IS NOT NULL AND NOT EXISTS (
+    SELECT 1 FROM calls WHERE id = NEW.call_id AND operation_id = NEW.operation_id
+  ) THEN
     RAISE EXCEPTION 'event references another operation' USING ERRCODE = '23514';
   END IF;
   RETURN NEW;
