@@ -181,11 +181,14 @@ from a call. Declines never create a commitment.
 | Event | When emitted | Payload v1 |
 | --- | --- | --- |
 | `email.queued` | An idempotent email job is inserted into the outbox. | `outbox_id`, `template`, `recipient_type`, `deduplication_key` |
-| `email.sent` | The email provider accepts the message. | `outbox_id`, `template`, `recipient_type`, `provider_message_id` |
+| `email.sent` | The email gateway accepts the rendered message. | `outbox_id`, `template`, `recipient_type`, `provider_message_id` |
 | `email.failed` | An email attempt fails. | `outbox_id`, `template`, `recipient_type`, `error_code`, `retryable`, `attempt` |
 
 `recipient_type` is `client` or `provider`. Payloads never contain email bodies,
-addresses or provider credentials. Templates are:
+addresses or provider credentials. In development, the preview gateway renders
+the body into the server-only `email_previews` table and emits an `email.sent`
+event with a `provider_message_id` prefixed by `preview:`; it never contacts an
+email address. Templates are:
 
 ```text
 booking_confirmation_client
@@ -208,7 +211,7 @@ booking_reschedule_provider
 | `list_provider_operations` | none |
 | `create_quote` | `quote.received`; additionally `quote.counteroffer_requested` when applicable |
 | `decline_quote_request` | `quote.declined` |
-| `confirm_booking` | `booking.confirmed` |
+| `confirm_booking` | `booking.confirmed`, `email.queued` (client and selected provider) |
 | `decline_booking` | `booking.declined`, optionally `sourcing.started` |
 | `reschedule_booking` | `booking.rescheduled` when applied; `escalation.started` only after a subsequent `escalate` call |
 | `decline_reschedule` | `booking.reschedule_declined` |
@@ -233,3 +236,22 @@ or `email.sent` event is emitted by `cancel_operation`.
   or outbox insert that caused it.
 - Consumers order an operation timeline by `(occurred_at, id)` and must tolerate
   redelivery when events are later published outside PostgreSQL.
+
+## Booking-confirmation dispatch
+
+When a booking transitions to `confirmed`, a database trigger inserts exactly
+two `send_email` outbox records: `booking_confirmation_client` and
+`booking_confirmation_provider`. Their deterministic keys are
+`booking-confirmation:<booking_id>:client` and
+`booking-confirmation:<booking_id>:provider`, so retries of the booking tool or
+the trigger cannot create a second notification. The transition and both
+`email.queued` events commit atomically.
+
+The worker claims jobs with a short lease, records every delivery outcome as an
+event, and retries technical errors with capped exponential backoff. An email
+job with an absent or malformed recipient is terminally failed without calling
+the external provider. The Resend adapter also forwards the deterministic key
+as `Idempotency-Key`, protecting the narrow period between external acceptance
+and recording the local completion. Once both confirmation jobs are processed,
+the worker moves an operation still in `booking_confirmed` to
+`notifications_sent`.

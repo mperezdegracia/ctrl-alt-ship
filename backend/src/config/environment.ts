@@ -24,6 +24,11 @@ const environmentSchema = z.object({
   OPENAI_PROJECT_ID: z.string().min(1).optional(),
   OPENAI_WEBHOOK_SECRET: z.string().min(1),
   OUTBOUND_CALLS_TOKEN: z.string().min(32).optional(),
+  EMAIL_DELIVERY_MODE: z.enum(["preview", "resend"]).default("preview"),
+  EMAIL_WORKER_ENABLED: z.enum(["true", "false"]).default("true").transform((value) => value === "true"),
+  EMAIL_WORKER_POLL_INTERVAL_MS: z.coerce.number().int().min(1_000).max(300_000).default(5_000),
+  RESEND_API_KEY: z.string().min(1).optional(),
+  EMAIL_FROM: z.string().min(3).max(320).regex(/^[^\r\n]+$/).optional(),
 });
 
 const parsedEnvironment = environmentSchema.safeParse(process.env);
@@ -40,6 +45,14 @@ const missingTwilioConfiguration = ["TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN", "
   .filter((key) => !parsedEnvironment.data[key as keyof typeof parsedEnvironment.data]);
 if (missingTwilioConfiguration.length > 0) {
   throw new Error(`Escalation proof of concept requires: ${missingTwilioConfiguration.join(", ")}`);
+}
+
+if (parsedEnvironment.data.EMAIL_DELIVERY_MODE === "resend") {
+  const missingEmailConfiguration = ["RESEND_API_KEY", "EMAIL_FROM"]
+    .filter((key) => !parsedEnvironment.data[key as keyof typeof parsedEnvironment.data]);
+  if (missingEmailConfiguration.length > 0) {
+    throw new Error(`Resend email delivery requires: ${missingEmailConfiguration.join(", ")}`);
+  }
 }
 
 /**

@@ -27,6 +27,7 @@ const domainTables = [
   "commitments",
   "events",
   "outbox",
+  "email_previews",
 ];
 
 async function assertTableIsReachable(table: string) {

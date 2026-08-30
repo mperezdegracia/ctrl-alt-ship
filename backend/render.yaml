@@ -38,3 +38,11 @@ services:
         sync: false
       - key: DASHBOARD_ORIGINS
         sync: false
+      - key: EMAIL_DELIVERY_MODE
+        value: resend
+      - key: EMAIL_WORKER_ENABLED
+        value: "true"
+      - key: RESEND_API_KEY
+        sync: false
+      - key: EMAIL_FROM
+        sync: false

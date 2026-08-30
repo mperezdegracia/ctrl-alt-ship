@@ -34,6 +34,8 @@ import { MockEscalationTool } from "./tango/tools/mock-escalation-tool";
 import { NegotiationStallTracker } from "./tango/telephony/negotiation-stall-tracker";
 import { createTwilioOutboundCall, verifyTwilioSignature } from "./tango/telephony/twilio-outbound";
 import { extractOutboundCallRecordId, routeOutboundCall } from "./tango/telephony/outbound-routing";
+import { PreviewEmailGateway, ResendEmailGateway } from "./tango/services/email-gateway";
+import { EmailOutboxWorker, SupabaseEmailOutboxRepository } from "./tango/workers/email-outbox-worker";
 
 const app = express();
 
@@ -88,6 +90,14 @@ const callToolFactory = new CallToolFactory(
 
 const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 const realtimeGateway = new OpenAIRealtimeGateway(openai);
+const emailGateway = environment.EMAIL_DELIVERY_MODE === "resend"
+  ? new ResendEmailGateway(environment.RESEND_API_KEY!, environment.EMAIL_FROM!)
+  : new PreviewEmailGateway();
+const emailWorker = new EmailOutboxWorker(
+  new SupabaseEmailOutboxRepository(supabaseAdmin),
+  emailGateway,
+  logger.child({ worker: "email_outbox" }),
+);
 // Temporary trial-by-fire destination. Replace with SUPERVISOR_PHONE when the
 // durable escalation service is enabled.
 const MOCK_SUPERVISOR_PHONE = "+5491132555829";
@@ -461,6 +471,11 @@ app.listen(PORT, () => {
     webhook_path: "/openai/webhook",
     log_level: environment.LOG_LEVEL,
     client_operation_tools_enabled: environment.CLIENT_OPERATION_TOOLS_ENABLED,
+    email_delivery_mode: environment.EMAIL_DELIVERY_MODE,
+    email_worker_enabled: environment.EMAIL_WORKER_ENABLED,
     deploy_commit: process.env.RENDER_GIT_COMMIT ?? "local",
   });
+  if (environment.EMAIL_WORKER_ENABLED) {
+    emailWorker.start(environment.EMAIL_WORKER_POLL_INTERVAL_MS);
+  }
 });

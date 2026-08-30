@@ -120,6 +120,26 @@ OpenAI webhooks:
 The OpenAI API key must remain only in `backend/.env` locally and in Render.
 The browser never receives it.
 
+## Booking-confirmation email
+
+Apply migration `20260830030000_booking_confirmation_email_outbox.sql` before
+testing this slice. Any booking that transitions to `confirmed` now enqueues a
+client and selected-provider notification atomically; a future
+`confirm_booking` tool does not need to know about an email provider.
+
+Local development defaults to `EMAIL_DELIVERY_MODE=preview`. The backend worker
+renders messages into the server-only `email_previews` table and emits the
+normal email timeline events, but never sends to an address. Run the isolated
+check with:
+
+```bash
+npm --prefix backend run harness:email
+```
+
+To deliver real email, set `EMAIL_DELIVERY_MODE=resend`, `RESEND_API_KEY`, and a
+verified-domain `EMAIL_FROM` in Render. The worker sends through Resend with
+the outbox idempotency key, while Supabase remains the delivery audit trail.
+
 Voice call acceptance/rejection and the Realtime sideband use the official
 OpenAI Node SDK through `OpenAIRealtimeGateway`. The webhook acknowledgement
 does not return credentials. Run the SDK transport harness without real calls:
