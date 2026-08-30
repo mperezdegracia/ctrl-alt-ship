@@ -12,7 +12,8 @@ const publicErrors: Record<string, [ToolErrorCode, string]> = {
   operation_not_available: ["operation_not_available", "That operation is not available to this caller."],
   invalid_transition: ["invalid_transition", "The operation cannot be changed in its current state."],
   stale_operation: ["stale_operation", "The operation changed after the last summary. Read the refreshed details and obtain a new explicit confirmation."],
-  confirmation_not_ready: ["confirmation_not_ready", "Confirmation evidence is unavailable or incomplete. Read the full summary again and wait for the caller's explicit confirmation."],
+  // Compatibility with the old RPC during rollout; never loop asking for audio evidence.
+  confirmation_not_ready: ["confirmation_not_ready", "Mandate confirmation is temporarily unavailable. Do not repeatedly retry or claim it succeeded."],
 };
 
 export class SupabaseClientOperationRepository implements ClientOperationRepository {

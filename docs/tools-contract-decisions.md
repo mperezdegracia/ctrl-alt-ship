@@ -4,6 +4,10 @@
 
 **Fecha:** 2026-08-29
 
+**Actualización vigente (2026-08-30):** runtime Agents SDK, confirmación conversacional
+sin tracker de audio ni `needsApproval`, y saludo inicial en inglés para ambas personas.
+Ver [decisión, límites y despliegue](realtime-confirmation-review.md).
+
 ## Seguridad y contexto
 
 - El servidor autentica la contraparte por caller ID. El modelo decide la
@@ -42,6 +46,9 @@
   handler no se exponen, aunque figuren en el perfil del contrato final.
 - Un borrador creado con todos los campos operativos puede devolver directamente
   `next_profile: client_confirm`; uno incompleto devuelve `client_create`.
+- Después de crear o seleccionar mediante una edición, ambos perfiles exponen
+  `update_operation` y `confirm_mandate`. Que la tool esté visible no indica que
+  los datos estén completos: el prompt exige completarlos y SQL lo verifica.
 - Cada mutación de cliente recibe el ID de invocación de Realtime desde el sideband,
   nunca desde los argumentos del modelo. Su resultado se persiste junto a la mutación
   y los eventos para permitir reintentos idempotentes.
@@ -53,8 +60,8 @@
 - La salida de audio usa la voz `cedar` a velocidad `1.05`. La voz se fija antes
   de producir el primer audio porque no puede cambiarse después dentro de la
   misma sesión.
-- El agente espera la primera intervención y responde en el idioma del usuario
-  desde el saludo. Cambia ante un pedido explícito o una intervención clara en
+- El agente saluda primero en inglés, tanto a clientes como a proveedores.
+  Después responde en el idioma del usuario. Cambia ante un pedido explícito o una intervención clara en
   otro idioma; nombres, direcciones, acentos o palabras aisladas no disparan
   cambios una vez establecido el idioma.
 - Las instrucciones se componen con una base compartida, reglas polimórficas de

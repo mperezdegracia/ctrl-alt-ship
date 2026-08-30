@@ -1,5 +1,4 @@
 import { ToolError } from "../../domain/tool-error";
-import type { ConfirmationEvidence } from "../../domain/confirmation-evidence";
 
 export type JsonSchema = {
   type: "object";
@@ -15,7 +14,7 @@ export type RealtimeFunctionToolDefinition = {
   parameters: JsonSchema;
 };
 
-export type ToolInvocation = Readonly<{ toolCallId: string; confirmationEvidence?: ConfirmationEvidence }>;
+export type ToolInvocation = Readonly<{ toolCallId: string }>;
 
 export abstract class RealtimeTool {
   abstract readonly definition: RealtimeFunctionToolDefinition;

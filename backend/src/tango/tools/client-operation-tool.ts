@@ -50,7 +50,7 @@ export class ConfirmMandateTool extends RealtimeTool {
   readonly definition = {
     type: "function" as const,
     name: "confirm_mandate",
-    description: "Creates an immutable mandate version only after the client explicitly confirms the complete verbal summary. The server builds the operation snapshot and evidence anchor.",
+    description: "Creates an immutable mandate version for the selected operation only after all required details are complete and the client explicitly confirms the full verbal summary. The server validates the operation and builds its snapshot.",
     parameters: {
       type: "object", properties: {
         price_cap: { type: "number", exclusiveMinimum: 0, maximum: 999999999999.99, multipleOf: 0.01 },
@@ -68,6 +68,6 @@ export class ConfirmMandateTool extends RealtimeTool {
   constructor(private readonly service: ClientOperationService) { super(); }
 
   execute(args: unknown, invocation?: ToolInvocation): Promise<unknown> {
-    return this.service.confirm(args, invocation?.toolCallId ?? "", invocation?.confirmationEvidence);
+    return this.service.confirm(args, invocation?.toolCallId ?? "");
   }
 }

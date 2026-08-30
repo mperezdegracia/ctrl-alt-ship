@@ -1,6 +1,5 @@
 import type { ToolCallScope } from "./operation-read-service";
 import { ToolError } from "./tool-error";
-import type { ConfirmationEvidence } from "./confirmation-evidence";
 
 export type OperationFields = {
   container_type?: string;
@@ -13,7 +12,7 @@ export type OperationFields = {
 };
 
 export type ClientToolName = "create_operation" | "update_operation" | "confirm_mandate";
-export type ClientCommandContext = { expected_operation_revision: string | null; evidence: ConfirmationEvidence | null };
+export type ClientCommandContext = { expected_operation_revision: string | null };
 export type ClientProfile = "client_entry" | "client_create" | "client_update" | "client_confirm" | "terminal";
 export type ClientFlowState = {
   operationRevision?: string;
@@ -73,7 +72,7 @@ export class ClientOperationService {
     return this.repository.execute(this.scope, "update_operation", toolCallId, args);
   }
 
-  async confirm(args: unknown, toolCallId: string, evidence?: ConfirmationEvidence): Promise<ClientMutationResult> {
+  async confirm(args: unknown, toolCallId: string): Promise<ClientMutationResult> {
     this.assertClient();
     this.assertToolCallId(toolCallId);
     this.assertObject(args);
@@ -91,10 +90,9 @@ export class ClientOperationService {
       if (Object.keys(window).length !== 2 || !this.isTimestamp(window.start_at) || !this.isTimestamp(window.end_at)
         || Date.parse(window.start_at) >= Date.parse(window.end_at)) this.invalidMandate();
     }
-    // The database handles replay before evidence/state checks, including after
-    // reconnect when the original in-memory evidence is no longer available.
+    // The database handles replay before state/revision checks, including after reconnect.
     return this.repository.execute(this.scope, "confirm_mandate", toolCallId, args, {
-      expected_operation_revision: this.state?.operationRevision ?? null, evidence: evidence ?? null,
+      expected_operation_revision: this.state?.operationRevision ?? null,
     });
   }
 

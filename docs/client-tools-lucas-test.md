@@ -6,7 +6,8 @@ Estas pruebas crean y modifican datos reales. Usar una operación de prueba nuev
 no la fixture compartida `OP-900001`. No volver a ejecutar el seed para esta prueba.
 
 1. Esperar el deploy del backend y comprobar que Supabase haya aplicado
-   `20260830010000_client_operation_tools.sql` por el flujo de migraciones del proyecto.
+   `20260830010000_client_operation_tools.sql` y
+   `20260830020000_conversational_mandate_confirmation.sql` por el flujo de migraciones del proyecto.
    Un push no demuestra que el deploy o la migración hayan terminado correctamente.
 2. Recién después, configurar `CLIENT_OPERATION_TOOLS_ENABLED=true` en el backend
    que recibe las llamadas (Render), y reiniciarlo/redeployarlo. El default sigue
@@ -19,21 +20,22 @@ no la fixture compartida `OP-900001`. No volver a ejecutar el seed para esta pru
    exactamente con `contacts.phone`; Lucas debe estar activo y autorizado.
 5. Abrir los logs del backend. Agrupar eventos por `call_id` y mirar
    `call.routed`, `call.tools_configured`, `tool.requested`, `tool.completed`,
-   `tool.failed`, `tool.result` y `realtime.session_updated`.
+   `tool.failed`, `realtime.greeting_requested` y `realtime.session_updated`.
 
 Si se habilita la bandera antes de aplicar la migración, una llamada puede fallar
 al cargar su estado (`call.tool_state_failed`). No es necesariamente un caller ID inválido.
-La configuración actual del dashboard usa mocks: no sirve para comprobar estas
-escrituras. Verificar mediante otra llamada, los logs y las tablas de Supabase.
+El dashboard lee operaciones reales. Complementar su vista con otra llamada,
+los logs y la consulta de solo lectura de abajo.
 
 ## Llamada 1 — listar, crear, corregir y confirmar
 
-1. Empezar en español: «Hola, ¿qué operaciones abiertas tengo?». Tango debe
+1. Esperar el saludo inicial en inglés (“Hi, this is Tango…”). Luego hablar en español: «Hola, ¿qué operaciones abiertas tengo?». Tango debe
    responder en español y usar `list_open_operations`, mostrando solo operaciones
    de Lucas. Es normal que incluya la fixture existente.
 2. «Quiero crear una operación nueva de prueba: contenedor de 40 pies dry, desde
    Terminal 4 a Pilar». Debe usar `create_operation`, devolver un `OP-…` generado
    por PostgreSQL y pedir faltantes sin inventarlos. Anotar esa referencia.
+   En los logs ya deben aparecer update_operation y confirm_mandate, aunque falten datos.
 3. Completar a medida que pregunte: peso `24000 kg`, devolución del vacío en
    `Dock Sud`, restricción `entrega con turno previo`, notas `carga no peligrosa`.
    Debe usar `update_operation`. No debe crear una segunda operación.
@@ -51,7 +53,7 @@ escrituras. Verificar mediante otra llamada, los logs y las tablas de Supabase.
    el flujo de esa llamada terminó, sin ejecutar otra mutación. Cortar.
 
 En Supabase: una operación con peso 25000, un mandato v1 con snapshot de esos
-datos, evidencia del resumen y de la confirmación, eventos `mandate.confirmed` y
+datos, vinculado a la llamada y con fecha de confirmación, eventos `mandate.confirmed` y
 `sourcing.started`, y un recibo por cada comando ejecutado. No se contacta a ningún
 transportista ni se crea un booking por esta prueba.
 
@@ -84,11 +86,13 @@ transportista ni se crea un booking por esta prueba.
 - Durante un resumen, interrumpir con una corrección. Debe rehacer el resumen y
   pedir otra confirmación, no aceptar un sí anterior al cambio.
 - Una pregunta («¿incluye el retorno?»), silencio o «no confirmo» no deben crear
-  un mandato. La interpretación de consentimiento la hace el agente; la captura
-  técnica de evidencia no sustituye esta prueba conversacional.
-- Si aparece `confirmation_not_ready`, no dar por confirmado: debe repetir el
-  resumen y esperar otra aprobación. Esto puede ocurrir si la transcripción de
-  la respuesta todavía no llegó o si el resumen fue interrumpido.
+  un mandato. La interpretación de consentimiento la hace el agente; ya no existe
+  tracking de audio ni un segundo paso de aprobación SDK.
+- Si aparece `confirmation_not_ready`, revisar que se haya desplegado la migración
+  nueva; el RPC anterior todavía exige evidencia. No pedir repetir el sí en bucle.
+- Si aparece `stale_operation`, leer los datos refrescados y pedir nueva confirmación.
+- Repetir el saludo con un proveedor autorizado: empieza en inglés y luego cambia
+  al idioma del proveedor; no debe exponer tools de cliente.
 - Pedir cancelar: todavía no existe `cancel_operation`; debe explicar la
   limitación sin anunciar cancelación ni envío de email.
 - No probar idempotencia repitiendo «sí»: eso es un turno nuevo. La idempotencia
@@ -104,8 +108,7 @@ SELECT o.reference, o.status, o.pickup_location, o.delivery_location,
        o.gross_weight_kg, o.mandate_confirmation_required,
        m.version, m.id = o.current_mandate_id AS is_current,
        m.supersedes_mandate_id, m.operation_snapshot,
-       m.confirmed_in_call_id, m.confirmed_at,
-       m.confirmation_evidence IS NOT NULL AS has_evidence
+       m.confirmed_in_call_id, m.confirmed_at
 FROM public.operations o
 LEFT JOIN public.mandates m ON m.operation_id = o.id
 WHERE o.reference = 'OP-REEMPLAZAR'
@@ -113,5 +116,5 @@ ORDER BY m.version;
 ```
 
 La migración y las pruebas SQL no se ejecutaron desde esta tarea. Las pruebas
-automatizadas locales usan RPC/audio simulados; la validación telefónica real
+automatizadas locales usan RPC/socket simulados; la validación telefónica real
 y el resto de handlers del issue #13 siguen pendientes.

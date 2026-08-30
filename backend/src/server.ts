@@ -3,14 +3,14 @@ import OpenAI from "openai";
 
 import { environment } from "./config/environment";
 import { supabaseAdmin } from "./config/supabase";
-import { publicToolError, ToolError } from "./domain/tool-error";
 import {
   requireDashboardAuth,
   type DashboardRequest,
 } from "./http/middleware/require-dashboard-auth";
 import { registerDashboardRoutes } from "./http/routes/dashboard";
 import { StructuredLogger } from "./observability/logger";
-import { RealtimeSessionFactory } from "./tango/realtime/realtime-session";
+import { AgentsCallSession } from "./tango/realtime/agents-call-session";
+import type { RealtimeServerEvent } from "openai/resources/realtime/realtime";
 import {
   persistRejectedCall,
   persistRoutedCall,
@@ -28,12 +28,10 @@ import { SupabaseOperationReadRepository } from "./tango/supabase/operation-read
 import { CallToolFactory } from "./tango/tools/call-tool-factory";
 import { SupabaseClientOperationRepository } from "./tango/supabase/client-operation-repository";
 import { OpenAIRealtimeGateway } from "./tango/realtime/openai-realtime-gateway";
-import { ConfirmationEvidenceTracker } from "./tango/realtime/confirmation-evidence-tracker";
 import { TwilioGateway } from "./tango/telephony/twilio-gateway";
 import { EscalationHandoffCoordinator } from "./tango/telephony/escalation-handoff-coordinator";
 import { MockEscalationTool } from "./tango/tools/mock-escalation-tool";
 import { NegotiationStallTracker } from "./tango/telephony/negotiation-stall-tracker";
-import { RealtimeSessionDiagnostics } from "./tango/realtime/realtime-session-diagnostics";
 
 const app = express();
 
@@ -80,7 +78,6 @@ app.use((req, res, next) => {
 
 const OPENAI_API_KEY = environment.OPENAI_API_KEY;
 const logger = new StructuredLogger("tango-backend");
-const realtimeSessionFactory = new RealtimeSessionFactory();
 const callToolFactory = new CallToolFactory(
   new SupabaseOperationReadRepository(supabaseAdmin),
   environment.CLIENT_OPERATION_TOOLS_ENABLED
@@ -273,7 +270,16 @@ app.post("/openai/webhook", express.raw({ type: "*/*" }), async (req, res) => {
      */
 
     const acceptStartedAt = Date.now();
-    const initialConfiguration = realtimeSessionFactory.create(routingDecision, realtimeTools.definitions, realtimeTools.flowState);
+    const agentsCall = new AgentsCallSession(routingDecision, realtimeTools, callLogger, {
+      onProgress: () => stallTracker?.recordProgress(),
+      onEscalationReady: handoffCoordinator ? () => {
+        handoffCoordinator.beginFarewell();
+        agentsCall.transport.requestResponse({
+          instructions: "In the caller's active language, say exactly: I will connect you with my supervisor now. I have shared the relevant context. Do not add any other sentence.",
+        });
+      } : undefined,
+    });
+    const initialConfiguration = await agentsCall.initialConfiguration();
 
     try {
       const accepted = await realtimeGateway.accept(callId,
@@ -303,32 +309,10 @@ app.post("/openai/webhook", express.raw({ type: "*/*" }), async (req, res) => {
      * ============================================================
      */
 
-    const realtime = realtimeGateway.connectSideband(callId);
-    const confirmationEvidence = new ConfirmationEvidenceTracker();
-    const sessionDiagnostics = new RealtimeSessionDiagnostics(
-      callLogger, initialConfiguration, realtimeTools.flowState?.profile ?? "read_only",
-    );
-
-    realtime.socket.on("open", () => {
-      callLogger.info("realtime.sideband_connected");
-
-      // Let VAD trigger the first reply after the caller speaks, so the
-      // greeting can use their language instead of a forced default.
-      callLogger.info("realtime.awaiting_caller_speech", {
-        language: "auto",
-        persona: routingDecision.identity.persona,
-      });
-    });
-
-    /*
-     * ============================================================
-     * 4. EVENTOS REALTIME
-     * ============================================================
-     */
-
-    realtime.on("event", async (message) => {
+    const realtime = agentsCall.session;
+    realtime.on("transport_event", async (event) => {
+      const message = event as RealtimeServerEvent;
       try {
-        confirmationEvidence.observe(message);
         callLogger.debug("realtime.event_received", { event_type: message.type });
 
         switch (message.type) {
@@ -340,7 +324,7 @@ app.post("/openai/webhook", express.raw({ type: "*/*" }), async (req, res) => {
 
           case "session.created":
           case "session.updated":
-            sessionDiagnostics.observe(message);
+            // AgentsCallSession records SDK/server configuration diagnostics.
             break;
 
           /*
@@ -376,126 +360,7 @@ app.post("/openai/webhook", express.raw({ type: "*/*" }), async (req, res) => {
            * --------------------------------------------------------
            */
 
-          case "response.function_call_arguments.done": {
-            callLogger.info("tool.requested", {
-              tool_name: message.name,
-              tool_call_id: message.call_id,
-              response_id: message.response_id,
-              profile: realtimeTools.flowState?.profile ?? "read_only",
-              advertised_tools: realtimeTools.definitions.map((tool) => tool.name),
-              server_tools: sessionDiagnostics.serverTools,
-            });
-            callLogger.debug("tool.arguments", {
-              tool_name: message.name,
-              arguments: message.arguments,
-            });
-
-            try {
-              let args: unknown;
-              try {
-                args = JSON.parse(message.arguments);
-              } catch {
-                throw new ToolError("invalid_arguments", "Tool arguments must be valid JSON matching the tool schema.");
-              }
-              const evidence = message.name === "confirm_mandate"
-                ? confirmationEvidence.capture(message.response_id) : undefined;
-              if (message.name === "confirm_mandate") {
-                callLogger.info("confirmation.evidence_checked", {
-                  tool_call_id: message.call_id,
-                  ...confirmationEvidence.diagnostics(message.response_id),
-                });
-              }
-              if (["create_operation", "update_operation"].includes(message.name)) confirmationEvidence.invalidate();
-              const result = await realtimeTools.execute(message.name, args, {
-                toolCallId: message.call_id, confirmationEvidence: evidence,
-              });
-              if (message.name === "confirm_mandate") confirmationEvidence.invalidate();
-              if (message.name !== "escalate") stallTracker?.recordProgress();
-
-              try {
-                await realtimeTools.refresh();
-              } catch (error) {
-                // The mutation may already be committed. Preserve its success
-                // result, but remove tools until state can be refreshed safely.
-                callLogger.error("tool.profile_refresh_failed", { error });
-              }
-              const liveEscalation = message.name === "escalate" && handoffCoordinator;
-              realtime.send(sessionDiagnostics.prepareUpdate(realtimeSessionFactory.createFlowUpdate(
-                routingDecision, liveEscalation ? [] : realtimeTools.definitions, realtimeTools.flowState,
-              ), realtimeTools.flowState, message.call_id));
-
-              callLogger.debug("tool.result", {
-                tool_name: message.name,
-                result,
-              });
-
-              /*
-               * ----------------------------------------------------
-               * DEVOLVER RESULTADO DE LA TOOL A REALTIME
-               * ----------------------------------------------------
-               */
-
-              realtime.send({
-                type: "conversation.item.create",
-                item: {
-                  type: "function_call_output",
-                  call_id: message.call_id,
-                  output: JSON.stringify(result),
-                },
-              });
-
-              /*
-               * Ahora le decimos al modelo:
-               *
-               * "Ya tenés el resultado de la tool,
-               * continuá respondiendo."
-               */
-
-              if (liveEscalation) {
-                handoffCoordinator.beginFarewell();
-                realtime.send({
-                  type: "response.create",
-                  response: {
-                    instructions: "In the caller's active language, say exactly: I will connect you with my supervisor now. I have shared the relevant context. Do not add any other sentence.",
-                  },
-                });
-              } else {
-                realtime.send({ type: "response.create" });
-              }
-
-              callLogger.info("tool.completed", {
-                tool_name: message.name,
-                tool_call_id: message.call_id,
-              });
-            } catch (error) {
-              if (message.name === "confirm_mandate") confirmationEvidence.invalidate();
-              callLogger.error("tool.failed", {
-                tool_name: message.name,
-                tool_call_id: message.call_id,
-                error,
-              });
-
-              try { await realtimeTools.refresh(); } catch (refreshError) {
-                callLogger.error("tool.profile_refresh_failed", { error: refreshError });
-              }
-              realtime.send(sessionDiagnostics.prepareUpdate(realtimeSessionFactory.createFlowUpdate(
-                routingDecision, realtimeTools.definitions, realtimeTools.flowState,
-              ), realtimeTools.flowState, message.call_id));
-
-              realtime.send({
-                type: "conversation.item.create",
-                item: {
-                  type: "function_call_output",
-                  call_id: message.call_id,
-                  output: JSON.stringify(publicToolError(error)),
-                },
-              });
-
-              realtime.send({ type: "response.create" });
-            }
-
-            break;
-          }
+          // Function calls are executed and returned exclusively by RealtimeSession.
 
           /*
            * --------------------------------------------------------
@@ -520,7 +385,7 @@ app.post("/openai/webhook", express.raw({ type: "*/*" }), async (req, res) => {
                 reason: `No progress after ${environment.ESCALATION_STALLED_TURNS} consecutive caller turns.`,
               });
               handoffCoordinator.beginFarewell();
-              realtime.send({ type: "response.create", response: { instructions: "In the caller's active language, say exactly: I will connect you with my supervisor now. I have shared the relevant context. Do not add any other sentence." } });
+              agentsCall.transport.requestResponse({ instructions: "In the caller's active language, say exactly: I will connect you with my supervisor now. I have shared the relevant context. Do not add any other sentence." });
               break;
             }
             if (await handoffCoordinator?.onAudioStopped(message.response_id)) {
@@ -553,21 +418,9 @@ app.post("/openai/webhook", express.raw({ type: "*/*" }), async (req, res) => {
       }
     });
 
-    realtime.on("error", (error) => {
-      // SDK normalizes API errors, malformed frames and transport errors here.
-      callLogger.error("realtime.error", {
-        error_type: error.error?.type,
-        error_code: error.error?.code,
-        event_id: error.event_id,
-        error_message: error.message,
-      });
-    });
-
-    realtime.socket.on("close", (code, reason) => {
-      callLogger.info("realtime.sideband_closed", {
-        code,
-        reason: reason.toString(),
-      });
+    await agentsCall.connect(callId, OPENAI_API_KEY);
+    callLogger.info("realtime.greeting_requested", {
+      language: "en", subsequent_language: "caller", persona: routingDecision.identity.persona, runtime: "agents_sdk",
     });
   } catch (error) {
     callLogger.error("call.handling_failed", { error });

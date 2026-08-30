@@ -23,8 +23,8 @@
       "update_operation",
       "cancel_operation"
     ],
-    "client_create": ["update_operation"],
-    "client_update": ["update_operation"],
+    "client_create": ["update_operation", "confirm_mandate"],
+    "client_update": ["update_operation", "confirm_mandate"],
     "client_confirm": ["update_operation", "confirm_mandate"],
     "provider_inbound_entry": [
       "list_provider_operations",
@@ -222,7 +222,7 @@
     {
       "type": "function",
       "name": "confirm_mandate",
-      "description": "Creates an immutable mandate version only after the client explicitly confirms the complete verbal summary. The server builds the operation snapshot and evidence anchor.",
+      "description": "Creates an immutable mandate version for the selected operation only after all required details are complete and the client explicitly confirms the full verbal summary. The server validates the operation and builds its snapshot.",
       "parameters": {
         "type": "object",
         "properties": {

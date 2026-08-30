@@ -1,72 +1,107 @@
-# Diagnóstico de tools y revisión de confirmación de voz
+# Decisión: Agents SDK y confirmación conversacional
 
-## Registro de sesión
+Fecha: 2026-08-30. Acordado con Lucas; reemplaza la decisión anterior de mantener
+el tracker de evidencia mientras se diagnosticaba la ausencia de confirm_mandate.
 
-Disponible con `LOG_LEVEL=info`, sin habilitar logs de transcripciones:
+## Qué cambia
 
-- `server.started`: bandera efectiva de tools de cliente y `deploy_commit` de Render.
-- `realtime.session_update_requested`: perfil, OP, campos faltantes, nombres de tools,
-  hash SHA-256 de instrucciones, secuencia y `update_event_id` generado por el backend.
-  Describe un envío solicitado, no una aplicación confirmada por OpenAI.
-- `realtime.session_updated` / `realtime.session_created`: `received_tools` tomadas
-  del evento real del SDK, `expected_tools`, `tools_match` e `instructions_match`.
-  Las instrucciones se comparan por hash; no se escriben en estos logs.
-- `realtime.session_configuration_mismatch`: advertencia si la configuración
-  observada no coincide con la última solicitada. No modifica ni bloquea la sesión.
-  `session.updated` no devuelve el ID del evento cliente: no se asume un emparejamiento
-  exacto. Una respuesta atrasada puede describir una configuración anterior.
-  Campos ausentes se informan como desconocidos (`null`), no como listas vacías.
-- `tool.requested`: perfil, tools anunciadas por el backend y últimas tools
-  observadas en la sesión. No añade argumentos ni transcripciones al nivel info.
-- `confirmation.evidence_checked`: disponibilidad, motivo técnico, fin de respuesta,
-  señal de buffer de salida drenado y presencia de transcripción; nunca el texto.
+- Runtime: @openai/agents 0.17, RealtimeAgent + RealtimeSession + OpenAIRealtimeSIP.
+  El SDK maneja ejecución de tools, resultados, continuación e historial.
+  El paquete openai permanece para verificar webhooks y aceptar/rechazar llamadas.
+- Una sesión por llamada SIP existente, conectada por callId. No se abre otra llamada
+  ni se duplica el audio que transporta Twilio.
+- Sin needsApproval, solicitudes de aprobación UI ni ConfirmationEvidenceTracker.
+  No se espera audio_end, transcripción o buffer drenado para habilitar un mandato.
+- Se mantiene OOP: AgentsCallSession adapta las tools existentes a la sesión;
+  servicios y repositorios conservan las reglas de negocio.
+- El modelo sigue siendo gpt-realtime-2.1, reasoning low, voz cedar, velocidad 1.05.
+- Ambas personas reciben primero: “Hi, this is Tango, your logistics assistant.
+  How can I help you today?”. Se solicita al conectar, sin esperar al usuario.
+  Después se usa el idioma del usuario, incluida la confirmación del mandato.
 
-Para el caso de Lucas, después de completar los datos, se espera:
+## Flujo de cliente vigente
 
-1. `realtime.session_update_requested`: `profile: client_confirm`, tools
-   `update_operation` y `confirm_mandate`.
-2. `realtime.session_updated`: `received_tools` con ambos nombres y coincidencias
-   verdaderas. Si faltan, revisar la configuración enviada/recibida y errores de API.
-3. Si están presentes pero no hay `tool.requested` para `confirm_mandate`, revisar
-   el turno conversacional y el prompt; todavía no se ejecutó el handler.
-4. Si existe el intento, revisar `confirmation.evidence_checked` y `tool.failed`.
-   `available: false` describe la evidencia local; un replay SQL puede recuperar un
-   comando ya confirmado aunque esa evidencia ya no esté en memoria.
+| Estado | Tools disponibles |
+| --- | --- |
+| Entrada, sin operación elegida | list_open_operations, create_operation, update_operation |
+| Pedido creado o seleccionado mediante una edición | update_operation, confirm_mandate |
+| Mandato confirmado / llamada terminal | Ninguna mutación |
 
-Estos logs son diagnóstico, no una corrección confirmada de la causa observada.
+Los perfiles client_create, client_update y client_confirm siguen describiendo
+el estado, pero todos los perfiles con una operación vinculada exponen el mandato.
+No se agrega una tool de selección: la primera edición selecciona la OP existente.
+No se implementa cancelar en este cambio ni se exponen tools futuras sin handler.
 
-## SDK, approvals y evidencia
+El agente completa los campos físicos con update_operation, recoge precio máximo,
+moneda, ventanas con zona horaria y pago mínimo, lee el resumen completo y espera
+un sí explícito en el turno siguiente. Recién entonces llama confirm_mandate.
+Una corrección requiere editar y volver a resumir/confirmar. No debe guardar términos
+comerciales en operational_constraints o cargo_notes ni inventar datos faltantes.
 
-- El proyecto usa el paquete `openai` y `OpenAIRealtimeWS`, no
-  `@openai/agents/realtime`. La clase `RealtimeSessionFactory` del proyecto solo
-  construye configuración; no es la `RealtimeSession` del Agents SDK.
-- OpenAI documenta `RealtimeAgent`/`RealtimeSession` en el
-  [Agents SDK de voz](https://developers.openai.com/api/docs/guides/voice-agents).
-  Adoptarlo sería una migración del runtime, no agregar una propiedad al schema actual.
-- `needsApproval: true` pertenece al mecanismo de tools del Agents SDK. La
-  [documentación de HITL](https://developers.openai.com/api/docs/guides/agents/guardrails-approvals)
-  describe pausar, aprobar/rechazar y reanudar. No transforma una transcripción
-  automáticamente en aprobación. Las APIs exactas de aprobación/audio del transporte
-  Realtime/SIP se deben verificar en la versión del Agents SDK elegida antes de migrar;
-  los ejemplos de `run` no prueban esa integración.
-- La [API Realtime distingue functions y MCP](https://developers.openai.com/api/docs/guides/realtime-mcp):
-  nuestras functions se ejecutan en el backend. La aprobación MCP nativa es otro
-  mecanismo; no debe confundirse con `needsApproval` ni trasladarse a nuestras tools.
-- El tracker actual espera `response.done` completado y `output_audio_buffer.stopped`
-  de la misma respuesta, antes del siguiente turno del usuario. La señal indica
-  drenaje del buffer de salida del servidor; no prueba audición humana, comprensión
-  o consentimiento. No se afirma validez legal ni se equipara a grabación Twilio.
-- La propuesta de estados conceptuales es útil, pero el adaptador debe conservar
-  IDs de respuesta/item, interrupciones, transcripción asíncrona y estado por llamada.
-  Un `markAudioEnded()` sin correlación podría habilitar una propuesta por el fin
-  de otro audio. No se eliminan esas verificaciones para simplificar nombres.
-- El flujo deseable sigue siendo propuesta exacta → respuesta de voz → evidencia
-  candidata → validación del backend → commit transaccional. La semántica de la
-  aprobación sigue a cargo del agente actual; no existe un evaluador independiente.
-  La base verifica autorización, revisión de operación, estado, términos e idempotencia.
-  IDs internos y evidencia se inyectan desde el servidor, nunca desde argumentos
-  como `operationId`, `confirmationResponseId` o `callerTurnId` elegidos por el modelo.
+## Lo que valida el backend
 
-Decisión de este cambio: instrumentar primero y mantener las verificaciones
-existentes. No migrar de SDK ni cambiar el mecanismo de autorización al mismo
-tiempo que se diagnostica la ausencia de `confirm_mandate`.
+SQL conserva identidad/autorización, propiedad, camino de la llamada, campos
+obligatorios, estado, formato y límites comerciales, revisión actualizada de la
+operación y clave de idempotencia original del tool call. IDs internos y revisión
+los aporta el servidor, nunca el modelo. Se construye el snapshot desde la fila
+bloqueada y se crean versión inmutable, eventos y recibo en una transacción.
+
+Cambios posteriores requieren un nuevo mandato; no se sobrescribe el anterior.
+Al confirmar, la llamada queda terminal para mutaciones. Sourcing indica que la
+operación está lista: todavía no implica contactar transportistas ni reservarlos.
+
+**Límite aceptado:** el agente interpreta el consentimiento verbal. No hay un
+clasificador independiente ni verificación técnica de que el resumen se reprodujo
+completo o fue escuchado. La disponibilidad de la tool no prueba consentimiento;
+SQL tampoco puede verificar que el humano dijo sí. No se afirma evidencia legal.
+
+## Migración y despliegue
+
+Aplicar primero 20260830020000_conversational_mandate_confirmation.sql mediante el
+flujo de migraciones del proyecto. Reemplaza la función existente sin cambiar su
+firma ni sus permisos service_role. La migración anterior no se reescribe.
+
+confirmation_evidence se conserva como columna histórica nullable: no se borran
+registros previos y los nuevos mandatos no la completan. No se generan evidencias
+ficticias ni se escribe un checkpoint de grabación Twilio.
+
+Después desplegar backend con sus nuevas dependencias y CLIENT_OPERATION_TOOLS_ENABLED=true.
+No usar el nuevo backend sobre la función vieja: respondería confirmation_not_ready.
+La migración no se ejecutó contra Supabase desde esta tarea. No se hizo push ni deploy.
+El último pull integró origin/main hasta fcfe5c9, incluidos los cambios de dashboard
+y escalamiento. Los cambios locales de esta migración se conservaron sin conflictos.
+
+## Compatibilidad SDK y observabilidad
+
+- updateAgent actualiza tools e instrucciones antes de devolver el resultado.
+- El adaptador preserva tools: [] explícito: SDK 0.17 omite listas vacías y una
+  omisión en session.update dejaría las herramientas previas en el servidor.
+- El helper de tools tipa strict:false con additionalProperties:true; el adaptador
+  restaura el schema cerrado del contrato antes de exponerlo. Mantiene campos
+  opcionales y validación estricta de datos en servicios/SQL.
+- El ID original de la invocación viene de los detalles del SDK. SQL conserva
+  replay durable. El SDK también deduplica dentro de una respuesta activa; no se
+  promete replay transparente de frames tardíos después de cambiar de perfil.
+- El escalamiento a supervisor conserva su farewell y usa backgroundResult para
+  evitar una respuesta automática duplicada. El buffer SIP solo se observa para
+  transferir después del farewell, no para autorizar mandatos.
+- Sin tracing externo adicional ni copia de audio en el historial.
+- Logs info: tool.requested/completed/failed, realtime.session_update_requested,
+  realtime.session_created/updated, realtime.greeting_requested y conexión.
+  Los logs comparan nombres de tools y hashes del prompt; session.updated no es un
+  ACK correlacionado por event_id. No se registran transcripciones al nivel info.
+- Se retiraron el tracker y su harness de audio; son recuperables del historial Git.
+
+## Validación
+
+Harnesses locales con SDK real y socket/repositorio simulados: conexión SIP,
+configuración inicial, saludo, schemas, cambios de perfil antes de continuar,
+mandato sin evidencia/approval, rechazo de datos incompletos, historial, retirada
+terminal de tools y una única despedida al escalar. Servicios: argumentos,
+identidad, errores públicos y contexto SQL sin evidencia.
+
+No son pruebas de PostgreSQL, concurrencia real, audio telefónico ni precisión
+de consentimiento. Para eso seguir [el guion de Lucas](client-tools-lucas-test.md)
+después de desplegar, incluyendo una negativa y una corrección antes del sí final.
+
+Referencia oficial: [Voice agents / Agents SDK](https://developers.openai.com/api/docs/guides/voice-agents).

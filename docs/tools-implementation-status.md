@@ -82,86 +82,36 @@ contexto, claves de idempotencia, errores públicos y cambios de tools/prompts. 
 ejecuta PostgreSQL ni prueba la atomicidad o concurrencia de la migración SQL.**
 No se hicieron pruebas mutantes contra Supabase ni se activó la bandera en Render.
 
-## Tercer tramo: confirmar mandato
+## Estado vigente: mandato conversacional y Agents SDK (2026-08-30)
 
-Implementado localmente, bajo la misma bandera. Se extendió la migración **todavía
-no aplicada** `20260830010000_client_operation_tools.sql`:
+Los tramos anteriores describen su implementación original. Esta actualización
+reemplaza el gate de evidencia de audio y el loop manual de tools.
 
-- `ConfirmMandateTool` aparece únicamente en `client_confirm`, junto a editar.
-  El cliente completa precio máximo, moneda, ventanas con zona horaria y plazo
-  mínimo desde fecha de factura; el prompt pide resumir todos los términos y
-  esperar aprobación explícita en el turno siguiente. No se agregan mandate drafts.
-- El servicio valida importes compatibles con `numeric(14,2)`, días enteros y
-  ventanas ordenadas con fechas válidas; PostgreSQL vuelve a validar la entrada.
-- La revisión `updated_at` observada por el servidor acompaña la ejecución fuera
-  de los argumentos de la tool. Bajo lock, una revisión diferente devuelve
-  `stale_operation`: resumir el estado actualizado y obtener otro consentimiento.
-- Se insertan el mandato inmutable con snapshot de la fila bloqueada, versión y
-  `supersedes_mandate_id`, eventos `mandate.confirmed`/`sourcing.started` y recibo
-  idempotente en una sola transacción. Se actualiza el mandato vigente, se limpia
-  `mandate_confirmation_required` y la operación pasa a `sourcing`.
-- `calls.client_tools_completed_at` hace terminal el flujo de esa llamada sin
-  fingir que la llamada telefónica terminó. El guard SQL impide nuevas mutaciones;
-  un reintento del comando original sigue devolviendo el resultado persistido.
-- `ConfirmationEvidenceTracker` captura eventos del SDK por llamada. Correlaciona
-  el resumen de audio, respuesta finalizada y reproducción SIP terminada con el
-  siguiente turno de usuario y con el `response_id` que solicita la tool.
-  Interrupciones, audio truncado, transcripción ausente/fallida, otra intervención
-  o una edición invalidan la evidencia. No usa un "yes" viejo ni texto del modelo
-  como transcripción del usuario. Si la transcripción llega tarde se exige volver
-  a resumir/confirmar; no se espera indefinidamente ni se inventa evidencia.
-- La evidencia mínima se guarda en `mandates.confirmation_evidence`, nunca en
-  eventos, resultados públicos o prompts: IDs de items/respuesta/evento, resumen,
-  intervención del usuario y `input_audio_end_ms`. `confirmed_at` lo genera SQL.
-  Los mandatos históricos pueden tener evidencia nula; la nueva tool la exige.
-- `input_audio_end_ms` es un offset del audio de Realtime, **no** un checkpoint de
-  la grabación Twilio. No se rellena `events.recording_checkpoint` con ese valor.
-  La correlación con una grabación externa sigue pendiente.
-- La aprobación inequívoca y la fidelidad semántica del resumen siguen siendo
-  responsabilidad del agente conversacional. La captura verifica procedencia,
-  orden y disponibilidad, **no clasifica** automáticamente el significado del sí/no.
-- `sourcing.started` registra entrada/reentrada al estado, con `provider_count: 0`.
-  Este tramo no selecciona/contacta transportistas, no manda emails ni modifica
-  bookings históricos. Esos handlers deberán exigir el mandato vigente y una
-  nueva aceptación; un booking bajo el mandato anterior no autoriza nuevos términos.
+- Después de crear o seleccionar una operación aparecen update_operation y
+  confirm_mandate, incluso cuando faltan campos. SQL no confirma pedidos incompletos.
+- El agente resume operación y condiciones y espera el sí explícito. Sin
+  ConfirmationEvidenceTracker ni needsApproval; interpretar ese sí depende del modelo.
+- Se conservan autorización, revisión de operación, snapshots/versiones inmutables,
+  eventos, estado terminal e idempotencia en la misma transacción.
+- Migración nueva: 20260830020000_conversational_mandate_confirmation.sql.
+  No altera el archivo de migración ya aplicado ni borra evidencias históricas.
+- RealtimeAgent/RealtimeSession/OpenAIRealtimeSIP controlan tools e historial.
+  OpenAIRealtimeGateway conserva REST accept/reject y no usa OpenAIRealtimeWS.
+- Saludo inicial en inglés para cliente y proveedor; luego idioma del usuario.
+- Se conserva el escalamiento Twilio. No se implementaron nuevas tools de proveedor
+  ni cancelación ni despacho real de sourcing en esta actualización.
 
-Pruebas: `harness:tools:client` añade contrato de confirmación, argumentos inválidos,
-contexto confiable, perfil terminal, replay sin evidencia local y errores seguros.
-`harness:tools:evidence` cubre reproducción, interrupciones, correlación de turnos,
-ASR fuera de orden y aislamiento. Ambas son simuladas, sin PostgreSQL/OpenAI real;
-no demuestran atomicidad ni semántica del consentimiento en una llamada real.
+Detalle de decisiones, limitaciones, compatibilidad SDK y orden de despliegue:
+[realtime-confirmation-review.md](realtime-confirmation-review.md).
 
-La captura sigue los eventos y limitaciones de
-[transcripción Realtime](https://developers.openai.com/api/docs/guides/realtime-transcription)
-y [reproducción/interrupciones SIP](https://developers.openai.com/api/docs/guides/realtime-conversations).
-
-La configuración dinámica sigue el mecanismo documentado de
-[sesiones Realtime](https://developers.openai.com/api/docs/guides/realtime-conversations).
-
-## Transporte OpenAI SDK
-
-- `OpenAIRealtimeGateway` centraliza `client.realtime.calls.accept/reject` y
-  `OpenAIRealtimeWS({ callID }, client)` usando el mismo cliente oficial del webhook.
-- El SDK configura autenticación y URLs, parsea eventos entrantes y serializa los
-  eventos salientes. El servidor recibe eventos tipados y envía objetos tipados;
-  solo los argumentos/resultados de las tools siguen siendo cadenas JSON del protocolo.
-- Se conserva `ws` porque es el peer dependency del transporte Realtime del SDK;
-  el servidor ya no construye un WebSocket manualmente.
-- Aceptación/rechazo tienen timeout de 10 segundos y `maxRetries: 0` para no
-  repetir implícitamente decisiones sobre llamadas. Los errores de aceptación
-  siguen devolviendo HTTP 502 al webhook; el rechazo conserva SIP 603.
-- El ACK del webhook ya no incluye la API key en un header de respuesta.
-- `npm --prefix backend run harness:realtime:sdk` prueba el SDK real con HTTP y
-  socket simulados: aceptación/rechazo, URL de sideband, correlación de tool calls,
-  cambios de sesión, errores de API/transporte y frames inválidos. Sin red real.
-
-Referencia: [OpenAI Realtime: controles del servidor](https://developers.openai.com/api/docs/guides/realtime-server-controls).
+Pruebas: harness:tools, harness:realtime:sdk, harness:realtime:agents y
+harness:realtime:diagnostics. Son simuladas, sin PostgreSQL ni llamadas reales.
 
 ## Lo que todavía falta del #13
 
 El diagnóstico de tools enviadas/observadas y la revisión de SDK/HITL están en
 [realtime-confirmation-review.md](realtime-confirmation-review.md). Los nuevos
-logs no cambian el flujo ni prueban por sí mismos consentimiento humano.
+logs permiten inspeccionar el flujo, pero no prueban consentimiento humano.
 
 - Aplicar/validar los tramos de escritura y mandato; implementar cancelar operaciones.
 - Extender las transacciones e idempotencia al resto de mutaciones.

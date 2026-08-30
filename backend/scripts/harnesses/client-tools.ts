@@ -9,7 +9,6 @@ import { SupabaseClientOperationRepository } from "../../src/tango/supabase/clie
 import { CallToolFactory } from "../../src/tango/tools/call-tool-factory";
 import { RealtimeSessionFactory } from "../../src/tango/realtime/realtime-session";
 import type { AcceptedRoutingDecision } from "../../src/tango/agents/routing-instructions";
-import type { ConfirmationEvidence } from "../../src/domain/confirmation-evidence";
 
 const initialState = (): ClientFlowState => ({ profile: "client_entry", intent: "undecided", operation: null });
 const selectedState = (complete = false): ClientFlowState => ({
@@ -72,6 +71,15 @@ async function main(): Promise<void> {
   await session.refresh();
   assert.deepEqual(names(), ["list_open_operations", "create_operation", "update_operation"]);
   const contracts = JSON.parse(readFileSync(resolve(__dirname, "../../../contracts/tools.schema.json"), "utf8"));
+  // Static migration regression only; this does not execute/validate PostgreSQL.
+  const migration = readFileSync(resolve(__dirname, "../../../supabase/migrations/20260830020000_conversational_mandate_confirmation.sql"), "utf8");
+  assert.doesNotMatch(migration, /p_context->'evidence'|RAISE EXCEPTION 'confirmation_not_ready'/);
+  assert.match(migration, /expected_operation_revision/);
+  assert.match(migration, /cardinality\(public.operation_missing_fields\(op\)\) <> 0/);
+  assert.match(migration, /FOR UPDATE/);
+  assert.match(migration, /idempotency_conflict/);
+  assert.match(migration, /client_tools_completed_at/);
+  assert.match(migration, /GRANT EXECUTE ON FUNCTION public.execute_client_operation_tool.*TO service_role/);
   for (const definition of session.definitions) {
     const contract = contracts.tools.find((tool: { name: string }) => tool.name === definition.name);
     assert.deepEqual(definition, { type: contract.type, name: contract.name, description: contract.description, parameters: contract.parameters });
@@ -101,7 +109,7 @@ async function main(): Promise<void> {
   assert.equal((created as ClientMutationResult).operation_reference, "OP-000123");
   rpc.state = selectedState();
   await session.refresh();
-  assert.deepEqual(names(), ["update_operation"]);
+  assert.deepEqual(names(), ["update_operation", "confirm_mandate"], "Mandate tool visible even with missing operational fields");
   const factory = new RealtimeSessionFactory();
   let update = factory.createFlowUpdate(decision, session.definitions, session.flowState) as { type: string; session: { instructions: string; tools: unknown[] } };
   assert.equal(update.type, "session.update");
@@ -151,23 +159,20 @@ async function main(): Promise<void> {
     await assert.rejects(session.execute("confirm_mandate", args, { toolCallId: "bad-confirm" }), (error) => error instanceof ToolError && error.code === "invalid_arguments");
   }
   assert.equal(rpc.requests.length, invalidCount);
-  const evidence: ConfirmationEvidence = { summary_item_id: "summary-1", summary_response_id: "response-1",
-    summary_transcript: "Complete operation and terms. Confirm?", caller_item_id: "caller-1", caller_event_id: "evt-1",
-    caller_transcript: "Yes, I confirm.", input_audio_end_ms: 12500 };
   const confirmed: ClientMutationResult = { operation_reference: "OP-000123", mandate_version: 1, status: "sourcing", next_profile: "terminal" };
   rpc.results.push(confirmed);
-  assert.deepEqual(await session.execute("confirm_mandate", terms, { toolCallId: "fn-confirm", confirmationEvidence: evidence }), confirmed);
+  assert.deepEqual(await session.execute("confirm_mandate", terms, { toolCallId: "fn-confirm" }), confirmed);
   assert.deepEqual(rpc.requests.at(-1)!.args, {
     p_call_id: scope.callId, p_realtime_call_id: scope.realtimeCallId, p_contact_id: scope.counterpartyId,
     p_tool_call_id: "fn-confirm", p_tool_name: "confirm_mandate", p_arguments: terms,
-    p_context: { expected_operation_revision: rpc.state.operationRevision, evidence },
+    p_context: { expected_operation_revision: rpc.state.operationRevision },
   });
   rpc.state = { ...rpc.state, profile: "terminal" };
   await session.refresh();
   assert.deepEqual(names(), []);
   rpc.results.push(confirmed);
   assert.deepEqual(await session.execute("confirm_mandate", terms, { toolCallId: "fn-confirm" }), confirmed,
-    "Replay goes to durable SQL receipt even with no in-memory evidence and hidden tool");
+    "Replay goes to durable SQL receipt even with a hidden tool");
   for (const code of ["confirmation_not_ready", "stale_operation", "invalid_transition", "idempotency_conflict"]) {
     rpc.error = { code: "P0001", message: code };
     await assert.rejects(session.execute("confirm_mandate", terms, { toolCallId: "fn-new-confirm" }),

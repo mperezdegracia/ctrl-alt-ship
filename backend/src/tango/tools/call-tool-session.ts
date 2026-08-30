@@ -20,7 +20,7 @@ export class CallToolSession extends RealtimeToolRegistry {
     const names = this.state?.profile === "client_entry"
       ? ["list_open_operations", "create_operation", "update_operation"]
       : this.state?.profile === "terminal" ? []
-        : this.state?.profile === "client_confirm" ? ["update_operation", "confirm_mandate"] : ["update_operation"];
+        : this.state?.operation ? ["update_operation", "confirm_mandate"] : [];
     return definitions.filter((tool) => names.includes(tool.name));
   }
 

@@ -11,8 +11,8 @@
     "inbound:routing": "tsx scripts/harnesses/inbound-routing.ts",
     "harness:tools:read": "node --require tsx/cjs scripts/harnesses/tools-read.ts",
     "harness:tools:client": "node --require tsx/cjs scripts/harnesses/client-tools.ts",
-    "harness:tools": "npm run harness:tools:read && npm run harness:tools:client && npm run harness:tools:evidence",
-    "harness:tools:evidence": "node --require tsx/cjs scripts/harnesses/confirmation-evidence.ts",
+    "harness:tools": "npm run harness:tools:read && npm run harness:tools:client",
+    "harness:realtime:agents": "node --require tsx/cjs scripts/harnesses/agents-realtime.ts",
     "harness:realtime:sdk": "node --require tsx/cjs scripts/harnesses/realtime-sdk.ts",
     "dashboard:read": "tsx scripts/harnesses/dashboard-read.ts",
     "harness:escalation": "node --require tsx/cjs scripts/harnesses/escalation-handoff.ts",
@@ -23,6 +23,7 @@
     "typecheck": "tsc --project tsconfig.json"
   },
   "dependencies": {
+    "@openai/agents": "^0.17.0",
     "@supabase/supabase-js": "^2.112.4",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",

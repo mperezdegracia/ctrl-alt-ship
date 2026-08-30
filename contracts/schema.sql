@@ -321,6 +321,7 @@ CREATE TABLE mandates (
   payment_term_anchor text NOT NULL DEFAULT 'invoice_date' CHECK (payment_term_anchor = 'invoice_date'),
   confirmed_in_call_id uuid NOT NULL REFERENCES calls(id),
   confirmed_at timestamptz NOT NULL,
+  -- Legacy audio evidence retained for history; new conversational mandates leave it NULL.
   confirmation_evidence jsonb CHECK (confirmation_evidence IS NULL OR jsonb_typeof(confirmation_evidence) = 'object'),
   created_at timestamptz NOT NULL DEFAULT now(),
   UNIQUE (operation_id, version),
