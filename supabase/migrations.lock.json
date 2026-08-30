@@ -160,6 +160,30 @@
     {
       "file": "20260830232100_booking_confirmation_sms_outbox.sql",
       "sha256": "1613562fef9b58745c9a18bc1fac3800ab29a8d3418be0038fc4dd59ae771876"
+    },
+    {
+      "file": "20260830232200_quote_transcript_evidence.sql",
+      "sha256": "8b6dc4f7c7276ada7382bd6e832ed4940221e2d540b5ba0268b6922fd6ec724c"
+    },
+    {
+      "file": "20260830232300_client_cancellation_sms_outbox.sql",
+      "sha256": "f99b5bfe2a8477db60c10b2b2f29f9816738ee95fbd114553b8992ab5dd8f61b"
+    },
+    {
+      "file": "20260830232400_fix_quote_evidence_staging_permissions.sql",
+      "sha256": "b35bd297891d846d57812816a832ac8256a580f91e901e2bd0a2bf6aa68add2f"
+    },
+    {
+      "file": "20260830232500_preserve_quote_immutability.sql",
+      "sha256": "5e5180ba519901bd7bc058cc86949d81b8082af0b4b2d7f4b6fcb1efa741d5a2"
+    },
+    {
+      "file": "20260830232600_cancel_pending_escalation.sql",
+      "sha256": "41b6959203f9eae5899e3defc0ce0d2c3aecf94ea366fa891f3357f4865bf69c"
+    },
+    {
+      "file": "20260830233000_accept_above_budget_quotes.sql",
+      "sha256": "0c974201700be81fc6b0f87691176881f30b23268b21ff51e9e4fb3b71e11f93"
     }
   ]
 }
