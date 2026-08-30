@@ -3,6 +3,17 @@
 -- Never execute this alongside migrations or against an existing database.
 BEGIN;
 
+-- Runtime RPC signatures are documented here as a snapshot only; definitions and
+-- grants live in forward migrations. The provider flow uses:
+-- get_provider_tool_state(uuid,text,uuid), get_provider_inbound_tool_state(uuid,text,uuid),
+-- select_provider_booking(uuid,text,uuid,text,text,jsonb), record_provider_offer(uuid,text,uuid,text,jsonb),
+-- execute_provider_quote_tool(uuid,text,uuid,text,text,jsonb,jsonb),
+-- execute_provider_booking_tool(uuid,text,uuid,text,text,jsonb,jsonb),
+-- claim_next_provider_contact_v2() -> jsonb, begin_provider_contact(uuid,uuid,uuid) -> jsonb,
+-- finish_provider_contact_v2(uuid,uuid,uuid,text,text,text) -> jsonb,
+-- record_provider_call_status(uuid,text,text,integer,timestamptz) -> jsonb,
+-- advance_sourcing_round(uuid) -> jsonb, enqueue_replacement_sourcing(uuid,uuid) -> uuid.
+
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
 CREATE TYPE operation_status AS ENUM (
@@ -25,13 +36,15 @@ CREATE TYPE change_request_type AS ENUM ('reschedule', 'cancel');
 CREATE TYPE change_request_verdict AS ENUM ('dentro', 'fuera');
 CREATE TYPE change_request_status AS ENUM ('pending', 'applied', 'rejected', 'escalated');
 CREATE TYPE escalation_status AS ENUM ('started', 'supervisor_joined', 'resolved', 'failed');
-CREATE TYPE commitment_type AS ENUM ('quote', 'booking', 'reschedule', 'cancellation');
 CREATE TYPE outbox_status AS ENUM ('pending', 'processing', 'processed', 'failed');
+CREATE TYPE sourcing_round_kind AS ENUM ('initial','renegotiation','replacement');
+CREATE TYPE sourcing_round_status AS ENUM ('active','selected','exhausted','superseded');
 CREATE TYPE domain_event_type AS ENUM (
   'call.rejected', 'call.routed', 'call.completed', 'call.failed', 'call.transferred',
   'operation.created', 'operation.updated', 'operation.corrected', 'operation.cancelled',
   'mandate.confirmed', 'sourcing.started', 'sourcing.dispatch_queued',
   'quote.requested', 'quote.received', 'quote.counteroffer_requested',
+  'quote.offered',
   'quote.declined', 'quote.expired', 'quote.selected',
   'booking.pending', 'booking.confirmed', 'booking.declined',
   'booking.rescheduled', 'booking.reschedule_declined', 'booking.cancelled',
@@ -266,6 +279,16 @@ CREATE TABLE calls (
   operation_id uuid REFERENCES operations(id),
   contact_id uuid REFERENCES contacts(id),
   provider_id uuid REFERENCES providers(id),
+  purpose text CHECK (purpose IS NULL OR purpose IN ('operation_management','booking_management','quote_request','renegotiation','booking_replacement')),
+  selected_booking_id uuid,
+  quote_request_id uuid,
+  outbound_attempt integer CHECK (outbound_attempt IS NULL OR outbound_attempt BETWEEN 1 AND 3),
+  dispatch_state text CHECK (dispatch_state IS NULL OR dispatch_state IN ('prepared','dispatching','accepted','unknown','failed')),
+  raw_twilio_status text,
+  last_callback_sequence integer,
+  last_callback_at timestamptz,
+  answered_at timestamptz,
+  dispatch_started_at timestamptz,
   operation_intent client_operation_intent,
   provider_intent provider_operation_intent,
   -- Outbound calls are persisted before Twilio/OpenAI attach their identifiers.
@@ -499,6 +522,7 @@ CREATE TABLE quote_requests (
   idempotency_key text NOT NULL UNIQUE CHECK (btrim(idempotency_key) <> ''),
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now(),
+  round_id uuid,
   CHECK (expires_at > created_at),
   CHECK ((provider_decline_reason IS NULL AND provider_declined_at IS NULL)
     OR (provider_decline_reason IS NOT NULL AND provider_declined_at IS NOT NULL AND status = 'cancelled'))
@@ -646,6 +670,9 @@ CREATE TABLE bookings (
   confirmed_at timestamptz,
   cancelled_at timestamptz,
   last_change_request_id uuid,
+  source_call_id uuid REFERENCES calls(id),
+  evidence_start_segment_id uuid REFERENCES call_transcript_segments(id),
+  evidence_end_segment_id uuid REFERENCES call_transcript_segments(id),
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now(),
   CHECK (pickup_window_start < pickup_window_end),
@@ -654,8 +681,76 @@ CREATE TABLE bookings (
   CHECK (status <> 'confirmed' OR confirmed_price IS NOT NULL),
   CHECK (status <> 'cancelled' OR cancelled_at IS NOT NULL)
 );
-CREATE UNIQUE INDEX one_active_booking_per_operation
-ON bookings(operation_id) WHERE status IN ('pending', 'confirmed');
+ALTER TABLE calls ADD CONSTRAINT calls_selected_booking_id_fkey
+  FOREIGN KEY (selected_booking_id) REFERENCES bookings(id);
+ALTER TABLE calls ADD CONSTRAINT calls_quote_request_id_fkey
+  FOREIGN KEY (quote_request_id) REFERENCES quote_requests(id);
+ALTER TABLE operations ADD COLUMN current_booking_id uuid REFERENCES bookings(id);
+CREATE TABLE sourcing_rounds (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  operation_id uuid NOT NULL REFERENCES operations(id),
+  mandate_id uuid NOT NULL REFERENCES mandates(id),
+  kind sourcing_round_kind NOT NULL,
+  source_booking_id uuid REFERENCES bookings(id),
+  source_round_id uuid REFERENCES sourcing_rounds(id),
+  status sourcing_round_status NOT NULL DEFAULT 'active',
+  first_dispatched_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  closed_at timestamptz,
+  idempotency_key text NOT NULL UNIQUE CHECK (btrim(idempotency_key) <> ''),
+  CHECK ((kind='replacement')=(source_booking_id IS NOT NULL)),
+  CHECK ((status='active')=(closed_at IS NULL)),
+  CHECK (closed_at IS NULL OR closed_at >= created_at)
+);
+CREATE UNIQUE INDEX sourcing_rounds_one_active_operation ON sourcing_rounds(operation_id) WHERE status='active';
+CREATE UNIQUE INDEX sourcing_rounds_one_replacement_booking ON sourcing_rounds(source_booking_id) WHERE kind='replacement';
+CREATE UNIQUE INDEX calls_quote_request_attempt_unique
+  ON calls(quote_request_id, outbound_attempt)
+  WHERE quote_request_id IS NOT NULL AND outbound_attempt IS NOT NULL;
+CREATE UNIQUE INDEX quote_requests_round_provider_unique
+  ON quote_requests(round_id, provider_id)
+  WHERE round_id IS NOT NULL;
+ALTER TABLE sourcing_rounds ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON sourcing_rounds FROM PUBLIC,anon,authenticated;
+GRANT SELECT,INSERT,UPDATE ON sourcing_rounds TO service_role;
+ALTER TABLE quote_requests ADD CONSTRAINT quote_requests_round_id_fkey FOREIGN KEY (round_id) REFERENCES sourcing_rounds(id);
+
+CREATE OR REPLACE FUNCTION public.validate_sourcing_round()
+RETURNS trigger LANGUAGE plpgsql SET search_path=public,pg_temp AS $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM public.mandates m WHERE m.id=NEW.mandate_id AND m.operation_id=NEW.operation_id)
+    OR (NEW.source_booking_id IS NOT NULL AND NOT EXISTS (
+      SELECT 1 FROM public.bookings b WHERE b.id=NEW.source_booking_id AND b.operation_id=NEW.operation_id))
+    OR (NEW.source_round_id IS NOT NULL AND NOT EXISTS (
+      SELECT 1 FROM public.sourcing_rounds r WHERE r.id=NEW.source_round_id AND r.operation_id=NEW.operation_id)) THEN
+    RAISE EXCEPTION 'round scope mismatch' USING ERRCODE='23514';
+  END IF;
+  IF TG_OP='UPDATE' AND (NEW.operation_id IS DISTINCT FROM OLD.operation_id
+    OR NEW.mandate_id IS DISTINCT FROM OLD.mandate_id OR NEW.kind IS DISTINCT FROM OLD.kind
+    OR NEW.source_booking_id IS DISTINCT FROM OLD.source_booking_id
+    OR NEW.source_round_id IS DISTINCT FROM OLD.source_round_id
+    OR (OLD.status<>'active' AND NEW.status IS DISTINCT FROM OLD.status)) THEN
+    RAISE EXCEPTION 'round scope and terminal status are immutable' USING ERRCODE='23514';
+  END IF;
+  RETURN NEW;
+END; $$;
+CREATE TRIGGER sourcing_rounds_validate BEFORE INSERT OR UPDATE ON public.sourcing_rounds
+FOR EACH ROW EXECUTE FUNCTION public.validate_sourcing_round();
+
+CREATE OR REPLACE FUNCTION public.validate_quote_request_round()
+RETURNS trigger LANGUAGE plpgsql SET search_path=public,pg_temp AS $$
+BEGIN
+  IF NEW.round_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM public.sourcing_rounds r
+    WHERE r.id=NEW.round_id AND r.operation_id=NEW.operation_id AND r.mandate_id=NEW.mandate_id) THEN
+    RAISE EXCEPTION 'request round scope mismatch' USING ERRCODE='23514';
+  END IF;
+  IF TG_OP='UPDATE' AND OLD.round_id IS NOT NULL AND NEW.round_id IS DISTINCT FROM OLD.round_id THEN
+    RAISE EXCEPTION 'request round is immutable' USING ERRCODE='23514';
+  END IF;
+  RETURN NEW;
+END; $$;
+CREATE TRIGGER quote_requests_round_validate BEFORE INSERT OR UPDATE ON public.quote_requests
+FOR EACH ROW EXECUTE FUNCTION public.validate_quote_request_round();
 
 CREATE OR REPLACE FUNCTION public.validate_booking() RETURNS trigger
 LANGUAGE plpgsql SET search_path = public, pg_temp AS $$
@@ -663,31 +758,37 @@ DECLARE
   q public.quotes%ROWTYPE;
   op public.operations%ROWTYPE;
   request_operation uuid;
+  previous public.bookings%ROWTYPE;
 BEGIN
   SELECT * INTO q FROM public.quotes WHERE id = NEW.quote_id;
   SELECT operation_id INTO request_operation FROM public.quote_requests WHERE id = q.quote_request_id;
-  SELECT * INTO op FROM public.operations WHERE id = NEW.operation_id;
+  SELECT * INTO op FROM public.operations WHERE id = NEW.operation_id FOR UPDATE;
+  IF TG_OP <> 'INSERT' THEN RAISE EXCEPTION 'bookings are append-only' USING ERRCODE = '55000'; END IF;
+  SELECT * INTO previous FROM public.bookings WHERE id = op.current_booking_id;
   -- An agreed booking may outlive its quote's expiry. Window-only changes
   -- require a freshly applied change request; do not weaken creation checks.
-  IF TG_OP = 'UPDATE' AND OLD.status = 'confirmed' AND NEW.status = 'confirmed'
-    AND NEW.last_change_request_id IS DISTINCT FROM OLD.last_change_request_id THEN
-    IF NEW.operation_id IS DISTINCT FROM OLD.operation_id OR NEW.quote_id IS DISTINCT FROM OLD.quote_id
-      OR NEW.confirmed_price IS DISTINCT FROM OLD.confirmed_price
-      OR NEW.payment_term_days IS DISTINCT FROM OLD.payment_term_days
-      OR NEW.payment_term_anchor IS DISTINCT FROM OLD.payment_term_anchor
-      OR NEW.confirmed_at IS DISTINCT FROM OLD.confirmed_at
-      OR NEW.confirmation_reference IS DISTINCT FROM OLD.confirmation_reference
+  IF NEW.last_change_request_id IS NOT NULL THEN
+    IF previous.id IS NULL OR previous.status <> 'confirmed' OR NEW.status <> 'confirmed' THEN
+      RAISE EXCEPTION 'booking reschedule requires the current booking' USING ERRCODE = '23514';
+    END IF;
+    IF NEW.operation_id IS DISTINCT FROM previous.operation_id OR NEW.quote_id IS DISTINCT FROM previous.quote_id
+      OR NEW.confirmed_price IS DISTINCT FROM previous.confirmed_price
+      OR NEW.payment_term_days IS DISTINCT FROM previous.payment_term_days
+      OR NEW.payment_term_anchor IS DISTINCT FROM previous.payment_term_anchor
+      OR NEW.confirmed_at IS DISTINCT FROM previous.confirmed_at
+      OR NEW.confirmation_reference IS DISTINCT FROM previous.confirmation_reference
       OR request_operation IS DISTINCT FROM NEW.operation_id
       OR op.status NOT IN ('booking_confirmed', 'notifications_sent')
       OR q.verdict <> 'dentro' OR q.status <> 'received'
       OR EXISTS (SELECT 1 FROM public.quotes successor WHERE successor.supersedes_quote_id = q.id)
       OR op.mandate_confirmation_required OR q.evaluated_mandate_id IS DISTINCT FROM op.current_mandate_id
       OR NOT EXISTS (SELECT 1 FROM public.change_requests cr
-        WHERE cr.id = NEW.last_change_request_id AND cr.booking_id = OLD.id AND cr.operation_id = OLD.operation_id
+        WHERE cr.id = NEW.last_change_request_id AND cr.booking_id = previous.id AND cr.operation_id = previous.operation_id
+          AND cr.source_call_id IS NOT DISTINCT FROM NEW.source_call_id
           AND cr.type = 'reschedule' AND cr.status = 'applied' AND cr.verdict = 'dentro'
-          AND cr.evaluated_mandate_id = op.current_mandate_id AND cr.requested_at >= OLD.updated_at
-          AND (cr.previous_pickup_window->>'start_at')::timestamptz = OLD.pickup_window_start
-          AND (cr.previous_pickup_window->>'end_at')::timestamptz = OLD.pickup_window_end
+          AND cr.evaluated_mandate_id = op.current_mandate_id AND cr.requested_at >= previous.updated_at
+          AND (cr.previous_pickup_window->>'start_at')::timestamptz = previous.pickup_window_start
+          AND (cr.previous_pickup_window->>'end_at')::timestamptz = previous.pickup_window_end
           AND (cr.requested_pickup_window->>'start_at')::timestamptz = NEW.pickup_window_start
           AND (cr.requested_pickup_window->>'end_at')::timestamptz = NEW.pickup_window_end)
       OR NOT EXISTS (SELECT 1 FROM public.mandates m, jsonb_array_elements(m.action_windows) w
@@ -712,12 +813,48 @@ BEGIN
   RETURN NEW;
 END;
 $$;
-CREATE TRIGGER bookings_validate
-BEFORE INSERT OR UPDATE OF operation_id, quote_id, pickup_window_start, pickup_window_end,
-  payment_term_days, confirmed_price, last_change_request_id
-ON bookings FOR EACH ROW EXECUTE FUNCTION validate_booking();
-CREATE TRIGGER bookings_touch_updated_at
-BEFORE UPDATE ON bookings FOR EACH ROW EXECUTE FUNCTION touch_updated_at();
+DROP TRIGGER IF EXISTS bookings_validate ON bookings;
+CREATE TRIGGER bookings_validate BEFORE INSERT ON bookings FOR EACH ROW EXECUTE FUNCTION validate_booking();
+CREATE TRIGGER bookings_append_only
+BEFORE UPDATE OR DELETE ON bookings FOR EACH ROW EXECUTE FUNCTION reject_mutation();
+
+CREATE OR REPLACE FUNCTION public.validate_booking_evidence()
+RETURNS trigger LANGUAGE plpgsql SET search_path = public, pg_temp AS $$
+DECLARE first_recorded timestamptz; last_recorded timestamptz;
+BEGIN
+  IF NEW.source_call_id IS NOT NULL AND NOT EXISTS (
+    SELECT 1 FROM public.calls c WHERE c.id = NEW.source_call_id
+      AND c.operation_id = NEW.operation_id
+  ) THEN RAISE EXCEPTION 'booking source call belongs to another operation' USING ERRCODE = '23514'; END IF;
+  IF (NEW.evidence_start_segment_id IS NULL) <> (NEW.evidence_end_segment_id IS NULL) THEN
+    RAISE EXCEPTION 'booking evidence range is incomplete' USING ERRCODE = '23514';
+  END IF;
+  IF NEW.evidence_start_segment_id IS NOT NULL THEN
+    SELECT s.recorded_at INTO first_recorded FROM public.call_transcript_segments s
+      WHERE s.id = NEW.evidence_start_segment_id AND s.call_id = NEW.source_call_id;
+    SELECT s.recorded_at INTO last_recorded FROM public.call_transcript_segments s
+      WHERE s.id = NEW.evidence_end_segment_id AND s.call_id = NEW.source_call_id;
+    IF first_recorded IS NULL OR last_recorded IS NULL OR first_recorded > last_recorded
+       OR (first_recorded = last_recorded AND NEW.evidence_start_segment_id <> NEW.evidence_end_segment_id) THEN
+      RAISE EXCEPTION 'booking evidence range is not ordered' USING ERRCODE = '23514';
+    END IF;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+CREATE TRIGGER bookings_validate_evidence BEFORE INSERT ON bookings FOR EACH ROW EXECUTE FUNCTION validate_booking_evidence();
+
+CREATE OR REPLACE FUNCTION public.validate_operation_current_booking()
+RETURNS trigger LANGUAGE plpgsql SET search_path = public, pg_temp AS $$
+BEGIN
+  IF NEW.current_booking_id IS NOT NULL AND NOT EXISTS (
+    SELECT 1 FROM public.bookings b WHERE b.id = NEW.current_booking_id
+      AND b.operation_id = NEW.id AND b.status IN ('pending','confirmed')
+  ) THEN RAISE EXCEPTION 'current booking must belong to operation and be active' USING ERRCODE = '23514'; END IF;
+  RETURN NEW;
+END;
+$$;
+CREATE TRIGGER operations_current_booking_validate BEFORE INSERT OR UPDATE OF current_booking_id ON operations FOR EACH ROW EXECUTE FUNCTION validate_operation_current_booking();
 
 CREATE TABLE change_requests (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -835,84 +972,10 @@ CREATE TABLE escalation_contexts (
 CREATE TRIGGER escalation_contexts_append_only
 BEFORE UPDATE OR DELETE ON escalation_contexts FOR EACH ROW EXECUTE FUNCTION reject_mutation();
 
-CREATE TABLE commitments (
-  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  operation_id uuid NOT NULL REFERENCES operations(id),
-  quote_id uuid REFERENCES quotes(id),
-  booking_id uuid REFERENCES bookings(id),
-  mandate_id uuid NOT NULL REFERENCES mandates(id),
-  call_id uuid NOT NULL REFERENCES calls(id),
-  change_request_id uuid REFERENCES change_requests(id),
-  supersedes_commitment_id uuid UNIQUE REFERENCES commitments(id),
-  type commitment_type NOT NULL,
-  terms jsonb NOT NULL CHECK (jsonb_typeof(terms) = 'object' AND terms <> '{}'::jsonb),
-  transcript_excerpt text NOT NULL CHECK (btrim(transcript_excerpt) <> ''),
-  recording_checkpoint numeric(12,3) NOT NULL CHECK (recording_checkpoint >= 0),
-  occurred_at timestamptz NOT NULL,
-  created_at timestamptz NOT NULL DEFAULT now(),
-  CHECK (supersedes_commitment_id IS NULL OR supersedes_commitment_id <> id)
-);
-
-CREATE FUNCTION validate_commitment_context()
-RETURNS trigger
-LANGUAGE plpgsql
-AS $$
-DECLARE
-  q_verdict quote_verdict;
-  q_operation uuid;
-  b_operation uuid;
-  b_quote uuid;
-  c_operation uuid;
-  c_type change_request_type;
-  previous_operation uuid;
-BEGIN
-  IF NOT EXISTS (SELECT 1 FROM mandates WHERE id = NEW.mandate_id AND operation_id = NEW.operation_id)
-     OR NOT EXISTS (SELECT 1 FROM calls WHERE id = NEW.call_id AND operation_id = NEW.operation_id) THEN
-    RAISE EXCEPTION 'commitment mandate or call belongs to another operation' USING ERRCODE = '23514';
-  END IF;
-  IF NEW.quote_id IS NOT NULL THEN
-    SELECT q.verdict, qr.operation_id INTO q_verdict, q_operation
-    FROM quotes q JOIN quote_requests qr ON qr.id = q.quote_request_id WHERE q.id = NEW.quote_id;
-  END IF;
-  IF NEW.booking_id IS NOT NULL THEN
-    SELECT operation_id, quote_id INTO b_operation, b_quote FROM bookings WHERE id = NEW.booking_id;
-  END IF;
-  IF NEW.change_request_id IS NOT NULL THEN
-    SELECT operation_id, type INTO c_operation, c_type FROM change_requests WHERE id = NEW.change_request_id;
-  END IF;
-  IF NEW.supersedes_commitment_id IS NOT NULL THEN
-    SELECT operation_id INTO previous_operation FROM commitments WHERE id = NEW.supersedes_commitment_id;
-  END IF;
-  IF coalesce(q_operation, NEW.operation_id) IS DISTINCT FROM NEW.operation_id
-     OR coalesce(b_operation, NEW.operation_id) IS DISTINCT FROM NEW.operation_id
-     OR coalesce(c_operation, NEW.operation_id) IS DISTINCT FROM NEW.operation_id
-     OR coalesce(previous_operation, NEW.operation_id) IS DISTINCT FROM NEW.operation_id THEN
-    RAISE EXCEPTION 'commitment references another operation' USING ERRCODE = '23514';
-  END IF;
-  IF NEW.type = 'quote' AND NOT (NEW.quote_id IS NOT NULL AND q_verdict = 'dentro'
-      AND NEW.booking_id IS NULL AND NEW.change_request_id IS NULL AND NEW.supersedes_commitment_id IS NULL) THEN
-    RAISE EXCEPTION 'invalid quote commitment' USING ERRCODE = '23514';
-  ELSIF NEW.type = 'booking' AND NOT (NEW.booking_id IS NOT NULL AND NEW.quote_id = b_quote AND NEW.change_request_id IS NULL) THEN
-    RAISE EXCEPTION 'invalid booking commitment' USING ERRCODE = '23514';
-  ELSIF NEW.type = 'reschedule' AND NOT (NEW.booking_id IS NOT NULL AND c_type = 'reschedule' AND NEW.supersedes_commitment_id IS NOT NULL) THEN
-    RAISE EXCEPTION 'invalid reschedule commitment' USING ERRCODE = '23514';
-  ELSIF NEW.type = 'cancellation' AND NOT (NEW.booking_id IS NOT NULL AND c_type = 'cancel' AND NEW.supersedes_commitment_id IS NOT NULL) THEN
-    RAISE EXCEPTION 'invalid cancellation commitment' USING ERRCODE = '23514';
-  END IF;
-  RETURN NEW;
-END;
-$$;
-CREATE TRIGGER commitments_validate_context
-BEFORE INSERT ON commitments FOR EACH ROW EXECUTE FUNCTION validate_commitment_context();
-CREATE TRIGGER commitments_append_only
-BEFORE UPDATE OR DELETE ON commitments FOR EACH ROW EXECUTE FUNCTION reject_mutation();
-CREATE INDEX commitments_operation_occurred_idx ON commitments(operation_id, occurred_at);
-
 CREATE TABLE events (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   operation_id uuid REFERENCES operations(id),
   call_id uuid REFERENCES calls(id),
-  commitment_id uuid REFERENCES commitments(id),
   type domain_event_type NOT NULL,
   schema_version smallint NOT NULL DEFAULT 1 CHECK (schema_version > 0),
   payload jsonb NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(payload) = 'object'),
@@ -921,8 +984,8 @@ CREATE TABLE events (
   created_at timestamptz NOT NULL DEFAULT now(),
   CHECK (
     operation_id IS NOT NULL
-    OR (type = 'call.rejected' AND call_id IS NULL AND commitment_id IS NULL)
-    OR (type = 'call.routed' AND call_id IS NOT NULL AND commitment_id IS NULL)
+    OR type = 'call.rejected'
+    OR (type = 'call.routed' AND call_id IS NOT NULL)
   ),
   CHECK (recording_checkpoint IS NULL OR call_id IS NOT NULL)
 );
@@ -936,9 +999,7 @@ BEGIN
        SELECT 1 FROM calls
        WHERE id = NEW.call_id AND operation_id IS NOT DISTINCT FROM NEW.operation_id
      ))
-     OR (NEW.commitment_id IS NOT NULL AND NOT EXISTS (
-       SELECT 1 FROM commitments WHERE id = NEW.commitment_id AND operation_id = NEW.operation_id
-     )) THEN
+     THEN
     RAISE EXCEPTION 'event references another operation' USING ERRCODE = '23514';
   END IF;
   RETURN NEW;
