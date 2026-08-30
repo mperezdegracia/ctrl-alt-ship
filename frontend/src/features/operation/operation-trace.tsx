@@ -7,7 +7,9 @@ type OperationTraceProps = {
   trace: DashboardOperationDossier["trace"];
 };
 
-function nodeClassName(node: DashboardOperationDossier["trace"]["nodes"][number]): string {
+type OperationTraceData = NonNullable<DashboardOperationDossier["trace"]>;
+
+function nodeClassName(node: OperationTraceData["nodes"][number]): string {
   const classes = ["trace-node"];
   if (node.kind === "call_started") classes.push("is-call-start");
   if (node.kind === "call_ended") classes.push("is-call-end");
@@ -18,6 +20,20 @@ function nodeClassName(node: DashboardOperationDossier["trace"]["nodes"][number]
 }
 
 export function OperationTrace({ trace }: OperationTraceProps) {
+  if (!trace) {
+    return (
+      <section className="detail-section trace-section trace-unavailable" aria-labelledby="trace-heading">
+        <div className="trace-heading">
+          <div>
+            <h2 id="trace-heading">Operation trace</h2>
+            <p>The operation record is available. Its event trace is still synchronizing with the operations API.</p>
+          </div>
+          <span>Trace syncing</span>
+        </div>
+      </section>
+    );
+  }
+
   if (trace.nodes.length === 0) {
     return (
       <section className="detail-section trace-section" aria-labelledby="trace-heading">

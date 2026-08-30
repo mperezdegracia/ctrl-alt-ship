@@ -70,7 +70,10 @@ export type DashboardOperationDossier = DashboardOperation & {
     recordingUrl: string | null;
     supersedesCommitmentId: string | null;
   }>;
-  trace: {
+  // The dashboard and API deploy independently. Keep this optional so an
+  // already-deployed API can still render the durable dossier while it rolls
+  // forward to the trace-capable response.
+  trace?: {
     lanes: Array<{
       id: string;
       label: string;
