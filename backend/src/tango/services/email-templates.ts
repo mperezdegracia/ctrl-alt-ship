@@ -7,18 +7,18 @@ export type EmailTemplate = (typeof emailTemplates)[number];
 export type EmailRecipientType = "client" | "provider";
 
 export type BookingEmailPayload = {
-  template: EmailTemplate;
-  recipient_type: EmailRecipientType;
+  template: string;
+  recipient_type: string;
   recipient_name: string | null;
   recipient_email: string | null;
   operation_reference: string;
   booking_id: string;
   booking: {
-    confirmed_price: number | string;
+    confirmed_price: number | string | null;
     currency: string;
     pickup_window_start: string;
     pickup_window_end: string;
-    payment_term_days: number | null;
+    payment_term_days: number | string | null;
     confirmation_reference: string | null;
     container_type: string | null;
     gross_weight_kg: number | string | null;
@@ -35,70 +35,40 @@ export type RenderedEmail = {
   html: string;
 };
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+// Normalize only for rendering. No payload field rejects an email job;
+// the mail transport remains responsible for accepting the recipient.
+function fields(value: unknown): Record<string, unknown> {
+  return typeof value === "object" && value !== null ? value as Record<string, unknown> : {};
 }
 
-function asText(value: unknown, name: string): string {
-  if (typeof value !== "string" || value.trim() === "") {
-    throw new EmailPayloadError(`invalid_${name}`);
-  }
-  return value;
+function optionalText(value: unknown): string | null {
+  if (value === null || value === undefined || typeof value === "object") return null;
+  return String(value).trim() || null;
 }
 
-function asNullableText(value: unknown, name: string): string | null {
-  if (value === null) return null;
-  return asText(value, name);
-}
-
-function asPositiveNumber(value: unknown, name: string): number | string {
-  if (typeof value === "number" && Number.isFinite(value) && value > 0) return value;
-  if (typeof value === "string" && value.trim() !== "" && Number.isFinite(Number(value)) && Number(value) > 0) return value;
-  throw new EmailPayloadError(`invalid_${name}`);
-}
-
-function asNonnegativeInteger(value: unknown, name: string): number {
-  if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
-    throw new EmailPayloadError(`invalid_${name}`);
-  }
-  return value;
-}
-
-export class EmailPayloadError extends Error {
-  constructor(readonly code: string) {
-    super(`Invalid email outbox payload: ${code}`);
-    this.name = "EmailPayloadError";
-  }
-}
-
-export function parseBookingEmailPayload(value: unknown): BookingEmailPayload {
-  if (!isRecord(value) || !isRecord(value.booking)) throw new EmailPayloadError("invalid_payload");
-  if (!emailTemplates.includes(value.template as EmailTemplate)) throw new EmailPayloadError("invalid_template");
-  if (value.recipient_type !== "client" && value.recipient_type !== "provider") {
-    throw new EmailPayloadError("invalid_recipient_type");
-  }
-
-  const booking = value.booking;
+export function prepareBookingEmailPayload(value: unknown): BookingEmailPayload {
+  const source = fields(value);
+  const booking = fields(source.booking);
   return {
-    template: value.template as EmailTemplate,
-    recipient_type: value.recipient_type,
-    recipient_name: asNullableText(value.recipient_name, "recipient_name"),
-    recipient_email: asNullableText(value.recipient_email, "recipient_email"),
-    operation_reference: asText(value.operation_reference, "operation_reference"),
-    booking_id: asText(value.booking_id, "booking_id"),
+    template: optionalText(source.template) ?? "",
+    recipient_type: optionalText(source.recipient_type) ?? "",
+    recipient_name: optionalText(source.recipient_name),
+    recipient_email: optionalText(source.recipient_email),
+    operation_reference: optionalText(source.operation_reference) ?? "",
+    booking_id: optionalText(source.booking_id) ?? "",
     booking: {
-      confirmed_price: asPositiveNumber(booking.confirmed_price, "confirmed_price"),
-      currency: asText(booking.currency, "currency"),
-      pickup_window_start: asText(booking.pickup_window_start, "pickup_window_start"),
-      pickup_window_end: asText(booking.pickup_window_end, "pickup_window_end"),
-      payment_term_days: booking.payment_term_days === null ? null : asNonnegativeInteger(booking.payment_term_days, "payment_term_days"),
-      confirmation_reference: asNullableText(booking.confirmation_reference, "confirmation_reference"),
-      container_type: asNullableText(booking.container_type, "container_type"),
-      gross_weight_kg: booking.gross_weight_kg === null ? null : asPositiveNumber(booking.gross_weight_kg, "gross_weight_kg"),
-      pickup_location: asText(booking.pickup_location, "pickup_location"),
-      delivery_location: asText(booking.delivery_location, "delivery_location"),
-      client_name: asText(booking.client_name, "client_name"),
-      provider_name: asText(booking.provider_name, "provider_name"),
+      confirmed_price: optionalText(booking.confirmed_price),
+      currency: optionalText(booking.currency) ?? "",
+      pickup_window_start: optionalText(booking.pickup_window_start) ?? "",
+      pickup_window_end: optionalText(booking.pickup_window_end) ?? "",
+      payment_term_days: optionalText(booking.payment_term_days),
+      confirmation_reference: optionalText(booking.confirmation_reference),
+      container_type: optionalText(booking.container_type),
+      gross_weight_kg: optionalText(booking.gross_weight_kg),
+      pickup_location: optionalText(booking.pickup_location) ?? "",
+      delivery_location: optionalText(booking.delivery_location) ?? "",
+      client_name: optionalText(booking.client_name) ?? "",
+      provider_name: optionalText(booking.provider_name) ?? "",
     },
   };
 }
@@ -115,6 +85,7 @@ function escapeHtml(value: string): string {
 
 function formatMoney(value: number | string, currency: string): string {
   const amount = Number(value);
+  if (!Number.isFinite(amount) || !currency) return `${currency} ${value}`.trim();
   try {
     return new Intl.NumberFormat("en-US", {
       style: "currency",
@@ -129,12 +100,14 @@ function formatMoney(value: number | string, currency: string): string {
 function bookingDetails(payload: BookingEmailPayload): string[] {
   const booking = payload.booking;
   return [
-    `Operation: ${payload.operation_reference}`,
+    ...(payload.operation_reference ? [`Operation: ${payload.operation_reference}`] : []),
     ...(booking.container_type !== null || booking.gross_weight_kg !== null
       ? [`Cargo: ${[booking.container_type, booking.gross_weight_kg === null ? null : `${booking.gross_weight_kg} kg`].filter(Boolean).join(", ")}`] : []),
-    `Route: ${booking.pickup_location} → ${booking.delivery_location}`,
-    `Pickup window: ${booking.pickup_window_start} to ${booking.pickup_window_end}`,
-    `Confirmed price: ${formatMoney(booking.confirmed_price, booking.currency)}`,
+    ...([booking.pickup_location, booking.delivery_location].some(Boolean)
+      ? [`Route: ${[booking.pickup_location, booking.delivery_location].filter(Boolean).join(" → ")}`] : []),
+    ...([booking.pickup_window_start, booking.pickup_window_end].some(Boolean)
+      ? [`Pickup window: ${[booking.pickup_window_start, booking.pickup_window_end].filter(Boolean).join(" to ")}`] : []),
+    ...(booking.confirmed_price === null ? [] : [`Confirmed price: ${formatMoney(booking.confirmed_price, booking.currency)}`]),
     ...(booking.payment_term_days === null ? [] : [`Payment term: ${booking.payment_term_days} days from invoice date`]),
     ...(booking.confirmation_reference ? [`Confirmation reference: ${booking.confirmation_reference}`] : []),
   ];
@@ -148,14 +121,16 @@ export function renderBookingEmail(payload: BookingEmailPayload): RenderedEmail 
   const details = bookingDetails(payload);
   const booking = payload.booking;
 
-  if (payload.template === "booking_confirmation_client") {
-    const greeting = payload.recipient_name ?? booking.client_name;
+  const subject = `Booking confirmed${payload.operation_reference ? ` — ${payload.operation_reference}` : ""}`;
+  if (payload.template === "booking_confirmation_client" || payload.recipient_type === "client") {
+    const greeting = payload.recipient_name ?? (booking.client_name || "there");
+    const provider = booking.provider_name ? ` with ${booking.provider_name}` : "";
     return {
-      subject: `Booking confirmed — ${payload.operation_reference}`,
+      subject,
       text: [
         `Hi ${greeting},`,
         "",
-        `Your freight booking with ${booking.provider_name} is confirmed.`,
+        `Your freight booking${provider} is confirmed.`,
         "",
         ...details,
         "",
@@ -163,17 +138,18 @@ export function renderBookingEmail(payload: BookingEmailPayload): RenderedEmail 
         "",
         "Tango Logistics",
       ].join("\n"),
-      html: `<p>Hi ${escapeHtml(greeting)},</p><p>Your freight booking with <strong>${escapeHtml(booking.provider_name)}</strong> is confirmed.</p>${htmlList(details)}<p>This is a confirmation of the agreed booking; no reply is required.</p><p>Tango Logistics</p>`,
+      html: `<p>Hi ${escapeHtml(greeting)},</p><p>Your freight booking${booking.provider_name ? ` with <strong>${escapeHtml(booking.provider_name)}</strong>` : ""} is confirmed.</p>${htmlList(details)}<p>This is a confirmation of the agreed booking; no reply is required.</p><p>Tango Logistics</p>`,
     };
   }
 
-  const greeting = payload.recipient_name ?? booking.provider_name;
+  const greeting = payload.recipient_name ?? (booking.provider_name || "there");
+  const client = booking.client_name ? ` for ${booking.client_name}` : "";
   return {
-    subject: `Booking confirmed — ${payload.operation_reference}`,
+    subject,
     text: [
       `Hi ${greeting},`,
       "",
-      `The booking for ${booking.client_name} is confirmed.`,
+      `The booking${client} is confirmed.`,
       "",
       ...details,
       "",
@@ -181,6 +157,6 @@ export function renderBookingEmail(payload: BookingEmailPayload): RenderedEmail 
       "",
       "Tango Logistics",
     ].join("\n"),
-    html: `<p>Hi ${escapeHtml(greeting)},</p><p>The booking for <strong>${escapeHtml(booking.client_name)}</strong> is confirmed.</p>${htmlList(details)}<p>Please use the confirmed terms above for dispatch.</p><p>Tango Logistics</p>`,
+    html: `<p>Hi ${escapeHtml(greeting)},</p><p>The booking${booking.client_name ? ` for <strong>${escapeHtml(booking.client_name)}</strong>` : ""} is confirmed.</p>${htmlList(details)}<p>Please use the confirmed terms above for dispatch.</p><p>Tango Logistics</p>`,
   };
 }

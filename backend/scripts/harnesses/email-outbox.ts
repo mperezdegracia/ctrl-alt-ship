@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 
 import {
   EmailDeliveryError,
+  type EmailDeliveryRequest,
   PreviewEmailGateway,
   SmtpEmailGateway,
   type EmailGateway,
@@ -83,14 +84,27 @@ async function main(): Promise<void> {
   assert.equal(previewRepository.previews.length, 1);
   assert.match(previewRepository.previews[0]?.html ?? "", /Lucas &lt;script&gt;/);
 
-  const missingRecipientRepository = new MemoryRepository([[job("invalid-recipient", {
-    payload: { ...payload, recipient_email: null },
-  })]]);
-  const missingRecipientWorker = new EmailOutboxWorker(missingRecipientRepository, new PreviewEmailGateway(), silentLogger);
-  await missingRecipientWorker.runOnce();
-  assert.deepEqual(missingRecipientRepository.failed.map((failure) => [failure.code, failure.retryable]), [
-    ["recipient_email_missing_or_invalid", false],
-  ]);
+  // Recipient syntax is delegated to SMTP, including missing addresses. Its
+  // errors must still be persisted; removing validation must not fake success.
+  for (const recipient of [null, "not-an-email", "Lucas <lucas@example.com>"]) {
+    const repository = new MemoryRepository([[job("transport-recipient", {
+      payload: { ...payload, recipient_email: recipient },
+    })]]);
+    const attemptedRecipients: string[] = [];
+    const rejectingTransport: EmailGateway = {
+      mode: "smtp",
+      async deliver(message) {
+        attemptedRecipients.push(message.to);
+        throw new EmailDeliveryError("smtp_eenvelope", false);
+      },
+    };
+    await new EmailOutboxWorker(repository, rejectingTransport, silentLogger).runOnce();
+    assert.deepEqual(attemptedRecipients, [recipient ?? ""]);
+    assert.equal(repository.completed.length, 0);
+    assert.deepEqual(repository.failed.map((failure) => [failure.code, failure.retryable]), [
+      ["smtp_eenvelope", false],
+    ]);
+  }
 
   const retryingGateway: EmailGateway = {
     mode: "smtp",
@@ -145,7 +159,76 @@ async function main(): Promise<void> {
     headers: { "X-Tango-Idempotency-Key": "booking-confirmation:smtp-job:client" },
   });
 
-  console.log("Email outbox harness OK: preview rendering, invalid recipients, retryable failures and Gmail SMTP delivery.");
+  // Regression: both confirmation jobs must reach delivery even when optional
+  // payment metadata is absent or unusable; valid terms (including zero) survive.
+  for (const recipientType of ["client", "provider"] as const) {
+    for (const paymentTerm of [null, undefined, "", "unknown", "30", -1, 1.5, false, {}, 0, 30]) {
+      const booking: Record<string, unknown> = {
+        ...payload.booking,
+        container_type: null,
+        gross_weight_kg: null,
+        payment_term_days: paymentTerm,
+      };
+      if (paymentTerm === undefined) delete booking.payment_term_days;
+      const recipient = `${recipientType}@example.com`;
+      const repository = new MemoryRepository([[job("optional-payment", {
+        payload: {
+          ...payload,
+          template: `booking_confirmation_${recipientType}`,
+          recipient_type: recipientType,
+          recipient_email: recipient,
+          booking,
+        },
+      })]]);
+      const delivered: EmailDeliveryRequest[] = [];
+      const gateway: EmailGateway = {
+        mode: "smtp",
+        async deliver(message) {
+          delivered.push(message);
+          return { providerMessageId: "test-confirmation", preview: false };
+        },
+      };
+      await new EmailOutboxWorker(repository, gateway, silentLogger).runOnce();
+      assert.deepEqual(repository.failed, []);
+      assert.equal(repository.completed.length, 1);
+      assert.equal(delivered.length, 1);
+      assert.equal(delivered[0]!.to, recipient);
+      for (const body of [delivered[0]!.text, delivered[0]!.html]) {
+        assert.match(body, /900,000/);
+        if (paymentTerm === null || paymentTerm === undefined || paymentTerm === "" || typeof paymentTerm === "object") {
+          assert.doesNotMatch(body, /Payment term:/);
+        } else {
+          assert.ok(body.includes(`Payment term: ${paymentTerm} days from invoice date`));
+        }
+      }
+    }
+  }
+
+  for (const incompletePayload of [
+    null,
+    {},
+    { recipient_email: "client@example.com", booking: null },
+    { recipient_email: "client@example.com", template: "legacy", recipient_type: "legacy", booking: {} },
+    { ...payload, booking: { confirmed_price: "agreed", currency: "unknown", pickup_location: "<script>alert(1)</script>" } },
+  ]) {
+    const repository = new MemoryRepository([[job("incomplete-payload", { payload: incompletePayload })]]);
+    const delivered: EmailDeliveryRequest[] = [];
+    const gateway: EmailGateway = {
+      mode: "smtp",
+      async deliver(message) {
+        delivered.push(message);
+        return { providerMessageId: "test-incomplete", preview: false };
+      },
+    };
+    await new EmailOutboxWorker(repository, gateway, silentLogger).runOnce();
+    assert.deepEqual(repository.failed, []);
+    assert.equal(repository.completed.length, 1);
+    assert.equal(delivered.length, 1);
+    assert.doesNotMatch(delivered[0]!.html, /undefined|null|NaN|<script>/);
+    assert.doesNotMatch(delivered[0]!.text, /undefined|null|NaN/);
+  }
+
+  console.log("Email outbox harness OK: rendering without payload validation, SMTP recipient handling, retryable failures and optional metadata for both recipients.");
 }
 
 main().catch((error: unknown) => {

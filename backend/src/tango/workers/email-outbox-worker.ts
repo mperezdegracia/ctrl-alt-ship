@@ -1,8 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import {
-  EmailPayloadError,
-  parseBookingEmailPayload,
+  prepareBookingEmailPayload,
   renderBookingEmail,
 } from "../services/email-templates";
 import {
@@ -31,8 +30,6 @@ type Logger = {
   warn(event: string, fields?: Record<string, unknown>): void;
   error(event: string, fields?: Record<string, unknown>): void;
 };
-
-const EMAIL_ADDRESS = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export class SupabaseEmailOutboxRepository implements EmailOutboxRepository {
   constructor(private readonly client: SupabaseClient) {}
@@ -124,15 +121,12 @@ export class EmailOutboxWorker {
     this.logger.info("email.delivery_started", { outbox_id: job.id, operation_id: job.operation_id,
       attempts: job.attempts, mode: this.gateway.mode });
     try {
-      const payload = parseBookingEmailPayload(job.payload);
-      if (!payload.recipient_email || !EMAIL_ADDRESS.test(payload.recipient_email)) {
-        throw new EmailDeliveryError("recipient_email_missing_or_invalid", false);
-      }
+      const payload = prepareBookingEmailPayload(job.payload);
 
       const rendered = renderBookingEmail(payload);
       const result = await this.gateway.deliver({
         ...rendered,
-        to: payload.recipient_email,
+        to: payload.recipient_email ?? "",
         idempotencyKey: job.idempotency_key,
         operationId: job.operation_id,
         template: payload.template,
@@ -173,7 +167,6 @@ export class EmailOutboxWorker {
   }
 
   private classifyFailure(error: unknown): { code: string; retryable: boolean } {
-    if (error instanceof EmailPayloadError) return { code: error.code, retryable: false };
     if (error instanceof EmailDeliveryError) return { code: error.code, retryable: error.retryable };
     return { code: "email_delivery_unavailable", retryable: true };
   }
