@@ -537,7 +537,7 @@ app.post("/openai/webhook", express.raw({ type: "*/*" }), async (req, res) => {
       onEscalationReady: () => {
         handoffCoordinator.beginFarewell();
         agentsCall.transport.requestResponse({
-          instructions: "In the caller's active language, say in one short sentence that you will connect them with an operator now and that the relevant context has been shared. Do not add anything else.",
+          instructions: "In English, say in one short sentence that you will connect them with an operator now and that the relevant context has been shared. Do not add anything else.",
         });
       },
     });

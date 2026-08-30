@@ -262,11 +262,11 @@ export class AgentsCallSession {
     // of permissions or operational data.
     this.agent.tools = refreshFailed || this.handoffConfirmed ? [] : this.buildTools();
     this.agent.instructions = this.handoffConfirmed
-      ? "The caller confirmed the live transfer. Say only the requested short farewell in the caller's language, then remain silent. Do not ask for confirmation again, offer to return to Tango, or claim a human has answered. The server will request the transfer after the farewell audio finishes."
+      ? "The caller confirmed the live transfer. Say only the requested short farewell in English, then remain silent. Do not ask for confirmation again, offer to return to Tango, or claim a human has answered. The server will request the transfer after the farewell audio finishes."
       : refreshFailed
-      ? "No further actions are available. Explain the actual tool result briefly in the caller's language and close the conversation. A successful write remains committed; do not claim it was rolled back or retry it. Do not claim a human transfer unless the result explicitly says handoff_ready."
+      ? "No further actions are available. Explain the actual tool result briefly in English and close the conversation. A successful write remains committed; do not claim it was rolled back or retry it. Do not claim a human transfer unless the result explicitly says handoff_ready."
       : this.tools.escalationPending
-        ? `You are Tango. Continue in the caller's active language. A human review is pending. No operation changes are authorized in this step. Never reveal private client mandate limits or another provider's prices. Do not invent approvals or claim an out-of-mandate request was accepted.
+        ? `You are Tango. Continue in English. A human review is pending. No operation changes are authorized in this step. Never reveal private client mandate limits or another provider's prices. Do not invent approvals or claim an out-of-mandate request was accepted.
 Ask whether they want the human transfer now or prefer to go back and continue with Tango, then WAIT for their answer. Never call confirm_escalation in the same turn as escalate.
 If the caller says "volver atrás", "seguir con vos", "cancel the transfer", changes their mind or asks to return, call cancel_escalation. This cancels only the handoff, never the shipment or booking. After success resume the previous flow using the preserved conversation and verified state; do not ask for already recorded information. Returning does not authorize requests outside the mandate.
 Only after an explicit yes to the transfer call confirm_escalation. This commits the live transfer: the short farewell is protected from voice interruptions and no second confirmation is needed. Before confirmation the caller may still cancel and return to Tango. Never claim a human has answered merely because the transfer was confirmed.

@@ -139,11 +139,10 @@ async function main(): Promise<void> {
 }
 
 function assertLanguagePolicy(session: ReturnType<RealtimeSessionFactory["create"]>): void {
-  assert.match(session.instructions, /After that opening greeting, always respond in the caller's language/);
+  assert.match(session.instructions, /Always speak and respond in English throughout the entire call/);
+  assert.match(session.instructions, /even if the caller speaks or requests another language/);
   assert.match(session.instructions, /Every call begins with the runtime's brief, flow-specific English greeting/);
-  assert.match(session.instructions, /switch your very next response to it automatically/);
-  assert.match(session.instructions, /Do not infer it from their phone number/);
-  assert.doesNotMatch(session.instructions, /first spoken message must be in English|Continue in English unless|Begin the call now in English/);
+  assert.doesNotMatch(session.instructions, /caller's (?:active )?language|switch your very next response/);
   assert.deepEqual(session.audio.input.turn_detection, {
     type: "server_vad", create_response: true, interrupt_response: true,
   });
