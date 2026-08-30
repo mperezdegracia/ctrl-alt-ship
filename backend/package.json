@@ -22,6 +22,7 @@
     "harness:realtime:agents": "node --require tsx/cjs scripts/harnesses/agents-realtime.ts",
     "harness:realtime:sdk": "node --require tsx/cjs scripts/harnesses/realtime-sdk.ts",
     "dashboard:read": "tsx scripts/harnesses/dashboard-read.ts",
+    "dashboard:console:read": "tsx scripts/harnesses/dashboard-console-read.ts",
     "harness:escalation": "node --require tsx/cjs scripts/harnesses/escalation-handoff.ts",
     "harness:escalation:triggers": "node --require tsx/cjs scripts/harnesses/escalation-triggers.ts",
     "harness:twilio-handoff": "node --require tsx/cjs scripts/harnesses/twilio-handoff-smoke.ts",

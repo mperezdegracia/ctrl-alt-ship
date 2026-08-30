@@ -54,6 +54,8 @@ export type DashboardOperation = {
   pickupLocation: string | null;
   deliveryLocation: string | null;
   emptyReturnDepot: string | null;
+  operationalConstraints: string[];
+  cargoNotes: string | null;
   status: string;
   updatedAt: string;
   nextStep: string;
@@ -62,6 +64,22 @@ export type DashboardOperation = {
     reason: string;
     startedAt: string;
   } | null;
+};
+
+export type DashboardPage<T> = {
+  items: T[];
+  page: number;
+  perPage: number;
+  total: number;
+  totalPages: number;
+};
+
+export type DashboardOperationsQuery = {
+  page: number;
+  perPage: number;
+  search?: string;
+  status?: string;
+  attention?: boolean;
 };
 
 export type DashboardOperationDossier = DashboardOperation & {
@@ -94,6 +112,7 @@ export type DashboardOperationDossier = DashboardOperation & {
   }>;
   selectionReason: string | null;
   activeEscalation: {
+    id: string;
     counterpartyName: string | null;
     reason: string;
     requestedPickupWindow: DashboardWindow | null;
@@ -465,6 +484,7 @@ function counterpartyName(
 }
 
 type EscalationRow = {
+  id: string;
   operation_id: string;
   change_request_id: string | null;
   source_call_id: string;
@@ -479,9 +499,9 @@ async function activeEscalationsFor(
   if (operationIds.length === 0) return new Map();
   const result = await client
     .from("escalations")
-    .select("operation_id,change_request_id,source_call_id,reason,started_at")
+    .select("id,operation_id,change_request_id,source_call_id,reason,started_at")
     .in("operation_id", operationIds)
-    .eq("status", "started")
+    .in("status", ["started", "supervisor_joined"])
     .order("started_at", { ascending: false });
   if (result.error) throw result.error;
 
@@ -516,6 +536,8 @@ async function toDashboardOperations(
       pickupLocation: operation.pickup_location,
       deliveryLocation: operation.delivery_location,
       emptyReturnDepot: operation.empty_return_depot,
+      operationalConstraints: operation.operational_constraints ?? [],
+      cargoNotes: operation.cargo_notes,
       status: operation.status,
       updatedAt: operation.updated_at,
       nextStep: nextStep(operation.status, Boolean(escalation)),
@@ -540,11 +562,85 @@ export async function listDashboardOperations(
   return toDashboardOperations((result.data ?? []) as unknown as OperationRow[], client);
 }
 
+function searchTerm(value: string): string {
+  return value.replace(/[^a-zA-Z0-9\s-]/g, " ").trim().replace(/\s+/g, " ");
+}
+
+/**
+ * Server-filtered register data. Pagination happens before the dashboard
+ * projection so growing operation lists never depend on browser filtering.
+ */
+export async function listDashboardOperationsPage(
+  options: DashboardOperationsQuery,
+  client: SupabaseClient = supabaseAdmin,
+): Promise<DashboardPage<DashboardOperation>> {
+  const page = Math.max(1, options.page);
+  const perPage = Math.min(Math.max(1, options.perPage), 100);
+  let contactIds: string[] = [];
+  const term = options.search ? searchTerm(options.search) : "";
+
+  if (term) {
+    const contactsResult = await client
+      .from("contacts")
+      .select("id")
+      .ilike("name", `%${term}%`)
+      .limit(250);
+    if (contactsResult.error) throw contactsResult.error;
+    contactIds = (contactsResult.data ?? []).map((row) => (row as { id: string }).id);
+  }
+
+  let attentionOperationIds: string[] = [];
+  if (options.attention) {
+    const escalationResult = await client
+      .from("escalations")
+      .select("operation_id")
+      .in("status", ["started", "supervisor_joined"]);
+    if (escalationResult.error) throw escalationResult.error;
+    attentionOperationIds = [...new Set((escalationResult.data ?? [])
+      .map((row) => (row as { operation_id: string }).operation_id))];
+  }
+
+  let query = client
+    .from("operations")
+    .select(OPERATION_COLUMNS, { count: "exact" })
+    .not("status", "in", "(cancelled,failed)")
+    .order("updated_at", { ascending: false });
+
+  if (options.status) query = query.eq("status", options.status);
+  if (options.attention) {
+    const attentionFilter = attentionOperationIds.length > 0
+      ? `status.eq.needs_follow_up,id.in.(${attentionOperationIds.join(",")})`
+      : "status.eq.needs_follow_up";
+    query = query.or(attentionFilter);
+  }
+  if (term) {
+    const terms = [
+      `reference.ilike.*${term}*`,
+      `pickup_location.ilike.*${term}*`,
+      `delivery_location.ilike.*${term}*`,
+      ...contactIds.length > 0 ? [`contact_id.in.(${contactIds.join(",")})`] : [],
+    ];
+    query = query.or(terms.join(","));
+  }
+
+  const from = (page - 1) * perPage;
+  const result = await query.range(from, from + perPage - 1);
+  if (result.error) throw result.error;
+  const total = result.count ?? 0;
+  return {
+    items: await toDashboardOperations((result.data ?? []) as unknown as OperationRow[], client),
+    page,
+    perPage,
+    total,
+    totalPages: Math.max(1, Math.ceil(total / perPage)),
+  };
+}
+
 /** A durable cursor for the live operations register. */
 export async function getDashboardRevision(
   client: SupabaseClient = supabaseAdmin,
 ): Promise<string> {
-  const [operationResult, eventResult] = await Promise.all([
+  const [operationResult, eventResult, operatorActionResult] = await Promise.all([
     client
       .from("operations")
       .select("id,updated_at")
@@ -559,15 +655,24 @@ export async function getDashboardRevision(
       .order("occurred_at", { ascending: false })
       .limit(1)
       .maybeSingle(),
+    client
+      .from("operator_actions")
+      .select("id,occurred_at")
+      .order("occurred_at", { ascending: false })
+      .limit(1)
+      .maybeSingle(),
   ]);
   if (operationResult.error) throw operationResult.error;
   if (eventResult.error) throw eventResult.error;
+  if (operatorActionResult.error) throw operatorActionResult.error;
 
   const operation = operationResult.data as { id: string; updated_at: string } | null;
   const latestEvent = eventResult.data as { id: string; occurred_at: string } | null;
+  const latestOperatorAction = operatorActionResult.data as { id: string; occurred_at: string } | null;
   return [
     operation ? `${operation.id}:${operation.updated_at}` : "no-active-operations",
     latestEvent ? `${latestEvent.id}:${latestEvent.occurred_at}` : "no-operation-events",
+    latestOperatorAction ? `${latestOperatorAction.id}:${latestOperatorAction.occurred_at}` : "no-operator-actions",
   ].join("|");
 }
 
@@ -735,6 +840,7 @@ export async function getDashboardOperationDossier(
     })),
     selectionReason,
     activeEscalation: activeEscalation ? {
+      id: activeEscalation.id,
       counterpartyName: counterpartyName(calls.get(activeEscalation.source_call_id), names),
       reason: activeEscalation.reason,
       requestedPickupWindow: readWindow(changeRequestResult.data?.requested_pickup_window),

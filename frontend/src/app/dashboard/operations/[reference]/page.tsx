@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { notFound, redirect } from "next/navigation";
+import { notFound } from "next/navigation";
 
 import {
   DashboardApiError,
@@ -8,10 +8,13 @@ import {
   formatStatus,
   formatWindow,
   getDashboardOperation,
+  getDashboardHandoffs,
 } from "@/lib/dashboard-api";
-import { isSupabaseConfigured } from "@/lib/supabase/config";
-import { createClient } from "@/lib/supabase/server";
+import { requireDashboardSession } from "@/lib/dashboard-session";
 import { CommitmentEvidence } from "@/features/operation/commitment-evidence";
+import { EscalationResolutionForm } from "@/features/operation/escalation-resolution-form";
+import { HandoffOverlay } from "@/features/operation/handoff-overlay";
+import { OperationCorrectionForm } from "@/features/operation/operation-correction-form";
 import { OperationLiveUpdates } from "@/features/operation/operation-live-updates";
 import { OperationTrace } from "@/features/operation/operation-trace";
 import { DashboardHeader } from "../../dashboard-header";
@@ -19,27 +22,21 @@ import { DashboardHeader } from "../../dashboard-header";
 export const dynamic = "force-dynamic";
 
 export default async function OperationPage({ params }: { params: Promise<{ reference: string }> }) {
-  if (!isSupabaseConfigured) redirect("/login");
-  const supabase = await createClient();
-  const [{ data: claimsData }, { data: sessionData }] = await Promise.all([
-    supabase.auth.getClaims(),
-    supabase.auth.getSession(),
-  ]);
-  if (!claimsData?.claims || !sessionData.session?.access_token) redirect("/login");
-
+  const { accessToken, email } = await requireDashboardSession();
   const { reference } = await params;
   let operation;
   try {
-    operation = await getDashboardOperation(reference, sessionData.session.access_token);
+    operation = await getDashboardOperation(reference, accessToken);
   } catch (error) {
     if (error instanceof DashboardApiError && error.status === 404) notFound();
     throw error;
   }
-  const email = typeof claimsData.claims.email === "string" ? claimsData.claims.email : "Supervisor";
+  const handoffs = await getDashboardHandoffs(accessToken);
 
   return (
     <main className="dashboard-shell">
       <DashboardHeader email={email} activeView="operations" />
+      <HandoffOverlay handoffs={handoffs} />
       <article className="operation-detail">
         <Link href="/dashboard" className="back-to-operations">Back to active operations</Link>
         <header className="operation-detail-header">
@@ -70,6 +67,7 @@ export default async function OperationPage({ params }: { params: Promise<{ refe
                 <div><dt>Escalated</dt><dd>{formatDateTime(operation.activeEscalation.startedAt)}</dd></div>
               </dl>
             </div>
+            <EscalationResolutionForm escalationId={operation.activeEscalation.id} />
           </section>
         )}
 
@@ -126,6 +124,8 @@ export default async function OperationPage({ params }: { params: Promise<{ refe
             </div>
           )}
         </section>
+
+        {!operation.mandate && <OperationCorrectionForm operation={operation} />}
 
         <OperationTrace trace={operation.trace} />
 

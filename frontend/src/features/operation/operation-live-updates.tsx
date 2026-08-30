@@ -35,7 +35,7 @@ function readMessages(value: string): { rest: string; messages: StreamMessage[] 
 type LiveUpdatesProps = {
   endpoint: string;
   scope: "operation" | "register";
-  updatedAt: string;
+  updatedAt?: string;
 };
 
 function LiveUpdates({ endpoint, scope, updatedAt }: LiveUpdatesProps) {
@@ -133,7 +133,7 @@ function LiveUpdates({ endpoint, scope, updatedAt }: LiveUpdatesProps) {
         <span className="operation-live-label"><i aria-hidden="true" />{label}</span>
         <p>{copy}</p>
       </div>
-      <time dateTime={updatedAt}>Verified {formatDateTime(updatedAt)}</time>
+      {updatedAt ? <time dateTime={updatedAt}>Verified {formatDateTime(updatedAt)}</time> : <time>Awaiting first verified record</time>}
     </section>
   );
 }
@@ -142,6 +142,6 @@ export function OperationLiveUpdates({ reference, updatedAt }: { reference: stri
   return <LiveUpdates endpoint={`/api/dashboard/operations/${encodeURIComponent(reference)}/stream`} scope="operation" updatedAt={updatedAt} />;
 }
 
-export function DashboardLiveUpdates({ updatedAt }: { updatedAt: string }) {
+export function DashboardLiveUpdates({ updatedAt }: { updatedAt?: string }) {
   return <LiveUpdates endpoint="/api/dashboard/stream" scope="register" updatedAt={updatedAt} />;
 }

@@ -8,6 +8,8 @@ export type DashboardOperation = {
   pickupLocation: string | null;
   deliveryLocation: string | null;
   emptyReturnDepot: string | null;
+  operationalConstraints: string[];
+  cargoNotes: string | null;
   status: string;
   updatedAt: string;
   nextStep: string;
@@ -16,6 +18,56 @@ export type DashboardOperation = {
     reason: string;
     startedAt: string;
   } | null;
+};
+
+export type DashboardPagination = {
+  page: number;
+  perPage: number;
+  total: number;
+  totalPages: number;
+};
+
+export type DashboardPage<T> = {
+  items: T[];
+  pagination: DashboardPagination;
+};
+
+export type DashboardHandoff = {
+  id: string;
+  operationReference: string;
+  clientName: string;
+  counterpartyName: string | null;
+  reason: string;
+  status: "started" | "supervisor_joined";
+  startedAt: string;
+};
+
+export type DashboardEscalation = DashboardHandoff & {
+  operationStatus: string;
+  status: "started" | "supervisor_joined" | "resolved" | "failed";
+  resolvedAt: string | null;
+};
+
+export type DirectoryEntry = {
+  id: string;
+  kind: "contact" | "provider";
+  name: string;
+  phone: string;
+  email: string | null;
+  authorized: boolean | null;
+  active: boolean;
+  capabilities: Record<string, unknown> | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type SavedView = {
+  id: string;
+  scope: "operations" | "escalations";
+  name: string;
+  configuration: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
 };
 
 export type DashboardOperationDossier = DashboardOperation & {
@@ -48,6 +100,7 @@ export type DashboardOperationDossier = DashboardOperation & {
   }>;
   selectionReason: string | null;
   activeEscalation: {
+    id: string;
     counterpartyName: string | null;
     reason: string;
     requestedPickupWindow: DashboardWindow | null;
@@ -115,9 +168,18 @@ function apiBaseUrl(): string {
   return value;
 }
 
-async function request<T>(path: string, accessToken: string): Promise<T> {
+export async function dashboardRequest<T>(
+  path: string,
+  accessToken: string,
+  options: { method?: "POST" | "PATCH" | "DELETE"; body?: unknown } = {},
+): Promise<T> {
   const response = await fetch(`${apiBaseUrl()}${path}`, {
-    headers: { Authorization: `Bearer ${accessToken}` },
+    method: options.method ?? "GET",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      ...(options.body === undefined ? {} : { "Content-Type": "application/json" }),
+    },
+    body: options.body === undefined ? undefined : JSON.stringify(options.body),
     cache: "no-store",
   });
 
@@ -125,23 +187,72 @@ async function request<T>(path: string, accessToken: string): Promise<T> {
     const responseBody = await response.json().catch(() => null) as { error?: string } | null;
     throw new DashboardApiError(response.status, responseBody?.error ?? "The operations API could not complete this request.");
   }
+  if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;
 }
 
-export async function getDashboardOperations(accessToken: string): Promise<DashboardOperation[]> {
-  const result = await request<{ operations: DashboardOperation[] }>("/api/dashboard/operations", accessToken);
-  return result.operations;
+function queryString(values: Record<string, string | number | boolean | undefined>): string {
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(values)) {
+    if (value !== undefined && value !== "") query.set(key, String(value));
+  }
+  const encoded = query.toString();
+  return encoded ? `?${encoded}` : "";
+}
+
+export async function getDashboardOperations(
+  accessToken: string,
+  options: { page?: number; perPage?: number; q?: string; status?: string; attention?: boolean } = {},
+): Promise<DashboardPage<DashboardOperation>> {
+  const result = await dashboardRequest<{ operations: DashboardOperation[]; pagination: DashboardPagination }>(
+    `/api/dashboard/operations${queryString({ page: options.page, per_page: options.perPage, q: options.q, status: options.status, attention: options.attention })}`,
+    accessToken,
+  );
+  return { items: result.operations, pagination: result.pagination };
 }
 
 export async function getDashboardOperation(
   reference: string,
   accessToken: string,
 ): Promise<DashboardOperationDossier> {
-  const result = await request<{ operation: DashboardOperationDossier }>(
+  const result = await dashboardRequest<{ operation: DashboardOperationDossier }>(
     `/api/dashboard/operations/${encodeURIComponent(reference)}`,
     accessToken,
   );
   return result.operation;
+}
+
+export async function getDashboardHandoffs(accessToken: string): Promise<DashboardHandoff[]> {
+  const result = await dashboardRequest<{ handoffs: DashboardHandoff[] }>("/api/dashboard/handoffs", accessToken);
+  return result.handoffs;
+}
+
+export async function getDashboardEscalations(
+  accessToken: string,
+  options: { page?: number; perPage?: number; q?: string; status?: string } = {},
+): Promise<DashboardPage<DashboardEscalation>> {
+  const result = await dashboardRequest<{ escalations: DashboardEscalation[]; pagination: DashboardPagination }>(
+    `/api/dashboard/escalations${queryString({ page: options.page, per_page: options.perPage, q: options.q, status: options.status })}`,
+    accessToken,
+  );
+  return { items: result.escalations, pagination: result.pagination };
+}
+
+export async function getDirectoryEntries(
+  accessToken: string,
+  kind: "contacts" | "providers",
+  options: { page?: number; perPage?: number; q?: string; active?: boolean } = {},
+): Promise<DashboardPage<DirectoryEntry>> {
+  const result = await dashboardRequest<{ entries: DirectoryEntry[]; pagination: DashboardPagination }>(
+    `/api/dashboard/directory/${kind}${queryString({ page: options.page, per_page: options.perPage, q: options.q, active: options.active })}`,
+    accessToken,
+  );
+  return { items: result.entries, pagination: result.pagination };
+}
+
+export async function getSavedViews(accessToken: string, scope: "operations" | "escalations"): Promise<SavedView[]> {
+  const result = await dashboardRequest<{ views: SavedView[] }>(`/api/dashboard/saved-views${queryString({ scope })}`, accessToken);
+  return result.views;
 }
 
 export function formatStatus(status: string): string {
