@@ -462,6 +462,16 @@ CREATE TABLE tool_command_receipts (
 CREATE TRIGGER tool_command_receipts_append_only
 BEFORE UPDATE OR DELETE ON tool_command_receipts FOR EACH ROW EXECUTE FUNCTION reject_mutation();
 
+CREATE TABLE provider_quote_evidence_staging (
+  call_id uuid NOT NULL REFERENCES calls(id),
+  tool_call_id text NOT NULL CHECK (btrim(tool_call_id) <> ''),
+  segment_id uuid NOT NULL REFERENCES call_transcript_segments(id),
+  created_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (call_id, tool_call_id)
+);
+ALTER TABLE provider_quote_evidence_staging ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON provider_quote_evidence_staging FROM PUBLIC, anon, authenticated, service_role;
+
 CREATE TABLE mandates (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   operation_id uuid NOT NULL REFERENCES operations(id),
@@ -675,6 +685,17 @@ BEFORE INSERT ON quotes FOR EACH ROW EXECUTE FUNCTION validate_quote_context();
 CREATE TRIGGER quotes_append_only
 BEFORE UPDATE OR DELETE ON quotes FOR EACH ROW EXECUTE FUNCTION reject_mutation();
 CREATE INDEX quotes_request_idx ON quotes(quote_request_id);
+
+CREATE TABLE quote_transcript_evidence (
+  quote_id uuid PRIMARY KEY REFERENCES quotes(id),
+  source_call_id uuid NOT NULL REFERENCES calls(id),
+  evidence_start_segment_id uuid NOT NULL REFERENCES call_transcript_segments(id),
+  evidence_end_segment_id uuid NOT NULL REFERENCES call_transcript_segments(id),
+  created_at timestamptz NOT NULL DEFAULT now(),
+  CHECK (evidence_start_segment_id = evidence_end_segment_id)
+);
+ALTER TABLE quote_transcript_evidence ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON quote_transcript_evidence FROM PUBLIC, anon, authenticated, service_role;
 
 CREATE FUNCTION validate_price_only_quote_revision()
 RETURNS trigger LANGUAGE plpgsql SET search_path = public, pg_temp AS $$

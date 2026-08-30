@@ -1,11 +1,5 @@
 BEGIN;
 
--- A quote is the durable statement that later justifies an automatic booking.
--- Keep the evidence at that statement, not as a retrospective call-wide range.
-ALTER TABLE public.quotes
-  ADD COLUMN evidence_start_segment_id uuid REFERENCES public.call_transcript_segments(id),
-  ADD COLUMN evidence_end_segment_id uuid REFERENCES public.call_transcript_segments(id);
-
 CREATE TABLE public.provider_quote_evidence_staging (
   call_id uuid NOT NULL REFERENCES public.calls(id),
   tool_call_id text NOT NULL CHECK (btrim(tool_call_id) <> ''),
@@ -15,6 +9,19 @@ CREATE TABLE public.provider_quote_evidence_staging (
 );
 ALTER TABLE public.provider_quote_evidence_staging ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON public.provider_quote_evidence_staging FROM PUBLIC, anon, authenticated, service_role;
+
+-- Quotes are append-only. Their transcript provenance is consequently a
+-- separate immutable relation, rather than a later UPDATE of public.quotes.
+CREATE TABLE public.quote_transcript_evidence (
+  quote_id uuid PRIMARY KEY REFERENCES public.quotes(id),
+  source_call_id uuid NOT NULL REFERENCES public.calls(id),
+  evidence_start_segment_id uuid NOT NULL REFERENCES public.call_transcript_segments(id),
+  evidence_end_segment_id uuid NOT NULL REFERENCES public.call_transcript_segments(id),
+  created_at timestamptz NOT NULL DEFAULT now(),
+  CHECK (evidence_start_segment_id = evidence_end_segment_id)
+);
+ALTER TABLE public.quote_transcript_evidence ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON public.quote_transcript_evidence FROM PUBLIC, anon, authenticated, service_role;
 
 CREATE OR REPLACE FUNCTION public.stage_provider_quote_evidence(
   p_call_id uuid,
@@ -91,12 +98,10 @@ BEGIN
     RAISE EXCEPTION 'quote evidence has no quote receipt' USING ERRCODE = '23514';
   END IF;
 
-  UPDATE public.quotes
-  SET evidence_start_segment_id = evidence_segment_id,
-      evidence_end_segment_id = evidence_segment_id
-  WHERE id = quote_id
-    AND evidence_start_segment_id IS NULL
-    AND evidence_end_segment_id IS NULL;
+  INSERT INTO public.quote_transcript_evidence(
+    quote_id, source_call_id, evidence_start_segment_id, evidence_end_segment_id
+  ) VALUES (quote_id, NEW.call_id, evidence_segment_id, evidence_segment_id)
+  ON CONFLICT (quote_id) DO NOTHING;
   RETURN NEW;
 END;
 $$;
@@ -121,12 +126,12 @@ BEGIN
     RETURN NEW;
   END IF;
 
-  SELECT e.call_id, q.evidence_start_segment_id, q.evidence_end_segment_id
+  SELECT e.call_id, qte.evidence_start_segment_id, qte.evidence_end_segment_id
   INTO quote_call_id, start_segment_id, end_segment_id
-  FROM public.quotes q
+  FROM public.quote_transcript_evidence qte
   JOIN public.events e ON e.type = 'quote.received'
-    AND e.payload->>'quote_id' = q.id::text
-  WHERE q.id = NEW.quote_id
+    AND e.payload->>'quote_id' = qte.quote_id::text
+  WHERE qte.quote_id = NEW.quote_id
   ORDER BY e.occurred_at DESC, e.id DESC
   LIMIT 1;
 
