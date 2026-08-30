@@ -7,12 +7,13 @@ no incluye todos los RPCs, workers ni grants y no se ejecuta contra Supabase.
 
 ## Historial aplicado: no reorganizar archivos
 
-El baseline `f32482f` completó el check de Supabase. Sus 17 migraciones quedan
-registradas en `migrations.lock.json` con nombre y SHA-256. No renombrarlas,
-reordenarlas, borrarlas, fusionarlas ni editar sus checksums para ocultar cambios.
-Una corrección requiere una **nueva migración posterior a la última versión**.
-Una consolidación real requiere un procedimiento coordinado para entornos nuevos
-y existentes; no se hace como una limpieza de nombres.
+El baseline `f32482f` completó el check de Supabase. Sus 17 migraciones, y cada
+migración verificada posteriormente, quedan registradas en
+`migrations.lock.json` con nombre y SHA-256. No renombrarlas, reordenarlas,
+borrarlas, fusionarlas ni editar sus checksums para ocultar cambios. Una
+corrección requiere una **nueva migración posterior a la última versión**. Una
+consolidación real requiere un procedimiento coordinado para entornos nuevos y
+existentes; no se hace como una limpieza de nombres.
 
 | Tramo | Qué incorpora | Definición vigente cuando fue reemplazada |
 | --- | --- | --- |
@@ -38,6 +39,11 @@ y existentes; no se hace como una limpieza de nombres.
 | `20260830150000` | Tool de cotización mínima | Solo min/max; moneda y primera ventana autorizada resueltas en servidor; extras ausentes en null, sin borrar historial |
 | `20260830160000` | Tope de precio visible solo en contexto interno del agente proveedor | Mismo mandato/pedido autorizado; no se agrega a tools ni listados públicos |
 | `20260830170000` | Adjudicación sin veto por ambigüedad del juez | Reemplaza el finalizador de `130000`; conserva revisión vigente y filtros SQL, sin bloqueo por assessment histórico |
+| `20260830180000` | Escalaciones durables y evidencia de transcript | El destinatario humano se resuelve desde `handoff_recipients` |
+| `20260830190000` | Recibos idempotentes para escalaciones | Habilita `escalate` en el ledger de tools |
+| `20260830200000` | Booking vigente y evidencia asociada; retiro de `commitments` | El puntero de la operación se sincroniza con la reserva activa |
+| `20260830210000` | Retención de evidencia de llamadas | Transcript y recording de Twilio se purgan al vencer 90 días |
+| `20260830220000` | Evento `call.routed` sin operación inicial | El contexto nulo de la llamada y del evento se valida como equivalente |
 
 Los sufijos cortos de la última columna comparten el prefijo `202608300`.
 Los comentarios dentro de migraciones viejas describen su momento histórico,

@@ -41,6 +41,7 @@ import { extractOutboundCallRecordId, routeOutboundCall } from "./tango/telephon
 import { PreviewEmailGateway, SmtpEmailGateway } from "./tango/services/email-gateway";
 import { EmailOutboxWorker, SupabaseEmailOutboxRepository } from "./tango/workers/email-outbox-worker";
 import { OutboundSourcingLoop } from "./tango/workers/outbound-sourcing-loop";
+import { CallEvidenceRetentionWorker } from "./tango/workers/call-evidence-retention-worker";
 import { AgentsSourcingJudge } from "./tango/agents/sourcing-judge";
 import { SourcingReviewService } from "./tango/services/sourcing-review-service";
 import { isProviderOutboundPurpose } from "./domain/call-flow";
@@ -249,9 +250,13 @@ app.post("/twilio/recording-status", (req, res) => {
     logger.warn("twilio.callback_rejected", { route: "recording-status", base_url_configured: Boolean(baseUrl) });
     return res.sendStatus(403);
   }
-  const body = req.body as { CallSid?: string; RecordingUrl?: string };
-  logger.info("twilio.recording_status_received", { twilio_call_sid: body.CallSid, recording_available: Boolean(body.RecordingUrl) });
-  if (body.CallSid && body.RecordingUrl) void supabaseAdmin.from("calls").update({ recording_url: body.RecordingUrl }).eq("twilio_call_sid", body.CallSid);
+  const body = req.body as { CallSid?: string; RecordingSid?: string; RecordingStatus?: string };
+  const status = body.RecordingStatus === "completed" ? "completed" : body.RecordingStatus === "absent" ? "absent" : "failed";
+  logger.info("twilio.recording_status_received", { twilio_call_sid: body.CallSid, recording_sid: body.RecordingSid, status });
+  if (body.CallSid) void supabaseAdmin.from("calls").update({
+    recording_sid: body.RecordingSid ?? null, recording_status: status,
+    recording_completed_at: status === "completed" ? new Date().toISOString() : null,
+  }).eq("twilio_call_sid", body.CallSid);
   return res.sendStatus(204);
 });
 
@@ -526,18 +531,27 @@ app.post("/openai/webhook", express.raw({ type: "*/*" }), async (req, res) => {
            * --------------------------------------------------------
            */
 
-          case "conversation.item.input_audio_transcription.completed":
+          case "conversation.item.input_audio_transcription.completed": {
+            const transcript = message.transcript.trim();
+            const itemId = message.item_id?.trim();
+            if (!transcript || !itemId) {
+              callLogger.debug("transcript.skipped", {
+                speaker: "caller", reason: transcript ? "missing_item_id" : "empty", item_id: message.item_id,
+              });
+              break;
+            }
             callLogger.info("transcript.caller_completed", {
-              item_id: message.item_id, character_count: message.transcript.length,
+              item_id: itemId, character_count: transcript.length,
             });
             await transcriptRepository.record({
               callId: persistedCallId,
               realtimeCallId: callId,
               speaker: "caller",
-              content: message.transcript,
-              realtimeItemId: message.item_id,
+              content: transcript,
+              realtimeItemId: itemId,
             });
             break;
+          }
 
           /*
            * --------------------------------------------------------
@@ -621,18 +635,27 @@ app.post("/openai/webhook", express.raw({ type: "*/*" }), async (req, res) => {
             break;
           }
 
-          case "response.output_audio_transcript.done":
+          case "response.output_audio_transcript.done": {
+            const transcript = message.transcript.trim();
+            const responseId = message.response_id?.trim();
+            if (!transcript || !responseId) {
+              callLogger.debug("transcript.skipped", {
+                speaker: "tango", reason: transcript ? "missing_response_id" : "empty", response_id: message.response_id,
+              });
+              break;
+            }
             callLogger.info("transcript.tango_completed", {
-              response_id: message.response_id, character_count: message.transcript.length,
+              response_id: responseId, character_count: transcript.length,
             });
             await transcriptRepository.record({
               callId: persistedCallId,
               realtimeCallId: callId,
               speaker: "tango",
-              content: message.transcript,
-              realtimeResponseId: message.response_id,
+              content: transcript,
+              realtimeResponseId: responseId,
             });
             break;
+          }
 
           /*
            * --------------------------------------------------------
@@ -650,7 +673,7 @@ app.post("/openai/webhook", express.raw({ type: "*/*" }), async (req, res) => {
 
         }
       } catch (error) {
-        callLogger.error("realtime.event_handler_failed", { error });
+        callLogger.error("realtime.event_handler_failed", { event_type: message.type, error });
       }
     });
 
@@ -667,6 +690,7 @@ app.post("/openai/webhook", express.raw({ type: "*/*" }), async (req, res) => {
 
 const PORT = environment.PORT;
 const outboundSourcingLoop = new OutboundSourcingLoop(runOutboundSourcingWorker, logger);
+const evidenceRetentionWorker = new CallEvidenceRetentionWorker(supabaseAdmin, { accountSid: environment.TWILIO_ACCOUNT_SID, authToken: environment.TWILIO_AUTH_TOKEN }, logger);
 
 app.listen(PORT, () => {
   logger.info("server.started", {
@@ -686,4 +710,5 @@ app.listen(PORT, () => {
     emailWorker.start(environment.EMAIL_WORKER_POLL_INTERVAL_MS);
   }
   void outboundSourcingLoop.start();
+  evidenceRetentionWorker.start();
 });

@@ -164,8 +164,14 @@ async function main(): Promise<void> {
   db.tables.providers[0].active = false;
   await assert.rejects(pTools.execute("list_provider_operations", {}), /not authorized/);
   db.tables.providers[0].active = true;
+  db.tables.operations[0].container_type = null;
   db.tables.operations[0].pickup_location = null;
-  await assert.rejects(pTools.execute("list_provider_operations", {}), /missing required/);
+  const incompleteProviderOperation = (await pTools.execute("list_provider_operations", {}) as { operations: Row[] }).operations
+    .find((operation) => operation.operation_reference === "OP-000001");
+  assert.deepEqual(incompleteProviderOperation, {
+    operation_reference: "OP-000001", operation_name: "Origen pendiente → Deposito", relationship: "quote_requested",
+    pickup_location: null, delivery_location: "Deposito", container_type: null,
+  });
   // Client drafts may legitimately be incomplete; never invent defaults.
   const draft = await aTools.execute("list_open_operations", {}) as { operations: Row[] };
   assert.equal(draft.operations[0].pickup_location, null);

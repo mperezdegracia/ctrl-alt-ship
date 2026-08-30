@@ -300,6 +300,11 @@ CREATE TABLE calls (
   client_tools_completed_at timestamptz,
   provider_tools_completed_at timestamptz,
   recording_url text,
+  recording_sid text UNIQUE,
+  recording_status text NOT NULL DEFAULT 'pending'
+    CHECK (recording_status IN ('pending', 'completed', 'absent', 'deleted', 'failed')),
+  recording_completed_at timestamptz,
+  evidence_expires_at timestamptz NOT NULL DEFAULT (now() + interval '90 days'),
   started_at timestamptz NOT NULL DEFAULT now(),
   ended_at timestamptz,
   created_at timestamptz NOT NULL DEFAULT now(),
@@ -325,6 +330,8 @@ CREATE TABLE calls (
   ),
   CHECK (ended_at IS NULL OR ended_at >= started_at)
 );
+CREATE INDEX calls_evidence_expiry_idx ON calls(evidence_expires_at)
+  WHERE evidence_expires_at IS NOT NULL;
 
 CREATE TABLE call_transcript_segments (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),

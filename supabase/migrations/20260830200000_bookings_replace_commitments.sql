@@ -6,14 +6,13 @@ ALTER TABLE public.operations
   ADD COLUMN current_booking_id uuid REFERENCES public.bookings(id);
 
 UPDATE public.operations o
-SET current_booking_id = candidate.id
-FROM LATERAL (
+SET current_booking_id = (
   SELECT b.id
   FROM public.bookings b
   WHERE b.operation_id = o.id AND b.status IN ('pending', 'confirmed')
   ORDER BY b.created_at DESC
   LIMIT 1
-) candidate;
+);
 
 ALTER TABLE public.bookings
   ADD COLUMN source_call_id uuid REFERENCES public.calls(id),
@@ -80,7 +79,9 @@ $$;
 
 ALTER TABLE public.events
   ADD CONSTRAINT events_operation_scope_check CHECK (
-    operation_id IS NOT NULL OR (type = 'call.rejected' AND call_id IS NULL)
+    operation_id IS NOT NULL
+    OR (type = 'call.rejected' AND call_id IS NULL)
+    OR (type = 'call.routed' AND call_id IS NOT NULL)
   );
 
 NOTIFY pgrst, 'reload schema';

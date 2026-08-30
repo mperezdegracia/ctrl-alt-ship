@@ -56,9 +56,10 @@ observado ejecuta checks/harnesses, no aplica DB remota ni coordina
 atomicidad entre migración y backend. No aplicar migraciones, desplegar, drenar
 llamadas reales ni reanudar dispatch como parte de este runbook documental.
 
-El baseline `20260830200000_bookings_replace_commitments.sql` debe inspeccionarse
-antes de activar una instalación fresca; cualquier bloqueo de aplicación requiere
-resolución autorizada sin editar silenciosamente la migración histórica.
+El pull hasta `1b4edfd` incorporó la corrección remota del backfill de
+`20260830200000_bookings_replace_commitments.sql`. Las migraciones locales M0–M3
+(incluida MB) ahora ocupan 221000–225000, después de las remotas 210000/220000.
+No se modificaron checksums bloqueados ni se aplicaron migraciones en esta tarea.
 
 Verificación de este documento: revisión estática solamente; no se ejecutaron
 migraciones, tests, QA, llamadas ni despliegues.
@@ -72,9 +73,14 @@ también tiene `operation_id=NULL`. El validador del baseline 200000 usa `=`, po
 lo que no encuentra coincidencia entre ambos NULL. Su constraint de eventos
 también omite el caso `call.routed` sin Operación.
 
-MB (`20260830211000_immutable_booking_commands.sql`, commit `43b8015`) ya
+MB (`20260830222000_immutable_booking_commands.sql`, commit `43b8015`) ya
 restaura el caso permitido y usa `IS NOT DISTINCT FROM`, sin aceptar vínculos a
 otra Operación. No asignar arbitrariamente una Operación ni omitir el evento
 para evitar el error. Este arreglo está versionado localmente; los logs no
 demuestran qué migraciones están aplicadas remotamente. ACT-01 debe resolver
 esa diferencia de versiones antes de reanudar llamadas.
+
+El remoto ahora también incluye esa comparación null-safe en
+`20260830220000_allow_operationless_routed_call_events.sql` y corrigió el
+constraint en 200000. El error está cubierto en ambos caminos del historial
+integrado; la aplicación en el entorno de los logs no se verificó aquí.

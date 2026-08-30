@@ -32,7 +32,14 @@ export class MigrationAudit {
       }
     }
     const sql = [...this.migrations].sort((a, b) => a.file.localeCompare(b.file)).map((migration) => migration.sql).join("\n");
-    const tables = (source: string) => new Set([...source.matchAll(/CREATE TABLE (?:IF NOT EXISTS )?(?:public\.)?(\w+)/gi)].map((match) => match[1]));
+    const tables = (source: string) => {
+      const result = new Set<string>();
+      for (const match of source.matchAll(/\b(CREATE|DROP) TABLE (?:IF (?:NOT )?EXISTS )?(?:public\.)?(\w+)/gi)) {
+        if (match[1].toUpperCase() === "CREATE") result.add(match[2]);
+        else result.delete(match[2]);
+      }
+      return result;
+    };
     const referenceTables = tables(this.schema);
     for (const table of tables(sql)) if (!referenceTables.has(table)) errors.push(`Reference schema missing table: ${table}`);
     for (const table of referenceTables) if (!tables(sql).has(table)) errors.push(`Reference table has no migration: ${table}`);

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { MigrationAudit, auditRepository, type Migration } from "../db/migration-audit";
 
@@ -13,10 +14,15 @@ assert.match(check([initial, { ...initial, file: "20260830000000_duplicate.sql" 
 assert.match(check([initial, { file: "20260829235959_backdated.sql", sql: "SELECT 1;" }]).join("\n"), /New migration must follow/);
 assert.match(check([initial], initial.sql, ["get_provider_tool_state"]).join("\n"), /Runtime RPC has no migration/);
 assert.match(check([initial], initial.sql.replace("CREATE TABLE calls (id uuid);", "")).join("\n"), /Reference schema missing table/);
+const removed = { file: "20260830010000_remove_calls.sql", sql: "DROP TABLE calls;" };
+assert.deepEqual(check([initial, removed], "CREATE TYPE domain_event_type AS ENUM ('call.routed');", ["get_state"]), []);
 const undeclared = { file: "20260830010000_event.sql", sql: "INSERT INTO events(type) VALUES ('sourcing.dispatch_queued');" };
 assert.match(check([initial, undeclared]).join("\n"), /Event used but not declared/);
 const declared = { file: "20260830010000_event.sql", sql: "ALTER TYPE public.domain_event_type ADD VALUE IF NOT EXISTS 'sourcing.dispatch_queued';" };
 assert.match(check([initial, declared]).join("\n"), /Reference enum missing/);
 assert.deepEqual(check([initial, declared], initial.sql.replace("'call.routed'", "'call.routed', 'sourcing.dispatch_queued'")), []);
 assert.deepEqual(auditRepository(resolve(__dirname, "../../..")), []);
-console.log("Migration audit harness passed: immutable history, duplicate/backdated versions, missing tables/RPCs/events and valid forward additions. No PostgreSQL or network.");
+const operationlessRoutedCallFix = readFileSync(resolve(__dirname,
+  "../../../supabase/migrations/20260830220000_allow_operationless_routed_call_events.sql"), "utf8");
+assert.match(operationlessRoutedCallFix, /operation_id IS NOT DISTINCT FROM NEW\.operation_id/);
+console.log("Migration audit harness passed: immutable history, duplicate/backdated versions, missing tables/RPCs/events, valid forward additions and operation-less call routing. No PostgreSQL or network.");

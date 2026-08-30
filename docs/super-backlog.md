@@ -80,11 +80,20 @@ Los agentes no hicieron commits simultáneos sobre el índice compartido.
 
 ### Límites para activar
 
+- Actualización al integrar `origin/main` hasta `1b4edfd`: el remoto corrigió el
+  backfill `UPDATE ... LATERAL` de 200000 y añadió el arreglo de routing 220000.
+  Las cinco migraciones locales no aplicadas se renumeraron a 221000–225000,
+  preservando su orden y sin cambiar checksums del historial bloqueado.
+  Las observaciones históricas inferiores sobre esos dos errores quedan superadas
+  en código; no acreditan aplicación remota verificada en esta tarea.
+- El remoto agregó aviso de grabación y un worker de retención. Eso constituye
+  avance parcial de DIF-06/09/11, no cierre de sus criterios. La purga puede chocar
+  con referencias de Bookings, marcar audio eliminado sin credenciales y recibir
+  callbacks tardíos; no se ejecutó ni se corrigió ese flujo en este pull.
 - M0→MB→M1→M2→M3 y backend deben desplegarse coordinadamente. El esquema de
   referencia no es una migración ni una alternativa para aplicar cambios.
-- El baseline histórico 200000 tiene un posible bloqueo de instalación fresca
-  por `UPDATE ... FROM LATERAL` que referencia el alias objetivo; ver ACT-01.
-  No se alteró ni se ejecutó ese archivo.
+- El bloqueo de instalación fresca observado en 200000 fue corregido por el
+  remoto; se conserva esa versión recibida, sin cambios adicionales locales.
 - No hay control independiente de pausa del loop HTTP. El drenaje y la pausa
   del autodeploy Render requieren un procedimiento operativo autorizado antes
   de activar; ver [runbook](outbound-worker.md).
@@ -388,11 +397,11 @@ el intento; no crear además una tabla duplicada de intentos.
 
 Reservas de archivos, que se confirman libres antes de empezar:
 
-- **M0**: `supabase/migrations/20260830210000_provider_offer_event_type.sql`.
-- **MB**: `supabase/migrations/20260830211000_immutable_booking_commands.sql`.
-- **M1**: `supabase/migrations/20260830212000_provider_call_flow_isolation.sql`.
-- **M2**: `supabase/migrations/20260830213000_provider_sourcing_rounds.sql`.
-- **M3**: `supabase/migrations/20260830214000_provider_no_answer_retries.sql`.
+- **M0**: `supabase/migrations/20260830221000_provider_offer_event_type.sql`.
+- **MB**: `supabase/migrations/20260830222000_immutable_booking_commands.sql`.
+- **M1**: `supabase/migrations/20260830223000_provider_call_flow_isolation.sql`.
+- **M2**: `supabase/migrations/20260830224000_provider_sourcing_rounds.sql`.
+- **M3**: `supabase/migrations/20260830225000_provider_no_answer_retries.sql`.
 
 Estos alias son rutas concretas, no una migración adicional por ticket. M0 agrega
 el enum y debe quedar confirmado en su propia transacción antes de usarlo. Orden
