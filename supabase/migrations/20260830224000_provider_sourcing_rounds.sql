@@ -476,8 +476,8 @@ BEGIN
     OR sr.operation_id<>op.id OR sr.mandate_id<>m.id OR sr.status<>'active'
     OR op.status NOT IN ('sourcing','quotes_received') OR op.mandate_confirmation_required
     OR qr.status NOT IN ('pending','queued','contacted','responded') OR qr.expires_at<=clock_timestamp()
-    OR c.purpose IS DISTINCT FROM CASE sr.kind WHEN 'initial' THEN 'quote_request'
-      WHEN 'renegotiation' THEN 'renegotiation' ELSE 'booking_replacement' END THEN
+    OR c.purpose IS DISTINCT FROM (CASE sr.kind WHEN 'initial' THEN 'quote_request'
+      WHEN 'renegotiation' THEN 'renegotiation' ELSE 'booking_replacement' END) THEN
     RAISE EXCEPTION 'operation_not_available' USING ERRCODE='P0001';
   END IF;
   IF EXISTS (SELECT 1 FROM jsonb_object_keys(p_arguments) k WHERE k NOT IN ('price_range','currency'))
@@ -592,8 +592,8 @@ BEGIN
   SELECT * INTO sr FROM public.sourcing_rounds WHERE id=(
     SELECT round_id FROM public.quote_requests WHERE id=c.quote_request_id) FOR UPDATE;
   IF NOT FOUND OR sr.status<>'active' OR sr.operation_id<>op.id OR sr.mandate_id<>op.current_mandate_id
-    OR c.purpose IS DISTINCT FROM CASE sr.kind WHEN 'initial' THEN 'quote_request'
-      WHEN 'renegotiation' THEN 'renegotiation' ELSE 'booking_replacement' END THEN
+    OR c.purpose IS DISTINCT FROM (CASE sr.kind WHEN 'initial' THEN 'quote_request'
+      WHEN 'renegotiation' THEN 'renegotiation' ELSE 'booking_replacement' END) THEN
     RAISE EXCEPTION 'invalid_transition' USING ERRCODE='P0001';
   END IF;
   IF p_context->>'round_id' IS DISTINCT FROM sr.id::text

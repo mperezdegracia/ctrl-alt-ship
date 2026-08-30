@@ -258,7 +258,7 @@ BEGIN
     RETURN receipt.result;
   END IF;
   IF c.selected_booking_id IS NULL OR c.operation_id IS NULL
-     OR c.provider_intent IS DISTINCT FROM CASE WHEN p_tool_name='reschedule_booking' THEN 'reschedule'::public.provider_operation_intent ELSE 'cancel_booking'::public.provider_operation_intent END THEN
+     OR c.provider_intent IS DISTINCT FROM (CASE WHEN p_tool_name='reschedule_booking' THEN 'reschedule'::public.provider_operation_intent ELSE 'cancel_booking'::public.provider_operation_intent END) THEN
     RAISE EXCEPTION 'intent_locked' USING ERRCODE='P0001';
   END IF;
   IF p_context IS NULL OR p_context->>'booking_id' IS DISTINCT FROM c.selected_booking_id::text THEN
