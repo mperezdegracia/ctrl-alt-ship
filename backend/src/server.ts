@@ -126,6 +126,12 @@ type ClaimedProviderContact = {
   purpose: "quote_request" | "renegotiation";
 };
 
+function providerPhoneType(capabilities: unknown): "mobile" | "landline" | undefined {
+  if (!capabilities || typeof capabilities !== "object" || Array.isArray(capabilities)) return undefined;
+  const type = (capabilities as Record<string, unknown>).phone_type;
+  return type === "mobile" || type === "landline" ? type : undefined;
+}
+
 /**
  * The outbox makes provider fan-out durable. This process deliberately claims
  * one job per second: Twilio's account limit is 1 CPS, while the database
@@ -145,8 +151,11 @@ async function runOutboundSourcingWorker(): Promise<void> {
       }).select("id").single();
       if (inserted.error || !inserted.data) throw inserted.error ?? new Error("Could not persist provider call");
       try {
+        const provider = await supabaseAdmin.from("providers").select("capabilities").eq("id", job.provider_id).single();
+        if (provider.error || !provider.data) throw provider.error ?? new Error("Provider phone type unavailable");
         const twilio = await createTwilioOutboundCall({
-          to: job.provider_phone, callRecordId: inserted.data.id, purpose: job.purpose,
+          to: job.provider_phone, phoneType: providerPhoneType(provider.data.capabilities),
+          callRecordId: inserted.data.id, purpose: job.purpose,
         });
         const { error: updateError } = await supabaseAdmin.from("calls")
           .update({ twilio_call_sid: twilio.sid }).eq("id", inserted.data.id);
@@ -206,12 +215,15 @@ app.post("/calls/outbound", async (req, res) => {
   if (!environment.OUTBOUND_CALLS_TOKEN || req.header("authorization") !== `Bearer ${environment.OUTBOUND_CALLS_TOKEN}`) return res.sendStatus(401);
   const body = req.body as { operation_id?: string; provider_id?: string; purpose?: "quote_request" | "renegotiation" };
   if (!body.operation_id || !body.provider_id || !body.purpose) return res.status(400).json({ error: "invalid_outbound_call" });
-  const provider = await supabaseAdmin.from("providers").select("phone,active").eq("id", body.provider_id).single();
+  const provider = await supabaseAdmin.from("providers").select("phone,active,capabilities").eq("id", body.provider_id).single();
   if (provider.error || !provider.data?.active) return res.status(404).json({ error: "active_provider_not_found" });
   const call = await supabaseAdmin.from("calls").insert({ operation_id: body.operation_id, provider_id: body.provider_id, provider_intent: "quote", persona: "provider", direction: "outbound", outcome: "active" }).select("id").single();
   if (call.error || !call.data) return res.status(502).json({ error: "outbound_call_persist_failed" });
   try {
-    const twilio = await createTwilioOutboundCall({ to: provider.data.phone, callRecordId: call.data.id, purpose: body.purpose });
+    const twilio = await createTwilioOutboundCall({
+      to: provider.data.phone, phoneType: providerPhoneType(provider.data.capabilities),
+      callRecordId: call.data.id, purpose: body.purpose,
+    });
     await supabaseAdmin.from("calls").update({ twilio_call_sid: twilio.sid }).eq("id", call.data.id);
     return res.status(202).json({ call_id: call.data.id, twilio_call_sid: twilio.sid });
   } catch (error) {

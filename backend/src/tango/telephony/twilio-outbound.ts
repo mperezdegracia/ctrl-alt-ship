@@ -4,9 +4,16 @@ import { environment } from "../../config/environment";
 
 export type OutboundCallRequest = {
   to: string;
+  phoneType?: "mobile" | "landline";
   callRecordId: string;
   purpose: "quote_request" | "renegotiation";
 };
+
+/** Twilio requires Argentina's international mobile marker, but never for a fixed line. */
+export function formatOutboundVoiceDestination(phone: string, phoneType?: "mobile" | "landline"): string {
+  if (phoneType !== "mobile" || !phone.startsWith("+54") || phone.startsWith("+549")) return phone;
+  return `+549${phone.slice(3)}`;
+}
 
 function xml(value: string): string {
   return value.replace(/[<>&'\"]/g, (character) => ({
@@ -31,7 +38,7 @@ export function buildOutboundTwiml(callRecordId: string): string {
 export async function createTwilioOutboundCall(request: OutboundCallRequest): Promise<{ sid: string }> {
   const config = requiredTwilioConfig();
   const body = new URLSearchParams({
-    To: request.to, From: config.from, Twiml: buildOutboundTwiml(request.callRecordId),
+    To: formatOutboundVoiceDestination(request.to, request.phoneType), From: config.from, Twiml: buildOutboundTwiml(request.callRecordId),
     StatusCallback: `${config.baseUrl}/twilio/call-status`, StatusCallbackEvent: "completed",
   });
   const response = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${encodeURIComponent(config.accountSid)}/Calls.json`, {

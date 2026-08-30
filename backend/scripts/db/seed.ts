@@ -74,6 +74,12 @@ function maskedPhone(phone: string): string {
   return `${phone.slice(0, -4).replace(/[0-9]/g, "*")}${phone.slice(-4)}`;
 }
 
+function argentinaMobileE164(phone: string): string {
+  return phone.startsWith("+54") && !phone.startsWith("+549")
+    ? `+549${phone.slice(3)}`
+    : phone;
+}
+
 class DemoSeed {
   private readonly contact: SeedContact = {
     name: "Lucas",
@@ -86,12 +92,13 @@ class DemoSeed {
       seedKey: "demo-provider-theo",
       legacyName: "Transporte Sur",
       name: environment("SEED_PROVIDER_1_NAME", "Theo"),
-      phone: environment("SEED_PROVIDER_1_PHONE", "+5491132555829"),
+      phone: argentinaMobileE164(environment("SEED_PROVIDER_1_PHONE", "+5491132555829")),
       email: environment("SEED_PROVIDER_1_EMAIL", "operaciones@transportesur.example.com"),
       capabilities: {
         company_name: "Transporte Sur",
         service_areas: ["AMBA", "Buenos Aires"],
         equipment: ["40_dry"],
+        phone_type: "mobile",
         responds_to_quotes: true,
         seed_scenario: "quote_inside_mandate",
       },
@@ -106,12 +113,13 @@ class DemoSeed {
       seedKey: "demo-provider-mateo",
       legacyName: "Logistica Ruta 3",
       name: environment("SEED_PROVIDER_2_NAME", "Mateo"),
-      phone: environment("SEED_PROVIDER_2_PHONE", "+5491151365124"),
+      phone: argentinaMobileE164(environment("SEED_PROVIDER_2_PHONE", "+5491151365124")),
       email: environment("SEED_PROVIDER_2_EMAIL", "trafico@logisticaruta3.example.com"),
       capabilities: {
         company_name: "Logistica Ruta 3",
         service_areas: ["AMBA", "Buenos Aires"],
         equipment: ["40_dry"],
+        phone_type: "mobile",
         responds_to_quotes: true,
         seed_scenario: "quote_counteroffer",
       },
@@ -126,12 +134,13 @@ class DemoSeed {
       seedKey: "demo-provider-paki",
       legacyName: "Fletes del Plata",
       name: environment("SEED_PROVIDER_3_NAME", "Paki"),
-      phone: environment("SEED_PROVIDER_3_PHONE", "+5491163718087"),
+      phone: argentinaMobileE164(environment("SEED_PROVIDER_3_PHONE", "+5491163718087")),
       email: environment("SEED_PROVIDER_3_EMAIL", "despacho@fletesdelplata.example.com"),
       capabilities: {
         company_name: "Fletes del Plata",
         service_areas: ["AMBA", "Buenos Aires"],
         equipment: ["40_dry"],
+        phone_type: "mobile",
         responds_to_quotes: false,
         seed_scenario: "quote_pending",
       },

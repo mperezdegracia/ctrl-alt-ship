@@ -11,6 +11,12 @@ function argument(name: string): string {
   return value;
 }
 
+function argentinaMobileVariants(phone: string): string[] {
+  if (!phone.startsWith("+54")) return [phone];
+  if (phone.startsWith("+549")) return [phone, `+54${phone.slice(4)}`];
+  return [phone, `+549${phone.slice(3)}`];
+}
+
 async function main(): Promise<void> {
   const to = argument("--to");
   const baseUrlIndex = process.argv.indexOf("--base-url");
@@ -21,7 +27,8 @@ async function main(): Promise<void> {
   const key = process.env.SUPABASE_SECRET_KEY;
   if (!url || !key) throw new Error("Falta configuración Supabase en backend/.env");
   const database = createClient(url, key, { auth: { autoRefreshToken: false, persistSession: false } });
-  const provider = await database.from("providers").select("id,name,active").eq("phone", to).maybeSingle();
+  const provider = await database.from("providers").select("id,name,active")
+    .in("phone", argentinaMobileVariants(to)).maybeSingle();
   if (provider.error) throw provider.error;
   if (!provider.data?.active) throw new Error(`No hay un Proveedor activo autorizado con teléfono ${to}`);
   const operation = await database.from("operations").select("id,reference").eq("reference", process.env.SEED_OPERATION_REFERENCE ?? "OP-900001").maybeSingle();

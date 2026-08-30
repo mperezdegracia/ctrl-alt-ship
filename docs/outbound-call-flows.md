@@ -10,6 +10,11 @@ que queda reservado para una desviación a Media Streams.
   una Renegociación causada por incompatibilidad entre Mandato y Booking.
 - El destinatario siempre es un Contacto o Proveedor activo y autorizado del
   ERP; no existe marcado a un número arbitrario.
+- `providers.phone` conserva un E.164 canónico; `capabilities.phone_type`
+  distingue `mobile` de `landline`. Al marcar un móvil argentino, el adaptador
+  de Twilio garantiza `+549...`; a una línea fija no le agrega el `9`.
+- Los tres Proveedores del seed se declaran `mobile`; el harness acepta para
+  ellos `+5411...` o `+54911...` y resuelve el mismo registro.
 - Las tools crean trabajo en el Outbox. El worker invoca el servicio de
   telefonía; `POST /calls/outbound` es su adaptador interno y de harness,
   protegido con un secreto de servicio. El dashboard no puede invocarlo.
