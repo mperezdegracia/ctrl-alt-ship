@@ -16,7 +16,8 @@ services:
       - key: NODE_ENV
         value: production
       - key: CLIENT_OPERATION_TOOLS_ENABLED
-        value: "false"
+        # Requires migration 20260830010000_client_operation_tools.sql.
+        value: "true"
       - key: ESCALATION_SPIKE_ENABLED
         value: "false"
       - key: TWILIO_ACCOUNT_SID

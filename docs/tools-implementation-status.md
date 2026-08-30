@@ -159,6 +159,10 @@ Referencia: [OpenAI Realtime: controles del servidor](https://developers.openai.
 
 ## Lo que todavía falta del #13
 
+El diagnóstico de tools enviadas/observadas y la revisión de SDK/HITL están en
+[realtime-confirmation-review.md](realtime-confirmation-review.md). Los nuevos
+logs no cambian el flujo ni prueban por sí mismos consentimiento humano.
+
 - Aplicar/validar los tramos de escritura y mandato; implementar cancelar operaciones.
 - Extender las transacciones e idempotencia al resto de mutaciones.
 - Perfiles y bloqueo de intención de los flujos de proveedor.

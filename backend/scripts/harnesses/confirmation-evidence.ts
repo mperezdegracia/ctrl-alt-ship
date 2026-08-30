@@ -23,12 +23,18 @@ function fixture() {
 
 const ok = fixture();
 assert.equal(ok.tracker.capture("unknown"), undefined);
+assert.equal(ok.tracker.diagnostics("unknown").reason, "response_without_caller_turn");
 ok.summary(); ok.caller();
 const captured = ok.tracker.capture("tool-response")!;
 assert.equal(captured.caller_transcript, "Yes, I confirm.");
 assert.equal(captured.input_audio_end_ms, 14000);
 assert.equal(captured.summary_item_id, "summary");
 assert.ok(Object.isFrozen(captured));
+assert.deepEqual(ok.tracker.diagnostics("tool-response"), {
+  available: true, reason: "ready", response_id: "tool-response",
+  summary_response_completed: true, server_output_buffer_drained: true, caller_transcript_present: true,
+});
+assert.doesNotMatch(JSON.stringify(ok.tracker.diagnostics("tool-response")), /Full operation|Yes, I confirm/);
 // An assistant preamble from the tool response cannot replace the actual readback.
 ok.send({ type: "response.output_audio_transcript.done", item_id: "preamble", response_id: "tool-response", transcript: "Saving now." });
 assert.deepEqual(ok.tracker.capture("tool-response"), captured);
@@ -40,6 +46,7 @@ assert.equal(ok.tracker.capture("tool-response"), undefined, "Edits or failures 
 for (const [complete, played] of [[false, false], [false, true], [true, false]]) {
   const f = fixture(); f.summary(complete, played); f.caller();
   assert.equal(f.tracker.capture("tool-response"), undefined, "Require completed response AND drained SIP playback");
+  assert.equal(f.tracker.diagnostics("tool-response").reason, "no_eligible_summary_before_caller");
 }
 const interrupted = fixture(); interrupted.summary(true, false); interrupted.caller();
 interrupted.send({ type: "output_audio_buffer.stopped", response_id: "summary-response" });
@@ -55,6 +62,7 @@ for (const event of [
 }
 const late = fixture(); late.summary(); late.caller(false);
 assert.equal(late.tracker.capture("tool-response"), undefined);
+assert.equal(late.tracker.diagnostics("tool-response").reason, "caller_transcript_missing");
 late.transcript("older-item", "yes");
 assert.equal(late.tracker.capture("tool-response"), undefined);
 late.transcript("caller", "Sí, confirmo.");

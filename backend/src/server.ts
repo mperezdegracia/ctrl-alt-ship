@@ -33,6 +33,7 @@ import { TwilioGateway } from "./tango/telephony/twilio-gateway";
 import { EscalationHandoffCoordinator } from "./tango/telephony/escalation-handoff-coordinator";
 import { MockEscalationTool } from "./tango/tools/mock-escalation-tool";
 import { NegotiationStallTracker } from "./tango/telephony/negotiation-stall-tracker";
+import { RealtimeSessionDiagnostics } from "./tango/realtime/realtime-session-diagnostics";
 
 const app = express();
 
@@ -274,10 +275,11 @@ app.post("/openai/webhook", express.raw({ type: "*/*" }), async (req, res) => {
      */
 
     const acceptStartedAt = Date.now();
+    const initialConfiguration = realtimeSessionFactory.create(routingDecision, realtimeTools.definitions, realtimeTools.flowState);
 
     try {
       const accepted = await realtimeGateway.accept(callId,
-        realtimeSessionFactory.create(routingDecision, realtimeTools.definitions, realtimeTools.flowState),
+        initialConfiguration,
       );
       callLogger.info("call.accept_completed", {
         status: accepted.status,
@@ -305,6 +307,9 @@ app.post("/openai/webhook", express.raw({ type: "*/*" }), async (req, res) => {
 
     const realtime = realtimeGateway.connectSideband(callId);
     const confirmationEvidence = new ConfirmationEvidenceTracker();
+    const sessionDiagnostics = new RealtimeSessionDiagnostics(
+      callLogger, initialConfiguration, realtimeTools.flowState?.profile ?? "read_only",
+    );
 
     realtime.socket.on("open", () => {
       callLogger.info("realtime.sideband_connected");
@@ -336,13 +341,8 @@ app.post("/openai/webhook", express.raw({ type: "*/*" }), async (req, res) => {
            */
 
           case "session.created":
-            callLogger.info("realtime.session_created", {
-              model: "model" in message.session ? message.session.model : undefined,
-            });
-            break;
-
           case "session.updated":
-            callLogger.info("realtime.session_updated");
+            sessionDiagnostics.observe(message);
             break;
 
           /*
@@ -382,6 +382,10 @@ app.post("/openai/webhook", express.raw({ type: "*/*" }), async (req, res) => {
             callLogger.info("tool.requested", {
               tool_name: message.name,
               tool_call_id: message.call_id,
+              response_id: message.response_id,
+              profile: realtimeTools.flowState?.profile ?? "read_only",
+              advertised_tools: realtimeTools.definitions.map((tool) => tool.name),
+              server_tools: sessionDiagnostics.serverTools,
             });
             callLogger.debug("tool.arguments", {
               tool_name: message.name,
@@ -397,6 +401,12 @@ app.post("/openai/webhook", express.raw({ type: "*/*" }), async (req, res) => {
               }
               const evidence = message.name === "confirm_mandate"
                 ? confirmationEvidence.capture(message.response_id) : undefined;
+              if (message.name === "confirm_mandate") {
+                callLogger.info("confirmation.evidence_checked", {
+                  tool_call_id: message.call_id,
+                  ...confirmationEvidence.diagnostics(message.response_id),
+                });
+              }
               if (["create_operation", "update_operation"].includes(message.name)) confirmationEvidence.invalidate();
               const result = await realtimeTools.execute(message.name, args, {
                 toolCallId: message.call_id, confirmationEvidence: evidence,
@@ -412,9 +422,9 @@ app.post("/openai/webhook", express.raw({ type: "*/*" }), async (req, res) => {
                 callLogger.error("tool.profile_refresh_failed", { error });
               }
               const liveEscalation = message.name === "escalate" && handoffCoordinator;
-              realtime.send(realtimeSessionFactory.createFlowUpdate(
+              realtime.send(sessionDiagnostics.prepareUpdate(realtimeSessionFactory.createFlowUpdate(
                 routingDecision, liveEscalation ? [] : realtimeTools.definitions, realtimeTools.flowState,
-              ));
+              ), realtimeTools.flowState, message.call_id));
 
               callLogger.debug("tool.result", {
                 tool_name: message.name,
@@ -470,9 +480,9 @@ app.post("/openai/webhook", express.raw({ type: "*/*" }), async (req, res) => {
               try { await realtimeTools.refresh(); } catch (refreshError) {
                 callLogger.error("tool.profile_refresh_failed", { error: refreshError });
               }
-              realtime.send(realtimeSessionFactory.createFlowUpdate(
+              realtime.send(sessionDiagnostics.prepareUpdate(realtimeSessionFactory.createFlowUpdate(
                 routingDecision, realtimeTools.definitions, realtimeTools.flowState,
-              ));
+              ), realtimeTools.flowState, message.call_id));
 
               realtime.send({
                 type: "conversation.item.create",
@@ -499,7 +509,7 @@ app.post("/openai/webhook", express.raw({ type: "*/*" }), async (req, res) => {
             break;
 
           case "response.created":
-            if (handoffCoordinator?.observeResponseCreated(message.response.id)) {
+            if (message.response.id && handoffCoordinator?.observeResponseCreated(message.response.id)) {
               callLogger.info("escalation.farewell_started", { response_id: message.response.id });
             }
             break;
@@ -574,5 +584,7 @@ app.listen(PORT, () => {
     port: PORT,
     webhook_path: "/openai/webhook",
     log_level: environment.LOG_LEVEL,
+    client_operation_tools_enabled: environment.CLIENT_OPERATION_TOOLS_ENABLED,
+    deploy_commit: process.env.RENDER_GIT_COMMIT ?? "local",
   });
 });

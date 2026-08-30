@@ -1,6 +1,7 @@
 import type { RealtimeServerEvent } from "openai/resources/realtime/realtime";
 import type { ConfirmationEvidence } from "../../domain/confirmation-evidence";
 
+// `played` denotes a drained server output buffer, not proof of human hearing.
 type Summary = { itemId: string; responseId: string; transcript: string; completed: boolean; played: boolean; invalid: boolean };
 type CallerTurn = { itemId: string; summary?: Summary; transcript?: string; eventId?: string; audioEndMs?: number };
 
@@ -80,6 +81,26 @@ export class ConfirmationEvidenceTracker {
     return Object.freeze({ summary_item_id: summary.itemId, summary_response_id: summary.responseId,
       summary_transcript: summary.transcript, caller_item_id: caller.itemId, caller_event_id: caller.eventId,
       caller_transcript: caller.transcript, input_audio_end_ms: caller.audioEndMs! });
+  }
+
+  diagnostics(responseId: string) {
+    const caller = this.responses.get(responseId);
+    const summary = caller?.summary;
+    const reason = !caller ? "response_without_caller_turn"
+      : caller !== this.caller ? "caller_turn_superseded"
+      : !summary ? "no_eligible_summary_before_caller"
+      : summary.invalid ? "summary_interrupted_or_removed"
+      : !summary.transcript.trim() ? "summary_transcript_missing"
+      : !caller.transcript?.trim() || !caller.eventId ? "caller_transcript_missing"
+      : !Number.isSafeInteger(caller.audioEndMs) || caller.audioEndMs! < 0 ? "caller_audio_checkpoint_missing"
+      : "ready";
+    return {
+      available: reason === "ready", reason,
+      response_id: responseId,
+      summary_response_completed: summary?.completed ?? false,
+      server_output_buffer_drained: summary?.played ?? false,
+      caller_transcript_present: Boolean(caller?.transcript?.trim()),
+    };
   }
 
   invalidate(): void {
