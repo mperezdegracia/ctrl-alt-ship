@@ -265,7 +265,7 @@ export async function correctDashboardOperation(
 
   const eventResult = await client.from("events").insert({
     operation_id: before.id,
-    type: "operation.updated",
+    type: "operation.corrected",
     payload: {
       operation_reference: input.reference,
       changes: Object.fromEntries(Object.keys(changes).map((field) => [field, {

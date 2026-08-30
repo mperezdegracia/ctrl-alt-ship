@@ -29,7 +29,7 @@ CREATE TYPE commitment_type AS ENUM ('quote', 'booking', 'reschedule', 'cancella
 CREATE TYPE outbox_status AS ENUM ('pending', 'processing', 'processed', 'failed');
 CREATE TYPE domain_event_type AS ENUM (
   'call.rejected', 'call.routed', 'call.completed', 'call.failed', 'call.transferred',
-  'operation.created', 'operation.updated', 'operation.cancelled',
+  'operation.created', 'operation.updated', 'operation.corrected', 'operation.cancelled',
   'mandate.confirmed', 'sourcing.started', 'sourcing.dispatch_queued',
   'quote.requested', 'quote.received', 'quote.counteroffer_requested',
   'quote.declined', 'quote.expired', 'quote.selected',
@@ -893,5 +893,44 @@ CREATE TABLE email_previews (
 );
 CREATE TRIGGER email_previews_append_only
 BEFORE UPDATE OR DELETE ON email_previews FOR EACH ROW EXECUTE FUNCTION reject_mutation();
+
+CREATE TABLE operator_actions (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  actor_user_id uuid NOT NULL,
+  action text NOT NULL CHECK (action IN (
+    'operation.corrected', 'escalation.resolved',
+    'contact.created', 'contact.updated', 'contact.deactivated',
+    'provider.created', 'provider.updated', 'provider.deactivated'
+  )),
+  operation_id uuid REFERENCES operations(id),
+  escalation_id uuid REFERENCES escalations(id),
+  contact_id uuid REFERENCES contacts(id),
+  provider_id uuid REFERENCES providers(id),
+  before_state jsonb NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(before_state) = 'object'),
+  after_state jsonb NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(after_state) = 'object'),
+  note text,
+  occurred_at timestamptz NOT NULL DEFAULT now(),
+  created_at timestamptz NOT NULL DEFAULT now(),
+  CHECK (btrim(coalesce(note, '')) <> '' OR action <> 'escalation.resolved'),
+  CHECK ((operation_id IS NOT NULL)::integer + (escalation_id IS NOT NULL)::integer
+    + (contact_id IS NOT NULL)::integer + (provider_id IS NOT NULL)::integer >= 1)
+);
+CREATE INDEX operator_actions_operation_occurred_idx ON operator_actions(operation_id, occurred_at DESC);
+CREATE INDEX operator_actions_escalation_occurred_idx ON operator_actions(escalation_id, occurred_at DESC);
+CREATE TRIGGER operator_actions_append_only
+BEFORE UPDATE OR DELETE ON operator_actions FOR EACH ROW EXECUTE FUNCTION reject_mutation();
+
+CREATE TABLE dashboard_saved_views (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id uuid NOT NULL,
+  scope text NOT NULL CHECK (scope IN ('operations', 'escalations')),
+  name text NOT NULL CHECK (btrim(name) <> ''),
+  configuration jsonb NOT NULL CHECK (jsonb_typeof(configuration) = 'object'),
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (user_id, scope, name)
+);
+CREATE TRIGGER dashboard_saved_views_touch_updated_at
+BEFORE UPDATE ON dashboard_saved_views FOR EACH ROW EXECUTE FUNCTION touch_updated_at();
 
 COMMIT;

@@ -1,3 +1,7 @@
+-- Keep the event vocabulary forward-only. This standalone statement must commit before the API can
+-- append an operator correction to the durable event stream.
+ALTER TYPE public.domain_event_type ADD VALUE IF NOT EXISTS 'operation.corrected';
+
 BEGIN;
 
 -- Dashboard writes are deliberately separated from the immutable domain

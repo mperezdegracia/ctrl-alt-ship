@@ -460,7 +460,9 @@ function toOperationTrace(
             description: `${sourceCall.direction === "outbound" ? "Outbound" : "Inbound"} call`,
             branchDepth: sourceCallDepth,
           } : null,
-          changes: event.type === "operation.updated" ? traceChanges(event.payload) : [],
+          changes: event.type === "operation.updated" || event.type === "operation.corrected"
+            ? traceChanges(event.payload)
+            : [],
         };
       }),
   ].sort((left, right) => {
