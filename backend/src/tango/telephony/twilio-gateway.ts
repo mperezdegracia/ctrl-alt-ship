@@ -2,26 +2,17 @@ export type TwilioGatewayOptions = Readonly<{
   accountSid: string;
   authToken: string;
   fromNumber: string;
-  publicBaseUrl: string;
   fetch?: typeof fetch;
-}>;
-
-export type SupervisorSummary = Readonly<{
-  to: string;
-  body: string;
 }>;
 
 export type ConferenceMove = Readonly<{
   callSid: string;
   conferenceName: string;
-  statusCallbackUrl: string;
-  recordingStatusCallbackUrl: string;
 }>;
 
-export type SupervisorParticipant = Readonly<{
+export type SupervisorCall = Readonly<{
   conferenceName: string;
   to: string;
-  statusCallbackUrl: string;
 }>;
 
 /** Small Twilio REST boundary. It deliberately accepts only server-owned values. */
@@ -36,33 +27,15 @@ export class TwilioGateway {
     this.authorization = `Basic ${Buffer.from(`${options.accountSid}:${options.authToken}`).toString("base64")}`;
   }
 
-  async sendSupervisorSummary(summary: SupervisorSummary): Promise<void> {
-    await this.post("/Messages.json", {
-      To: summary.to,
-      From: this.options.fromNumber,
-      Body: summary.body,
-    });
-  }
-
   async moveCallToConference(move: ConferenceMove): Promise<void> {
-    const conferenceName = escapeXml(move.conferenceName);
-    const statusCallbackUrl = escapeXml(move.statusCallbackUrl);
-    const recordingStatusCallbackUrl = escapeXml(move.recordingStatusCallbackUrl);
-    const twiml = `<Response><Dial><Conference startConferenceOnEnter="true" endConferenceOnExit="false" beep="false" record="record-from-start" statusCallback="${statusCallbackUrl}" statusCallbackEvent="start end join leave" recordingStatusCallback="${recordingStatusCallbackUrl}">${conferenceName}</Conference></Dial></Response>`;
-
-    await this.post(`/Calls/${encodeURIComponent(move.callSid)}.json`, { Twiml: twiml });
+    await this.post(`/Calls/${encodeURIComponent(move.callSid)}.json`, { Twiml: conferenceTwiml(move.conferenceName) });
   }
 
-  async addSupervisor(participant: SupervisorParticipant): Promise<void> {
-    await this.post(`/Conferences/${encodeURIComponent(participant.conferenceName)}/Participants.json`, {
-      To: participant.to,
+  async callSupervisorToConference(supervisor: SupervisorCall): Promise<void> {
+    await this.post("/Calls.json", {
+      To: supervisor.to,
       From: this.options.fromNumber,
-      StartConferenceOnEnter: "false",
-      EndConferenceOnExit: "true",
-      Beep: "false",
-      Label: "supervisor",
-      StatusCallback: participant.statusCallbackUrl,
-      StatusCallbackEvent: "initiated ringing answered completed",
+      Twiml: conferenceTwiml(supervisor.conferenceName),
     });
   }
 
@@ -77,6 +50,10 @@ export class TwilioGateway {
     });
     if (!response.ok) throw new Error(`Twilio request failed with status ${response.status}`);
   }
+}
+
+function conferenceTwiml(conferenceName: string): string {
+  return `<Response><Dial><Conference>${escapeXml(conferenceName)}</Conference></Dial></Response>`;
 }
 
 function escapeXml(value: string): string {

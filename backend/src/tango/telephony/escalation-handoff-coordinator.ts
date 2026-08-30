@@ -1,16 +1,12 @@
-import type { ConferenceMove, SupervisorParticipant, SupervisorSummary, TwilioGateway } from "./twilio-gateway";
+import type { ConferenceMove, SupervisorCall, TwilioGateway } from "./twilio-gateway";
 
 export type EscalationHandoff = Readonly<{
   callSid: string;
   conferenceName: string;
   supervisorPhone: string;
-  summary: string;
-  conferenceStatusCallbackUrl: string;
-  participantStatusCallbackUrl: string;
-  recordingStatusCallbackUrl: string;
 }>;
 
-type TwilioHandoffPort = Pick<TwilioGateway, "sendSupervisorSummary" | "addSupervisor" | "moveCallToConference">;
+type TwilioHandoffPort = Pick<TwilioGateway, "callSupervisorToConference" | "moveCallToConference">;
 
 /** Coordinates a one-shot live handoff; persistence remains the caller's concern. */
 export class EscalationHandoffCoordinator {
@@ -25,13 +21,6 @@ export class EscalationHandoffCoordinator {
 
   async prepare(handoff: EscalationHandoff): Promise<void> {
     if (this.handoff) throw new Error("Escalation handoff is already prepared");
-
-    await this.twilio.sendSupervisorSummary({ to: handoff.supervisorPhone, body: handoff.summary } satisfies SupervisorSummary);
-    await this.twilio.addSupervisor({
-      conferenceName: handoff.conferenceName,
-      to: handoff.supervisorPhone,
-      statusCallbackUrl: handoff.participantStatusCallbackUrl,
-    } satisfies SupervisorParticipant);
     this.handoff = handoff;
   }
 
@@ -55,13 +44,15 @@ export class EscalationHandoffCoordinator {
 
   async onAudioStopped(responseId: string): Promise<boolean> {
     if (!this.handoff || this.moved || responseId !== this.farewellResponseId) return false;
-    this.moved = true;
     await this.twilio.moveCallToConference({
       callSid: this.handoff.callSid,
       conferenceName: this.handoff.conferenceName,
-      statusCallbackUrl: this.handoff.conferenceStatusCallbackUrl,
-      recordingStatusCallbackUrl: this.handoff.recordingStatusCallbackUrl,
     } satisfies ConferenceMove);
+    await this.twilio.callSupervisorToConference({
+      conferenceName: this.handoff.conferenceName,
+      to: this.handoff.supervisorPhone,
+    } satisfies SupervisorCall);
+    this.moved = true;
     return true;
   }
 }

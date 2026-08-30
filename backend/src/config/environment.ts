@@ -15,7 +15,6 @@ const environmentSchema = z.object({
   TWILIO_ACCOUNT_SID: z.string().min(1).optional(),
   TWILIO_AUTH_TOKEN: z.string().min(1).optional(),
   TWILIO_FROM_NUMBER: z.string().regex(/^\+[1-9]\d{7,14}$/).optional(),
-  SUPERVISOR_PHONE: z.string().regex(/^\+[1-9]\d{7,14}$/).optional(),
   PUBLIC_BASE_URL: z.url().optional(),
   SUPABASE_URL: z.url(),
   SUPABASE_SECRET_KEY: z.string().min(1),
@@ -37,7 +36,7 @@ if (!parsedEnvironment.success) {
   throw new Error(`Invalid backend environment:\n${problems}`);
 }
 
-const missingTwilioConfiguration = ["TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN", "TWILIO_FROM_NUMBER", "PUBLIC_BASE_URL"]
+const missingTwilioConfiguration = ["TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN", "TWILIO_FROM_NUMBER"]
   .filter((key) => !parsedEnvironment.data[key as keyof typeof parsedEnvironment.data]);
 if (missingTwilioConfiguration.length > 0) {
   throw new Error(`Escalation proof of concept requires: ${missingTwilioConfiguration.join(", ")}`);

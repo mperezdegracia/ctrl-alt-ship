@@ -95,7 +95,6 @@ const twilioGateway = new TwilioGateway({
   accountSid: environment.TWILIO_ACCOUNT_SID!,
   authToken: environment.TWILIO_AUTH_TOKEN!,
   fromNumber: environment.TWILIO_FROM_NUMBER!,
-  publicBaseUrl: environment.PUBLIC_BASE_URL!,
 });
 
 async function rejectRealtimeCall(callId: string): Promise<void> {
@@ -255,21 +254,12 @@ app.post("/openai/webhook", express.raw({ type: "*/*" }), async (req, res) => {
     const stallTracker = handoffCoordinator
       ? new NegotiationStallTracker(environment.ESCALATION_STALLED_TURNS) : undefined;
     let stalledEscalationPending = false;
-    const prepareMockHandoff = async (request: { operationReference?: string; trigger: string; reason: string }) => {
+    const prepareMockHandoff = async (_request: { operationReference?: string; trigger: string; reason: string }) => {
       if (!handoffCoordinator || handoffCoordinator.prepared) return;
-      const operationReference = request.operationReference
-        ?? routingDecision.operations[0]?.reference
-        ?? "current-operation";
-      const publicBaseUrl = environment.PUBLIC_BASE_URL!;
-      const dashboardUrl = new URL(`/dashboard/operations/${encodeURIComponent(operationReference)}`, publicBaseUrl).toString();
       await handoffCoordinator.prepare({
         callSid: routingDecision.twilioCallSid,
         conferenceName: `tango-escalation-${persistedCallId}`,
         supervisorPhone: MOCK_SUPERVISOR_PHONE,
-        summary: `Tango escalation\nOperation: ${operationReference}\nTrigger: ${request.trigger}\nReason: ${request.reason}\nReview: ${dashboardUrl}`,
-        conferenceStatusCallbackUrl: new URL(`/twilio/conference-events?call_id=${encodeURIComponent(persistedCallId)}`, publicBaseUrl).toString(),
-        participantStatusCallbackUrl: new URL(`/twilio/participant-events?call_id=${encodeURIComponent(persistedCallId)}`, publicBaseUrl).toString(),
-        recordingStatusCallbackUrl: new URL(`/twilio/recording-events?call_id=${encodeURIComponent(persistedCallId)}`, publicBaseUrl).toString(),
       });
     };
     const escalationTool = handoffCoordinator

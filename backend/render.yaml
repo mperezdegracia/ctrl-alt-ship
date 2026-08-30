@@ -24,8 +24,6 @@ services:
         sync: false
       - key: TWILIO_FROM_NUMBER
         sync: false
-      - key: SUPERVISOR_PHONE
-        sync: false
       - key: PUBLIC_BASE_URL
         sync: false
       - key: OPENAI_API_KEY
