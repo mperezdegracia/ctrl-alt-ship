@@ -15,6 +15,7 @@
     "harness:retention:sql": "node --require tsx/cjs scripts/harnesses/evidence-retention-sql.ts",
     "harness:observability": "node --require tsx/cjs scripts/harnesses/observability.ts",
     "inbound:routing": "tsx scripts/harnesses/inbound-routing.ts",
+    "harness:caller-id": "node --require tsx/cjs scripts/harnesses/caller-id.ts",
     "harness:outbound": "tsx scripts/harnesses/outbound-call.ts",
     "harness:provider-quote-call": "tsx scripts/harnesses/provider-quote-call.ts",
     "harness:tools:read": "node --require tsx/cjs scripts/harnesses/tools-read.ts",

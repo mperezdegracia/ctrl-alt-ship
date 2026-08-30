@@ -74,28 +74,41 @@ function normalizeCallerId(callerId: string): string {
   return normalized;
 }
 
+function callerIdVariants(phone: string): string[] {
+  // Argentina uses a ten-digit national number; inbound caller ID may omit
+  // the international mobile marker. Do not rewrite the stored phone.
+  if (/^\+549[1-9][0-9]{9}$/.test(phone)) {
+    return [phone, `+54${phone.slice(4)}`];
+  }
+  if (/^\+54[1-9][0-9]{9}$/.test(phone)) {
+    return [phone, `+549${phone.slice(3)}`];
+  }
+  return [phone];
+}
+
 export async function findCounterpartyByCallerId(
   callerId: string,
   client: SupabaseClient = supabaseAdmin,
 ): Promise<CounterpartyIdentity | null> {
   const phone = normalizeCallerId(callerId);
+  const phones = callerIdVariants(phone);
   const [contactResult, providerResult] = await Promise.all([
     client
       .from("contacts")
       .select("id,name,phone,email,authorized,active")
-      .eq("phone", phone)
+      .in("phone", phones)
       .maybeSingle(),
     client
       .from("providers")
       .select("id,name,phone,email,active")
-      .eq("phone", phone)
+      .in("phone", phones)
       .maybeSingle(),
   ]);
 
   if (contactResult.error) throw contactResult.error;
   if (providerResult.error) throw providerResult.error;
   if (contactResult.data && providerResult.data) {
-    throw new Error(`Caller ID ${phone} belongs to both a contact and a provider`);
+    throw new Error("Ambiguous caller ID belongs to both a contact and a provider");
   }
 
   if (contactResult.data) {
