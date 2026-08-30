@@ -12,6 +12,7 @@ export type RealtimeSessionConfiguration = {
   audio: {
     input: {
       transcription: { model: "gpt-transcribe" };
+      turn_detection: { type: "server_vad"; create_response: true; interrupt_response: true };
     };
     output: {
       voice: "cedar";
@@ -37,6 +38,7 @@ export class RealtimeSessionFactory {
       audio: {
         input: {
           transcription: { model: "gpt-transcribe" },
+          turn_detection: { type: "server_vad", create_response: true, interrupt_response: true },
         },
         output: {
           voice: "cedar",
@@ -50,14 +52,4 @@ export class RealtimeSessionFactory {
     };
   }
 
-  createInitialResponse(decision: AcceptedRoutingDecision): object {
-    const greeting = new RoutingInstructionsBuilder(decision).getInitialGreeting();
-
-    return {
-      type: "response.create",
-      response: {
-        instructions: `Begin the call now in English. Use this natural greeting: "${greeting}" Then wait for the caller's response.`,
-      },
-    };
-  }
 }

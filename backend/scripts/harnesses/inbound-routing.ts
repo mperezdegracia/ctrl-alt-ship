@@ -97,7 +97,7 @@ async function main(): Promise<void> {
     assert.equal(session.audio.output.voice, "cedar");
     assert.equal(session.audio.output.speed, 1.05);
     assert.match(session.instructions, /# CREATE FLOW/);
-    assert.match(session.instructions, /The first spoken message must be in English/);
+    assertLanguagePolicy(session);
     assert.doesNotMatch(session.instructions, new RegExp(lucasPhone.replace("+", "\\+")));
     assert.doesNotMatch(session.instructions, /lucasaffre@gmail\.com/);
   }
@@ -114,10 +114,7 @@ async function main(): Promise<void> {
     assert.doesNotMatch(session.instructions, new RegExp(providerPhone.replace("+", "\\+")));
     assert.doesNotMatch(session.instructions, /operaciones@transportesur\.example\.com/);
 
-    const initialResponse = JSON.stringify(
-      new RealtimeSessionFactory().createInitialResponse(provider),
-    );
-    assert.match(initialResponse, /Hello, this is Tango/);
+    assertLanguagePolicy(session);
   }
 
   const unknown = await routeIncomingCall(eventFor(unknownPhone, "unknown"), dependencies);
@@ -129,6 +126,18 @@ async function main(): Promise<void> {
   });
 
   console.log("Inbound routing harness passed: client, provider and unknown caller.");
+}
+
+function assertLanguagePolicy(session: ReturnType<RealtimeSessionFactory["create"]>): void {
+  assert.match(session.instructions, /Always respond in the caller's language/);
+  assert.match(session.instructions, /Wait for the caller to speak before your first response/);
+  assert.match(session.instructions, /switch immediately without requiring a separate language request/);
+  assert.match(session.instructions, /Do not infer it from their phone number/);
+  assert.doesNotMatch(session.instructions, /first spoken message must be in English|Continue in English unless|Begin the call now in English/);
+  assert.deepEqual(session.audio.input.turn_detection, {
+    type: "server_vad", create_response: true, interrupt_response: true,
+  });
+  assert.equal("language" in session.audio.input.transcription, false);
 }
 
 main().catch((error: unknown) => {

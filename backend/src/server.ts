@@ -286,18 +286,10 @@ app.post("/openai/webhook", express.raw({ type: "*/*" }), async (req, res) => {
     ws.on("open", () => {
       callLogger.info("realtime.sideband_connected");
 
-      /*
-       * ============================================================
-       * 3. SALUDO INICIAL
-       * ============================================================
-       */
-
-      ws.send(JSON.stringify(
-        realtimeSessionFactory.createInitialResponse(routingDecision),
-      ));
-
-      callLogger.info("realtime.initial_greeting_requested", {
-        language: "en",
+      // Let VAD trigger the first reply after the caller speaks, so the
+      // greeting can use their language instead of a forced default.
+      callLogger.info("realtime.awaiting_caller_speech", {
+        language: "auto",
         persona: routingDecision.identity.persona,
       });
     });

@@ -4,14 +4,10 @@ import type { RoutingDecision } from "../telephony/inbound-routing";
 export type AcceptedRoutingDecision = Extract<RoutingDecision, { action: "accept" }>;
 
 abstract class PersonaInstructions {
-  abstract readonly greeting: string;
-
   abstract build(): string;
 }
 
 class ClientInstructions extends PersonaInstructions {
-  readonly greeting = "Hello, this is Tango. How can I help with your shipment today?";
-
   build(): string {
     return `# CLIENT RESPONSIBILITIES
 - Help the authenticated client create, update, or cancel an operation.
@@ -42,8 +38,6 @@ class ClientInstructions extends PersonaInstructions {
 }
 
 class ProviderInstructions extends PersonaInstructions {
-  readonly greeting = "Hello, this is Tango. How can I help with your operation today?";
-
   build(): string {
     return `# PROVIDER RESPONSIBILITIES
 - Help the authenticated provider quote, confirm or decline a booking, reschedule, cancel an active booking, or escalate.
@@ -90,10 +84,6 @@ export class RoutingInstructionsBuilder {
     ].join("\n\n");
   }
 
-  getInitialGreeting(): string {
-    return this.personaInstructions.greeting;
-  }
-
   private get personaInstructions(): PersonaInstructions {
     return this.decision.identity.persona === "client"
       ? new ClientInstructions()
@@ -112,10 +102,13 @@ You are Tango, a realtime voice agent for logistics operations. Resolve the call
 - Never expose internal IDs, SIP headers, implementation details, raw transcripts, stack traces, or hidden authorization data.
 
 # LANGUAGE
-- The first spoken message must be in English.
-- Continue in English unless the caller explicitly requests another language or speaks a substantive utterance in another language.
-- Do not switch languages because of an accent, proper name, address, filler word, or isolated foreign word.
-- After switching, keep the conversation, tool preambles, confirmations, and closing in the active language.
+- Always respond in the caller's language, starting with your first spoken response. An explicit request for a response language takes precedence.
+- Wait for the caller to speak before your first response. Briefly introduce yourself as Tango in that language, then address their request; do not ask how you can help if they already explained it.
+- Infer the initial language from the caller's speech, including a clear greeting such as "Hola" or "Hello". Do not infer it from their phone number, name, route, accent, or the language of these instructions or tool results.
+- If the caller changes language in a clear request, question, or correction, switch immediately without requiring a separate language request.
+- Once a language is established, do not switch because of a proper name, address, filler word, borrowed term, or isolated foreign word. For mixed-language speech, use the dominant language of the request.
+- If the language is unclear, keep the last clearly established language and ask a brief clarification. If no language is established, ask briefly which language they prefer using the clearest available speech cue; do not assume English.
+- Keep greetings, explanations, tool preambles, confirmations, errors, and closing in the caller's active language. Do not repeat responses in multiple languages unless requested.
 - Never translate proper names, operation references, container codes, currencies, or identifiers.
 
 # VOICE AND CONVERSATION STYLE
